@@ -70,8 +70,7 @@ export class Game {
 
     this.webrtc = new WebRTCClient(
       this.multiplayer,
-      () => this.handTracker.getStream(),
-      () => this.multiplayer.localSeatIndex
+      () => this.handTracker.getStream()
     );
     this.webrtc.onRemoteStream(stream => {
       for (const listener of this.remoteStreamListeners) listener(stream);

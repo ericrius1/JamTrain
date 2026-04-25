@@ -65,9 +65,17 @@ export class VideoPanel {
 
   setStream(stream: MediaStream | null): void {
     if (this.mode !== 'remote') return;
+    if (stream) {
+      const tracks = stream.getTracks().map(t => `${t.kind}/${t.id.slice(0, 6)}/enabled=${t.enabled}/muted=${t.muted}`);
+      console.info('[webrtc] remote panel setStream', tracks);
+    } else {
+      console.info('[webrtc] remote panel setStream(null)');
+    }
     this.video.srcObject = stream;
     if (stream) {
-      void this.video.play().catch(err => console.warn('[webrtc] remote video play failed', err));
+      this.video.play()
+        .then(() => console.info('[webrtc] remote video play() resolved'))
+        .catch(err => console.warn('[webrtc] remote video play() rejected', err?.name, err?.message));
       this.label.textContent = 'partner · live';
     } else {
       this.label.textContent = 'partner · waiting';

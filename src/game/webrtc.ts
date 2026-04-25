@@ -2,7 +2,6 @@ import type { MultiplayerClient } from './multiplayer';
 
 type RemoteStreamListener = (stream: MediaStream | null) => void;
 type StreamProvider = () => MediaStream | undefined;
-type SeatProvider = () => number;
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -15,12 +14,12 @@ export class WebRTCClient {
   private partnerIdentity: string | null = null;
   private pendingIceCandidates: RTCIceCandidateInit[] = [];
   private remoteDescriptionSet = false;
+  private makingOffer = false;
   private disposed = false;
 
   constructor(
     private multiplayer: MultiplayerClient,
-    private getLocalStream: StreamProvider,
-    private getLocalSeat: SeatProvider
+    private getLocalStream: StreamProvider
   ) {
     if (typeof RTCPeerConnection === 'undefined') {
       console.warn('[webrtc] RTCPeerConnection not supported in this browser');
@@ -66,6 +65,22 @@ export class WebRTCClient {
     this.maybeStartNegotiation();
   }
 
+  private isOfferer(): boolean {
+    // Deterministic, identity-based: lower hex string offers. Both peers see
+    // the same comparison the moment they know each other's identities — no
+    // dependence on the (asynchronously assigned) seat index, which used to
+    // cause both peers to default to seat 0 and glare on offer.
+    if (!this.partnerIdentity) return false;
+    return this.multiplayer.localId < this.partnerIdentity;
+  }
+
+  private isPolite(): boolean {
+    // The polite peer yields on offer collision. With the offerer rule above,
+    // the offerer is impolite and the answerer is polite — so any residual
+    // glare resolves cleanly without manual rollback wiring.
+    return !this.isOfferer();
+  }
+
   private maybeStartNegotiation(): void {
     if (this.disposed) return;
     if (!this.partnerIdentity) {
@@ -74,8 +89,11 @@ export class WebRTCClient {
     }
     if (typeof RTCPeerConnection === 'undefined') return;
 
-    const isOfferer = this.getLocalSeat() === 0;
-    console.info('[webrtc] role:', isOfferer ? 'offerer' : 'answerer');
+    const offerer = this.isOfferer();
+    console.info(
+      '[webrtc] role:', offerer ? 'offerer' : 'answerer',
+      `(local=${this.multiplayer.localId.slice(0, 10)} partner=${this.partnerIdentity.slice(0, 10)})`
+    );
 
     this.pc = this.createPeerConnection();
     if (!this.pc) return;
@@ -86,7 +104,7 @@ export class WebRTCClient {
       return;
     }
 
-    if (isOfferer) {
+    if (offerer) {
       void this.createAndSendOffer();
     }
   }
@@ -147,8 +165,10 @@ export class WebRTCClient {
   private async createAndSendOffer(): Promise<void> {
     if (!this.pc || !this.partnerIdentity) return;
     try {
+      this.makingOffer = true;
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
+      console.info('[webrtc] sending offer');
       await this.multiplayer.sendWebrtcSignal(
         this.partnerIdentity,
         'offer',
@@ -157,6 +177,8 @@ export class WebRTCClient {
     } catch (err) {
       console.error('[webrtc] createOffer/setLocalDescription failed', err);
       this.teardownPeer();
+    } finally {
+      this.makingOffer = false;
     }
   }
 
@@ -167,6 +189,15 @@ export class WebRTCClient {
     payload: string;
   }): Promise<void> {
     if (this.disposed) return;
+
+    // Fallback: if a signal arrives before the partner-identity listener has
+    // fired (player row updates can arrive after the signal row in the same
+    // subscription batch), adopt the sender as our partner so we can answer.
+    if (!this.partnerIdentity) {
+      console.info('[webrtc] adopting partner identity from incoming signal',
+        signal.senderId.slice(0, 10));
+      this.partnerIdentity = signal.senderId;
+    }
 
     let parsed: unknown;
     try {
@@ -200,22 +231,51 @@ export class WebRTCClient {
       if (!this.pc) return;
       this.attachLocalTracks(this.pc);
     }
+
+    // Perfect-negotiation collision handling. If we're mid-offer (or already
+    // have a local offer set) and we're the impolite peer, drop the incoming
+    // offer — ours wins. If we're polite, the implicit rollback inside
+    // setRemoteDescription will switch us into answerer mode.
+    const collision =
+      this.makingOffer || this.pc.signalingState !== 'stable';
+    if (collision && !this.isPolite()) {
+      console.warn('[webrtc] offer collision; impolite peer ignoring inbound offer');
+      return;
+    }
+    if (collision) {
+      console.info('[webrtc] offer collision; polite peer rolling back');
+    }
+
     await this.pc.setRemoteDescription(offer);
     this.remoteDescriptionSet = true;
     await this.flushPendingIce();
     const answer = await this.pc.createAnswer();
     await this.pc.setLocalDescription(answer);
     if (this.partnerIdentity) {
+      console.info('[webrtc] sending answer');
       await this.multiplayer.sendWebrtcSignal(
         this.partnerIdentity,
         'answer',
         JSON.stringify(answer)
       );
+    } else {
+      console.warn('[webrtc] would send answer but partnerIdentity is null');
     }
   }
 
   private async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
-    if (!this.pc) return;
+    if (!this.pc) {
+      console.warn('[webrtc] answer received but no peer connection');
+      return;
+    }
+    if (this.pc.signalingState !== 'have-local-offer') {
+      console.warn(
+        '[webrtc] answer received in unexpected state',
+        this.pc.signalingState,
+        '— ignoring'
+      );
+      return;
+    }
     await this.pc.setRemoteDescription(answer);
     this.remoteDescriptionSet = true;
     await this.flushPendingIce();
@@ -229,6 +289,9 @@ export class WebRTCClient {
     try {
       await this.pc.addIceCandidate(candidate);
     } catch (err) {
+      // ICE failures aren't fatal — they just mean one candidate didn't pan
+      // out. Other candidates may still succeed. Logged at warn so we can
+      // see them but not at error.
       console.warn('[webrtc] addIceCandidate failed', err);
     }
   }
