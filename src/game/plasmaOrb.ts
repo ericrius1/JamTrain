@@ -103,7 +103,7 @@ fn plasmaOrb(
     foldOffset = (attractorAccum / attractorWeight) * 0.4;
   }
 
-  var col = vec3<f32>(0.0);
+  var intensityAccum = 0.0;
   var t = tMin;
   let stepCount = max(uSteps, 1);
   let dtBase = (tMax - tMin) / f32(stepCount);
@@ -135,10 +135,11 @@ fn plasmaOrb(
     }
 
     // FBM noise: spatial frequency from uWobbleFreq, time-scrolled by uWobbleSpeed.
+    // Multiplicative so uNoiseAmp reads as a percentage of radius.
     let timeShift = vec3<f32>(uTime * 0.3, uTime * 0.21, uTime * 0.18) * uWobbleSpeed;
     let nseed = p0 * uWobbleFreq + timeShift;
     let noise = fbmNoise(nseed);
-    let displacement = noise * uNoiseAmp;
+    let displacement = uRadius * uNoiseAmp * noise;
 
     let surfaceR = uRadius + radiusBoost + displacement;
     let outsideSurface = length(p0) - surfaceR;
@@ -169,42 +170,36 @@ fn plasmaOrb(
     let bright = clamp(density, 0.0, 4.0);
     maxStep = max(maxStep, bright);
     depthAccum = depthAccum + bright;
-    col = col * 0.99 + uAccumRate * vec3<f32>(bright * bright * bright, bright * bright, bright);
+    // Single scalar intensity accumulator. b² balances mid vs peak weight.
+    intensityAccum = intensityAccum * 0.99 + uAccumRate * (bright * bright);
   }
 
   if (!everInside) {
     return vec4<f32>(0.0);
   }
 
-  // Reinhard tone curve, properly bounded to [0,1). uToneStrength acts
-  // as a pre-exposure: >1 brightens before compression, <1 dims it.
-  let exposed = col * uToneStrength;
-  col = exposed / (1.0 + exposed);
+  // Reinhard on the scalar intensity, guaranteed [0, 1).
+  let exposed = intensityAccum * uToneStrength;
+  let intensity = exposed / (1.0 + exposed);
 
-  let lum = clamp(dot(col, vec3<f32>(0.299, 0.587, 0.114)), 0.0, 1.0);
+  // Cool dominates everywhere; uHot only at true peaks.
+  let coolBlend = mix(uCool * 0.45, uCool, smoothstep(0.05, 0.55, intensity));
+  let withHot = mix(coolBlend, uHot, smoothstep(0.75, 1.0, intensity));
 
-  // uHot kicks in only at true peaks (lum > 0.85) so the orb stays in the
-  // uCool family across most of the visible area. uHot is a saturated
-  // brighter teal-green, never white.
-  let coolBlend = mix(uCool, uHot, smoothstep(0.85, 1.05, lum));
-
-  // Filaments: rays where a single inner iteration's density dominates
-  // the volume average. These are the bright thread-like ridges.
+  // Filaments: rays where a single inner iteration peaks above the
+  // volume average. Amber rides on these threads only.
   let avgStep = depthAccum / f32(stepCount);
   let filament = clamp((maxStep - avgStep * 4.0 - 0.35) * 1.6, 0.0, 1.0);
-  let amberAccent = filament * smoothstep(0.35, 0.85, lum) * uEnergy;
-  let palette = mix(coolBlend, uWarm, amberAccent * 0.9);
+  let amberAccent = filament * smoothstep(0.25, 0.75, intensity) * uEnergy;
+  let palette = mix(withHot, uWarm, amberAccent * 0.85);
 
-  // Tint col directly. col carries the swirl detail (per-channel
-  // accumulation differs for r=b³, g=b², b=b), so tinting it preserves
-  // structure. Don't desaturate — that washed out the internal motion.
-  let tinted = col * palette * uBrightness;
-
-  // Dim cool fill so the back of the volume reads as the orb body
-  // rather than punching through to black.
-  let baseFill = uCool * 0.06;
-  let outRgb = max(tinted, baseFill);
-  return vec4<f32>(outRgb, 1.0);
+  // Output color is palette directly, scaled by intensity for swirl
+  // contrast. Adding the dim baseFill keeps the back of the volume from
+  // punching through to black where intensity is near zero.
+  let baseFill = uCool * 0.05;
+  let outRgb = palette * intensity * uBrightness + baseFill;
+  let final = clamp(outRgb, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(final, 1.0);
 }
 `;
 
@@ -232,9 +227,9 @@ export class PlasmaOrb {
   private uCenter = uniform(new THREE.Vector3());
   private uRadius = uniform(0.42);
   private uEnergy = uniform(0);
-  private uNoiseAmp = uniform(0.08);
+  private uNoiseAmp = uniform(0.18);
   private uWobbleFreq = uniform(4.5);
-  private uWobbleSpeed = uniform(1.0);
+  private uWobbleSpeed = uniform(1.2);
   private uAttractorReach = uniform(0.55);
   private uAttractorStrength = uniform(0.22);
   private uA0 = uniform(new THREE.Vector4());
@@ -249,9 +244,9 @@ export class PlasmaOrb {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private uInnerIters = (uniform as any)(10, 'int');
   private uFoldSensitivity = uniform(19.0);
-  private uAccumRate = uniform(0.05);
-  private uToneStrength = uniform(0.45);
-  private uBrightness = uniform(1.1);
+  private uAccumRate = uniform(0.06);
+  private uToneStrength = uniform(0.7);
+  private uBrightness = uniform(1.0);
 
   constructor(scene: THREE.Scene, options: PlasmaOrbOptions) {
     this.radius = options.radius ?? 0.42;
@@ -302,7 +297,7 @@ export class PlasmaOrb {
       this.radius = e.value;
       this.uRadius.value = e.value;
     });
-    pane.addBinding(params, 'noiseAmp', { label: 'wobble amp', min: 0, max: 0.4, step: 0.005 }).on('change', e => {
+    pane.addBinding(params, 'noiseAmp', { label: 'wobble amp', min: 0, max: 0.7, step: 0.01 }).on('change', e => {
       this.uNoiseAmp.value = e.value;
     });
     pane.addBinding(params, 'wobbleFreq', { label: 'wobble freq', min: 0.5, max: 24, step: 0.1 }).on('change', e => {
