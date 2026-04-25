@@ -61,6 +61,7 @@ export class AudioEngine {
   private delay?: any;
   private reverb?: any;
   private panner?: any;
+  private compressor?: any;
 
   private chordIndex = 0;
   private chordPhase = 0;
@@ -101,7 +102,17 @@ export class AudioEngine {
     await Tone.start();
 
     this.master = new Tone.Gain(this.params.masterGain).toDestination();
-    this.panner = new Tone.Panner(BASE_PAN).connect(this.master);
+    // Tame voice-stacking buildup before it hits the master fader. Threshold
+    // is set high enough that quiet passages pass through clean and only
+    // crowded chord transitions get gently squeezed.
+    this.compressor = new Tone.Compressor({
+      threshold: -18,
+      ratio: 4,
+      attack: 0.05,
+      release: 0.3,
+      knee: 6,
+    }).connect(this.master);
+    this.panner = new Tone.Panner(BASE_PAN).connect(this.compressor);
     this.reverb = new Tone.Reverb({ decay: 9, wet: BASE_REVERB_WET }).connect(this.panner);
     this.delay = new Tone.PingPongDelay({ delayTime: '4n.', feedback: 0.28, wet: 0.12 }).connect(this.reverb);
     this.chorus = new Tone.Chorus({ frequency: 0.25, delayTime: 6, depth: 0.4, wet: BASE_CHORUS_WET })
@@ -129,7 +140,7 @@ export class AudioEngine {
     const droneOptions = {
       oscillator: { type: 'sine' } as any,
       envelope: { attack: this.params.attackSeconds * 1.5, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds * 1.3 },
-      volume: -8,
+      volume: -12,
     };
     const shimmerOptions = {
       oscillator: { type: 'triangle' } as any,
@@ -219,7 +230,14 @@ export class AudioEngine {
   }
 
   setMasterGain(value: number): void {
-    this.params.masterGain = clamp(value, 0, 1);
+    // Slider 0–1 → actual gain via power curve. The ceiling (0.25) is well
+    // below the old linear max (1.0), and the exponent puts most of the
+    // slider's resolution in the very-quiet range — slider 0.5 lands near
+    // 0.044 gain, roughly where slider 7 sat in the original linear mapping.
+    const MAX_MUSIC_GAIN = 0.25;
+    const CURVE_EXP = 2.5;
+    const v = value <= 0 ? 0 : Math.min(1, value);
+    this.params.masterGain = MAX_MUSIC_GAIN * Math.pow(v, CURVE_EXP);
     this.pane?.refresh();
   }
 
@@ -279,6 +297,7 @@ export class AudioEngine {
     this.delay?.dispose?.();
     this.reverb?.dispose?.();
     this.panner?.dispose?.();
+    this.compressor?.dispose?.();
     this.master?.dispose?.();
     this.pane?.dispose();
     this.publish();

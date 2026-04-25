@@ -6,6 +6,7 @@ import { attachHandDepthPane } from './handDepth';
 import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
 import { MultiplayerClient } from './multiplayer';
+import { OrbMarchingMelt, type OrbMeltFingertip, type OrbMeltVisibility } from './orbMarchingMelt';
 import { LinkParticles } from './particles';
 import { PlasmaOrb, type PlasmaOrbAttractor } from './plasmaOrb';
 import { makePlayerPose } from './pose';
@@ -68,6 +69,7 @@ export class Game {
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
   private plasmaOrb?: PlasmaOrb;
+  private orbMelt?: OrbMarchingMelt;
   private shadowsPane?: Pane;
   private readonly shadowParams = {
     mapSize: 2048,
@@ -161,6 +163,11 @@ export class Game {
     this.particles.initialize(this.renderer);
     this.plasmaOrb = new PlasmaOrb(this.scene, {
       position: this.sculptureTarget,
+      radius: 0.42,
+      paneDock: this.paneDock,
+    });
+    this.orbMelt = new OrbMarchingMelt(this.scene, {
+      center: this.sculptureTarget,
       radius: 0.42,
       paneDock: this.paneDock,
     });
@@ -286,6 +293,7 @@ export class Game {
     this.robotMotion.dispose();
     this.scenery.dispose();
     this.plasmaOrb?.dispose();
+    this.orbMelt?.dispose();
     this.audio.dispose();
     this.cameraPane?.dispose();
     this.shadowsPane?.dispose();
@@ -629,7 +637,10 @@ export class Game {
       const geometry = (obj as THREE.Mesh | THREE.Points | THREE.LineSegments).geometry as THREE.BufferGeometry | undefined;
       if (geometry && geometry.isBufferGeometry) {
         const pos = geometry.getAttribute('position');
-        if (pos) total += pos.count;
+        if (pos) {
+          const drawCount = geometry.drawRange.count;
+          total += Number.isFinite(drawCount) ? Math.min(pos.count, Math.max(0, drawCount)) : pos.count;
+        }
       }
     });
     return total;
@@ -655,7 +666,7 @@ export class Game {
     this.localRig.update(localPose, delta, 0);
     this.remoteRig.update(remotePose, delta, robotTarget);
 
-    const links = this.updateLinks();
+    const links = this.updateLinks(elapsed, delta);
     this.plasmaOrb?.update(elapsed, delta);
     this.particles.update(this.renderer, links, elapsed);
     const atmosphere = this.scenery.update(delta, elapsed);
@@ -667,14 +678,17 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
   }
 
-  private updateLinks(): LinkSample[] {
+  private updateLinks(elapsed: number, delta: number): LinkSample[] {
     const links: LinkSample[] = [];
+    const meltTips: OrbMeltFingertip[] = [];
     let cursor = 0;
 
     for (const handedness of handednesses) {
       for (const finger of fingerNames) {
         const from = this.localRig.getFingertipWorld(handedness, finger);
         const to = this.remoteRig.getFingertipWorld(handedness, finger);
+        meltTips.push({ owner: 'local', hand: handedness, finger, position: from, color: 0x91f7ff });
+        meltTips.push({ owner: 'remote', hand: handedness, finger, position: to, color: 0xb5fbff });
         const fromData = fromThree(from);
         const toData = fromThree(to);
         const tension = clamp(1.25 - Math.abs(distance(fromData, toData) - 1.1) * 0.42, 0.08, 1);
@@ -697,7 +711,22 @@ export class Game {
       this.plasmaOrb.setAttractors(this.computeOrbAttractors());
       this.plasmaOrb.setEnergy(energy);
     }
+    this.applyMeltVisibility(this.orbMelt?.update(elapsed, delta, meltTips) ?? []);
     return links;
+  }
+
+  private applyMeltVisibility(states: OrbMeltVisibility[]): void {
+    for (const handedness of handednesses) {
+      for (const finger of fingerNames) {
+        this.localRig.setFingertipNodeVisible(handedness, finger, true);
+        this.remoteRig.setFingertipNodeVisible(handedness, finger, true);
+      }
+    }
+
+    for (const state of states) {
+      const rig = state.owner === 'local' ? this.localRig : this.remoteRig;
+      rig.setFingertipNodeVisible(state.hand, state.finger, !state.hidden);
+    }
   }
 
   private computeOrbAttractors(): PlasmaOrbAttractor[] {

@@ -131,14 +131,13 @@ export class BiomeLayers {
       geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), LAYER_WIDTH);
     };
 
-    // Plain MeshBasicMaterial — atlas texture as map, vertex colors for tint.
-    // The atlas's white silhouettes get multiplied by per-vertex color, alpha
-    // comes straight from the atlas texture. alphaTest lets us avoid sorting.
+    // DEBUG STAGE 2: just the atlas texture, no alpha-test, no vertex colors.
+    // - If quads appear with tree-shaped silhouettes (transparent edges) → alpha works.
+    // - If quads appear as fully filled rectangles (whole atlas cell visible
+    //   as a tinted square) → the canvas alpha isn't being uploaded/sampled.
     const material = new THREE.MeshBasicMaterial({
       map: this.atlas.texture,
       transparent: true,
-      alphaTest: 0.1,
-      vertexColors: true,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
