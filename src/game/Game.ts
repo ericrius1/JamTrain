@@ -85,7 +85,7 @@ export class Game {
   };
   private playersPane?: Pane;
   private readonly playersParams = {
-    backOffset: -0.03,
+    backOffset: .14,
   };
   readonly paneDock: HTMLElement;
   private roomId: string;
