@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { AudioEngine } from './audio';
+import { attachHandDepthPane } from './handDepth';
 import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
 import { MultiplayerClient } from './multiplayer';
@@ -166,6 +167,7 @@ export class Game {
     this.setupShadowsPane();
     this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
+    attachHandDepthPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.renderer.setAnimationLoop(() => this.update());

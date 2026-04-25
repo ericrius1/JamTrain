@@ -1,3 +1,4 @@
+import { handDepthConfig } from './handDepth';
 import { HandFilter } from './handFilter';
 import { clamp, lerpVec, vec } from './math';
 import { makeSimulatedHands } from './pose';
@@ -37,10 +38,9 @@ const keypointNames: Record<FingerName, [string, string, string]> = {
   pinky: ['pinky_finger_pip', 'pinky_finger_dip', 'pinky_finger_tip'],
 };
 
-// Apparent wrist→middle_mcp distance (image-space, normalized) at "neutral" depth.
-// Smaller observed sizes push the hand back in z; larger sizes push it forward.
-const REFERENCE_PALM_SIZE = 0.09;
-// How aggressively apparent-size delta is converted into world-space z depth.
+// Baseline conversion gain for apparent-size delta → tracker-space z depth.
+// Live multiplied by handDepthConfig.depthGain. The "neutral" palm size is
+// also user-tunable via handDepthConfig.referencePalmSize.
 const DEPTH_FROM_SIZE = 4.5;
 
 const MAX_TRACKED_HANDS = 2;
@@ -323,8 +323,13 @@ export class HandTracker {
     const palmDx = middleImg.x - wristImg.x;
     const palmDy = middleImg.y - wristImg.y;
     const palmSize = Math.max(Math.hypot(palmDx, palmDy), 1e-4);
-    const sizeScale = clamp(REFERENCE_PALM_SIZE / palmSize, 0.5, 2.0);
-    const depth = clamp((palmSize - REFERENCE_PALM_SIZE) * DEPTH_FROM_SIZE, -0.45, 0.45);
+    const referencePalmSize = handDepthConfig.referencePalmSize;
+    const sizeScale = clamp(referencePalmSize / palmSize, 0.5, 2.0);
+    const depth = clamp(
+      (palmSize - referencePalmSize) * DEPTH_FROM_SIZE * handDepthConfig.depthGain,
+      -0.45,
+      0.45
+    );
 
     const wristZ = wristImg.z ?? 0;
     const transform = (img: LandmarkLike): Vec3Data => {

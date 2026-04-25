@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { handDepthConfig } from './handDepth';
 import { clamp, damp, toThree } from './math';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PlayerPose, type Vec3Data } from './types';
 
@@ -249,7 +250,7 @@ export class PlayerRig {
     return new THREE.Vector3(
       point.x * 0.54 + side * 0.04,
       0.54 + point.y * 0.68,
-      -0.42 - point.z * 0.85
+      -0.42 - point.z * 0.85 * handDepthConfig.worldDepthScale - handDepthConfig.worldDepthOffset
     );
   }
 
