@@ -4,30 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:," />
-    <title>Jam Train</title>
+    <title>Jam Train · Aura Cabin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IM+Fell+English+SC&family=IM+Fell+English:ital@0;1&family=JetBrains+Mono:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    />
   </head>
   <body>
-    <div id="app">
-      <canvas id="scene"></canvas>
-      <div class="hud" aria-label="Game controls">
-        <div class="hud__row">
-          <div class="brand">Aura Cabin</div>
-          <div id="connectionStatus" class="pill">local</div>
-        </div>
-        <div class="hud__row hud__row--controls">
-          <label class="room-label" for="roomInput">Room</label>
-          <input id="roomInput" class="room-input" value="cabin-01" autocomplete="off" />
-          <button id="cameraButton" class="icon-button" type="button" title="Start camera tracking">Camera</button>
-          <button id="audioButton" class="icon-button icon-button--primary" type="button" title="Start audio">Audio</button>
-        </div>
-        <div class="segmented" aria-label="View mode">
-          <button id="gameCamButton" class="segmented__button segmented__button--active" type="button">Game</button>
-          <button id="orbitCamButton" class="segmented__button" type="button">Orbit</button>
-        </div>
-        <div class="meters" aria-hidden="true">
-          <div id="inputStatus" class="meter">hands: simulated</div>
-          <div id="musicStatus" class="meter">music: muted</div>
-        </div>
+    <div id="stage-wrap">
+      <div id="stage">
+        <canvas id="scene"></canvas>
+        <div id="ui" aria-label="Aura Cabin HUD"></div>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

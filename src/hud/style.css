@@ -1,0 +1,574 @@
+/* TrainJam HUD — solar steampunk
+   Ported from design_handoff_trainjam_hud/TrainJam.html */
+
+:root {
+  --sun:          #f6b333;
+  --sun-2:        #e6892a;
+  --brass:        #c89a4b;
+  --brass-2:      #8c6a2e;
+  --brass-3:      #4a3617;
+  --copper:       #b06b3a;
+  --patina:       #6fbfa8;
+  --patina-deep:  #2f7d6a;
+  --leather:      #2a1d10;
+  --leather-2:    #1a120a;
+  --parchment:    #efe0bf;
+  --rivet:        #d9b070;
+  --danger:       #cc4a2c;
+  --text:         #efe0bf;
+  --text-dim:     rgba(239, 224, 191, 0.55);
+}
+
+#stage-wrap {
+  position: fixed;
+  inset: 0;
+  background: #050607;
+  overflow: hidden;
+  font-family: 'Fraunces', Georgia, serif;
+  color: var(--text);
+}
+
+#stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1014px;
+  transform-origin: center center;
+  transform: translate(-50%, -50%);
+  background: #000;
+  overflow: hidden;
+  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.6);
+}
+
+#scene {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  outline: none;
+  background: #071013;
+}
+
+#vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 48%, rgba(0, 0, 0, 0) 55%, rgba(0, 0, 0, 0.45) 100%),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.25) 0%, rgba(0, 0, 0, 0) 18%, rgba(0, 0, 0, 0) 78%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+#ui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+#ui > * {
+  pointer-events: auto;
+}
+
+/* Type helpers */
+.mono   { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.serif  { font-family: 'Fraunces', Georgia, serif; font-optical-sizing: auto; }
+.vict   { font-family: 'IM Fell English', 'Fraunces', serif; }
+.victsc { font-family: 'IM Fell English SC', 'IM Fell English', serif; letter-spacing: 0.06em; }
+.eyebrow {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 13px;
+  letter-spacing: 0.22em;
+  color: var(--brass);
+}
+.stamp {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 11px;
+  letter-spacing: 0.24em;
+  color: var(--sun);
+}
+
+/* Brass plaque */
+.plaque {
+  position: relative;
+  background:
+    linear-gradient(180deg, rgba(56, 38, 18, 0.94), rgba(30, 20, 10, 0.94)),
+    radial-gradient(ellipse at top, rgba(246, 179, 51, 0.12), transparent 60%);
+  border: 1px solid var(--brass-2);
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.30),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    inset 1px 0 0 rgba(246, 179, 51, 0.12),
+    inset -1px 0 0 rgba(0, 0, 0, 0.4),
+    0 6px 18px rgba(0, 0, 0, 0.55);
+  color: var(--parchment);
+}
+.plaque::before {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid rgba(200, 154, 75, 0.35);
+  pointer-events: none;
+}
+.plaque::after {
+  content: '';
+  position: absolute;
+  inset: 6px;
+  border-top: 1px solid rgba(246, 179, 51, 0.18);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+.rivet {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f3c87a 0%, #b1832f 55%, #5a3c11 100%);
+  box-shadow:
+    inset 0 -1px 1px rgba(0, 0, 0, 0.6),
+    inset 0 1px 1px rgba(255, 220, 150, 0.5),
+    0 1px 1px rgba(0, 0, 0, 0.5);
+}
+.rivet.tl { top: 6px;    left: 6px; }
+.rivet.tr { top: 6px;    right: 6px; }
+.rivet.bl { bottom: 6px; left: 6px; }
+.rivet.br { bottom: 6px; right: 6px; }
+
+.hline {
+  height: 2px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(200, 154, 75, 0.55) 12%,
+    rgba(246, 179, 51, 0.85) 50%,
+    rgba(200, 154, 75, 0.55) 88%,
+    transparent
+  );
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4);
+}
+.vline {
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, rgba(200, 154, 75, 0.55), transparent);
+}
+
+/* Brass key button */
+.btn {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  padding: 9px 16px 8px;
+  background: linear-gradient(180deg, #6b4c20 0%, #3a2812 100%);
+  color: var(--parchment);
+  border: 1px solid var(--brass-2);
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  position: relative;
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.35),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+}
+.btn:hover {
+  color: var(--sun);
+  background: linear-gradient(180deg, #7d5a28 0%, #432d14 100%);
+}
+.btn.primary {
+  color: var(--leather);
+  background: linear-gradient(180deg, #f6c45a 0%, #c8862a 100%);
+  border-color: #6b4720;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 235, 180, 0.7),
+    inset 0 -1px 0 rgba(120, 70, 20, 0.6),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+}
+.btn.primary:hover {
+  background: linear-gradient(180deg, #ffd06a 0%, #d8932e 100%);
+}
+.btn.ghost {
+  background: transparent;
+  color: var(--brass);
+  border-color: rgba(200, 154, 75, 0.3);
+  box-shadow: none;
+}
+.btn:focus-visible {
+  outline: 1px solid var(--sun);
+  outline-offset: 2px;
+}
+
+/* Glass cabochon lamps */
+.lamp {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe082 0%, #f6b333 50%, #7a4814 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.5),
+    0 0 10px rgba(246, 179, 51, 0.6);
+  border: 1px solid #2a1d10;
+}
+.lamp.patina {
+  background: radial-gradient(circle at 35% 30%, #c8f5e6 0%, #6fbfa8 50%, #1d4f43 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.5),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.5),
+    0 0 10px rgba(111, 191, 168, 0.55);
+}
+.lamp.dim {
+  background: radial-gradient(circle at 35% 30%, #5a4a30 0%, #2a1d10 80%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.15),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.6);
+}
+.lamp.danger {
+  background: radial-gradient(circle at 35% 30%, #ffb09a 0%, #cc4a2c 50%, #4a1808 100%);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.4),
+    inset 0 -1px 1px rgba(0, 0, 0, 0.5),
+    0 0 10px rgba(204, 74, 44, 0.55);
+}
+
+/* Animations */
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: 0.45 } }
+.pulse { animation: pulse 1.6s ease-in-out infinite; }
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.rise { animation: rise 0.5s ease both; }
+
+@keyframes slowSpin { to { transform: rotate(360deg); } }
+.spin-slow { animation: slowSpin 24s linear infinite; transform-origin: center; }
+
+@keyframes recflash {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(204, 74, 44, 0); }
+  50%      { box-shadow: 0 0 0 6px rgba(204, 74, 44, 0.25); }
+}
+.rec-pulse { animation: recflash 1.4s ease-in-out infinite; }
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+.fade-out { animation: fadeOut 0.4s ease forwards; }
+
+/* Component-specific layouts (set on each component root for absolute positioning) */
+.title-plaque    { position: absolute; top: 24px;  left: 24px;   padding: 20px 24px 16px; min-width: 300px; }
+.resonance-gauge { position: absolute; top: 24px;  right: 24px;  padding: 18px 22px 16px; width: 320px; text-align: right; }
+.player-plaque   { position: absolute; top: 50%;   transform: translateY(-50%); padding: 18px 20px; width: 240px; }
+.player-plaque.left  { left: 24px;  text-align: left; }
+.player-plaque.right { right: 24px; text-align: right; }
+.harmony-band    { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); width: 760px; padding: 14px 24px 16px; }
+.engine-room-host { position: absolute; left: 24px;  bottom: 24px; }
+.capture-host     { position: absolute; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 10px; }
+
+.title-sunburst {
+  position: absolute;
+  left: -10px;
+  top: -10px;
+  opacity: 0.55;
+}
+.title-name {
+  font-family: 'IM Fell English', serif;
+  font-size: 30px;
+  line-height: 1;
+  color: var(--sun);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+}
+.title-tagline {
+  font-family: 'IM Fell English', serif;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--brass);
+  margin-top: 4px;
+}
+.title-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+}
+.title-footer .label  { font-family: 'IM Fell English SC', serif; font-size: 10px; letter-spacing: 0.22em; color: var(--brass); }
+.title-footer .room   { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--parchment); margin-top: 2px; cursor: text; }
+.title-footer .line   { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
+.title-footer .room input {
+  font: inherit;
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--parchment);
+  border: 1px solid rgba(200, 154, 75, 0.5);
+  padding: 1px 4px;
+  width: 9ch;
+  outline: none;
+}
+
+.gauge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.gauge-copy { text-align: left; }
+.gauge-copy .stamp { margin-bottom: 4px; }
+.gauge-copy .body {
+  font-family: 'IM Fell English', serif;
+  font-size: 22px;
+  color: var(--parchment);
+  line-height: 1.1;
+}
+.gauge-dial {
+  position: relative;
+  width: 86px;
+  height: 86px;
+  flex-shrink: 0;
+}
+.gauge-dial .needle {
+  transform-origin: 43px 43px;
+  transition: transform 1.6s cubic-bezier(0.5, 1.6, 0.4, 0.9);
+}
+.gauge-dial .label {
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: 'IM Fell English SC', serif;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--brass);
+}
+.gauge-latency {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  margin-top: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.15em;
+  text-align: right;
+}
+
+.player-plaque .medallion {
+  position: absolute;
+  top: 22px;
+  width: 44px;
+  height: 44px;
+}
+.player-plaque.left  .medallion { right: -22px; }
+.player-plaque.right .medallion { left:  -22px; }
+.player-plaque .name {
+  font-family: 'IM Fell English', serif;
+  font-size: 30px;
+  line-height: 1;
+  margin-top: 6px;
+  color: var(--sun);
+}
+.player-plaque .voice {
+  font-family: 'IM Fell English', serif;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--brass);
+  margin-top: 4px;
+}
+
+.harmony-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.harmony-header .key-group   { display: flex; align-items: center; gap: 14px; }
+.harmony-header .key-name    { font-family: 'IM Fell English', serif; font-size: 22px; color: var(--sun); }
+.harmony-header .meta-group  { display: flex; align-items: center; gap: 16px; }
+.harmony-header .meta-num    { font-family: 'IM Fell English', serif; font-size: 16px; color: var(--brass); }
+.harmony-header .meta-label  { font-family: 'IM Fell English SC', serif; font-size: 9px; letter-spacing: 0.22em; color: var(--brass); }
+.harmony-header .weaving {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.harmony-header .weaving span:last-child {
+  font-family: 'IM Fell English', serif;
+  font-size: 13px;
+  color: var(--parchment);
+  font-style: italic;
+}
+
+.harmony-legend {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+}
+.harmony-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.harmony-legend .swatch {
+  width: 14px;
+  height: 2px;
+}
+.harmony-legend .swatch.you   { background: var(--sun);    box-shadow: 0 0 6px var(--sun); }
+.harmony-legend .swatch.peer  { background: var(--patina); box-shadow: 0 0 6px var(--patina); }
+.harmony-legend .label {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--brass);
+}
+
+.engine-room-drawer {
+  padding: 18px 22px;
+  min-width: 340px;
+}
+.engine-room-drawer .header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.engine-room-drawer .row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 5px 0;
+}
+.engine-room-drawer .row .k {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  color: var(--brass);
+}
+.engine-room-drawer .row .v {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--parchment);
+}
+.engine-room-drawer .actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.engine-room-drawer .actions .btn { flex: 1; }
+.engine-room-drawer .seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border: 1px solid var(--brass-2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.engine-room-drawer .seg button {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  padding: 8px 10px;
+  background: transparent;
+  border: 0;
+  color: var(--brass);
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+.engine-room-drawer .seg button:first-child { border-right: 1px solid var(--brass-2); }
+.engine-room-drawer .seg button:hover { color: var(--sun); }
+.engine-room-drawer .seg button.active {
+  background: linear-gradient(180deg, rgba(246, 179, 51, 0.25), rgba(200, 134, 42, 0.15));
+  color: var(--sun);
+}
+
+.capture-elapsed {
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.capture-elapsed .timer {
+  font-family: 'IM Fell English', serif;
+  font-size: 18px;
+  color: var(--parchment);
+}
+.capture-elapsed .timer .cs { color: var(--brass); }
+
+/* Begin gate (initial overlay) */
+.begin-gate {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.85));
+  z-index: 5;
+  pointer-events: auto;
+}
+.begin-plaque {
+  padding: 28px 36px;
+  text-align: center;
+  min-width: 320px;
+}
+.begin-plaque .stamp { margin-bottom: 6px; }
+.begin-plaque .title {
+  font-family: 'IM Fell English', serif;
+  font-size: 38px;
+  line-height: 1;
+  color: var(--sun);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+}
+.begin-plaque .body {
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+  font-size: 14px;
+  color: var(--brass);
+  margin: 8px 0 16px;
+}
+.begin-plaque .err {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--danger);
+  margin-top: 10px;
+  min-height: 14px;
+}
+.begin-plaque .btn { padding: 12px 22px 11px; font-size: 14px; }
+
+/* Corner filigree */
+.corner-filigree {
+  position: absolute;
+  width: 56px;
+  height: 56px;
+  pointer-events: none;
+  opacity: 0.55;
+}
+.corner-filigree.tl { top: 8px;    left: 8px;   transform: rotate(0deg); }
+.corner-filigree.tr { top: 8px;    right: 8px;  transform: rotate(90deg); }
+.corner-filigree.bl { bottom: 8px; left: 8px;   transform: rotate(-90deg); }
+.corner-filigree.br { bottom: 8px; right: 8px;  transform: rotate(180deg); }
+
+/* Tweakpane dock — moved below the resonance gauge */
+.tweak-pane-dock {
+  position: absolute;
+  top: 220px;
+  right: 24px;
+  z-index: 10;
+  display: grid;
+  gap: 8px;
+  width: min(280px, 320px);
+  max-height: calc(1014px - 240px);
+  overflow-y: auto;
+  pointer-events: auto;
+}
+.tweak-pane-dock > .tp-dfwv {
+  position: static;
+  width: 100%;
+}
+.tweak-pane-dock.hidden { display: none; }
+
+/* Stats.js panel — fixed to viewport so it sits above everything */
+#stats-panel {
+  position: fixed;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  pointer-events: auto;
+}
+#stats-panel.hidden { display: none; }
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .spin-slow, .pulse, .rec-pulse, .fade-out { animation: none; }
+  .gauge-dial .needle { transition: none; }
+}

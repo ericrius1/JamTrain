@@ -45,7 +45,7 @@ export class Game {
   private keyLight?: THREE.DirectionalLight;
   private sculpture = new THREE.Group();
   private sculptureMaterials: THREE.MeshStandardMaterial[] = [];
-  private paneDock: HTMLElement;
+  readonly paneDock: HTMLElement;
   private roomId: string;
   private localPose?: PlayerPose;
   private remotePose?: PlayerPose;
@@ -416,7 +416,10 @@ export class Game {
   private createPaneDock(): HTMLElement {
     const dock = document.createElement('div');
     dock.className = 'tweak-pane-dock';
-    document.body.appendChild(dock);
+    // Mount inside #stage so the dock scales with the letterboxed HUD.
+    // Falls back to body if the stage isn't there yet (e.g. tests).
+    const stage = document.getElementById('stage') ?? document.body;
+    stage.appendChild(dock);
     return dock;
   }
 }

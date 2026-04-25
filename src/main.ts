@@ -1,69 +1,86 @@
 import './style.css';
 import { Game } from './game/Game';
+import { Hud } from './hud/Hud';
+import { DevOverlay } from './hud/DevOverlay';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#scene');
-const roomInput = document.querySelector<HTMLInputElement>('#roomInput');
-const cameraButton = document.querySelector<HTMLButtonElement>('#cameraButton');
-const audioButton = document.querySelector<HTMLButtonElement>('#audioButton');
-const gameCamButton = document.querySelector<HTMLButtonElement>('#gameCamButton');
-const orbitCamButton = document.querySelector<HTMLButtonElement>('#orbitCamButton');
-const connectionStatus = document.querySelector<HTMLElement>('#connectionStatus');
-const inputStatus = document.querySelector<HTMLElement>('#inputStatus');
-const musicStatus = document.querySelector<HTMLElement>('#musicStatus');
-
-if (
-  !canvas ||
-  !roomInput ||
-  !cameraButton ||
-  !audioButton ||
-  !gameCamButton ||
-  !orbitCamButton ||
-  !connectionStatus ||
-  !inputStatus ||
-  !musicStatus
-) {
-  throw new Error('Aura Cabin UI failed to mount.');
+if (!canvas) {
+  throw new Error('Aura Cabin: #scene canvas missing');
 }
 
-const game = new Game(canvas, roomInput.value, {
-  connectionStatus,
-  inputStatus,
-  musicStatus,
+const initialRoom = 'cabin-01';
+
+// Game still expects HTMLElement sinks for connection / hand / music status.
+// We give it hidden detached spans and observe their text changes to push
+// updates into the new HUD without changing the Game / Audio / HandTracker
+// public APIs.
+const sink = (id: string): HTMLSpanElement => {
+  const span = document.createElement('span');
+  span.id = id;
+  span.style.display = 'none';
+  document.body.appendChild(span);
+  return span;
+};
+const connectionSink = sink('hud-connection-sink');
+const inputSink = sink('hud-input-sink');
+const musicSink = sink('hud-music-sink');
+
+const game = new Game(canvas, initialRoom, {
+  connectionStatus: connectionSink,
+  inputStatus: inputSink,
+  musicStatus: musicSink,
 });
 
-cameraButton.addEventListener('click', () => {
-  void game.startCamera();
+let started = false;
+
+const hud = new Hud({
+  room: initialRoom,
+  callbacks: {
+    onBegin: async () => {
+      // Single user-gesture entry: kicks off both camera and audio together.
+      await Promise.all([game.startCamera(), game.startAudio()]);
+      started = true;
+    },
+    onRoomChange: room => {
+      game.setRoom(room);
+      hud.setRoom(room);
+    },
+    onRecalibrate: () => {
+      // TODO: hand tracker exposes no public recalibrate(); restart camera as
+      //       the closest analogue for now.
+      void game.startCamera();
+    },
+    onDisembark: () => {
+      // TODO: wire to multiplayer.leave() once SpacetimeDB exposes one.
+      console.info('Disembark requested (no-op until multiplayer.leave is added)');
+    },
+    onCameraMode: mode => {
+      game.setCameraMode(mode);
+    },
+  },
 });
 
-audioButton.addEventListener('click', () => {
-  void game.startAudio();
-});
+hud.setCameraMode('game');
 
-gameCamButton.addEventListener('click', () => {
-  game.setCameraMode('game');
-  gameCamButton.classList.add('segmented__button--active');
-  orbitCamButton.classList.remove('segmented__button--active');
-});
+const observe = (el: HTMLElement, push: (text: string) => void): MutationObserver => {
+  const obs = new MutationObserver(() => push(el.textContent ?? ''));
+  obs.observe(el, { childList: true, characterData: true, subtree: true });
+  return obs;
+};
+observe(connectionSink, text => hud.setConnection(text));
+observe(inputSink,      text => hud.setInputStatus(text));
+observe(musicSink,      text => hud.setMusicStatus(text));
 
-orbitCamButton.addEventListener('click', () => {
-  game.setCameraMode('orbit');
-  orbitCamButton.classList.add('segmented__button--active');
-  gameCamButton.classList.remove('segmented__button--active');
-});
-
-roomInput.addEventListener('change', () => {
-  game.setRoom(roomInput.value);
-});
-
-roomInput.addEventListener('keydown', event => {
-  if (event.key === 'Enter') {
-    roomInput.blur();
-    game.setRoom(roomInput.value);
-  }
-});
+const dev = new DevOverlay(game.paneDock);
 
 void game.start();
 
 window.addEventListener('beforeunload', () => {
+  hud.dispose();
+  dev.dispose();
   game.dispose();
 });
+
+// Silence unused-warning while `started` is held for future wiring (e.g.
+// disabling Begin re-entry, gating recalibrate behavior).
+void started;
