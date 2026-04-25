@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { Fn, cameraPosition, positionWorld, uniform, wgslFn } from 'three/tsl';
+import { Discard, Fn, cameraPosition, positionWorld, uniform, wgslFn } from 'three/tsl';
 import { Pane } from 'tweakpane';
 
 export type PlasmaOrbAttractor = {
@@ -79,10 +79,10 @@ fn plasmaOrb(
   }
 
   var col = vec3<f32>(0.0);
-  var alphaAccum = 0.0;
   var t = tMin;
   let dtBase = (tMax - tMin) / 48.0;
   var lastDensity = 0.0;
+  var everInside = false;
 
   for (var i: i32 = 0; i < 48; i = i + 1) {
     let stepDt = dtBase * exp(-2.0 * lastDensity);
@@ -120,6 +120,7 @@ fn plasmaOrb(
       lastDensity = 0.0;
       continue;
     }
+    everInside = true;
 
     // Plasma fold (port of reference shadertoy 'map').
     var p = p0 + foldOffset;
@@ -139,7 +140,10 @@ fn plasmaOrb(
 
     let bright = clamp(density, 0.0, 4.0);
     col = col * 0.99 + 0.08 * vec3<f32>(bright * bright * bright, bright * bright, bright);
-    alphaAccum = alphaAccum + 0.04 * bright;
+  }
+
+  if (!everInside) {
+    return vec4<f32>(0.0);
   }
 
   col = 0.5 * log(1.0 + col);
@@ -151,14 +155,12 @@ fn plasmaOrb(
   let palette = mix(coolBlend, uWarm, amberAccent);
   let tinted = col * palette * 1.6;
 
-  // Rim fresnel.
-  let rimDir = normalize(oc + rd * tMin);
-  let fresnel = pow(1.0 - clamp(abs(dot(rd, rimDir)), 0.0, 1.0), 3.0);
-  let rim = uCool * fresnel * 0.55;
-
-  let outRgb = tinted + rim;
-  let outAlpha = clamp(alphaAccum * 1.4 + fresnel * 0.4, 0.0, 1.0);
-  return vec4<f32>(outRgb, outAlpha);
+  // Floor the orb so it always reads as a solid body, even where the
+  // raymarch produced low density (otherwise the back of the sphere
+  // shows through as black).
+  let baseFill = uCool * 0.18;
+  let outRgb = max(tinted, baseFill);
+  return vec4<f32>(outRgb, 1.0);
 }
 `;
 
@@ -258,16 +260,18 @@ export class PlasmaOrb {
 
   private buildMaterial(): THREE.MeshBasicNodeMaterial {
     const material = new THREE.MeshBasicNodeMaterial();
-    material.transparent = true;
-    material.depthWrite = false;
-    material.side = THREE.BackSide;
-    material.blending = THREE.AdditiveBlending;
+    material.transparent = false;
+    material.depthWrite = true;
+    material.side = THREE.FrontSide;
+    material.blending = THREE.NormalBlending;
+    material.alphaTest = 0.5;
 
     try {
       const colorNode = Fn(() => {
         const ro = cameraPosition;
         const rd = positionWorld.sub(cameraPosition).normalize();
-        return plasmaFn({
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const sample = plasmaFn({
           ro,
           rd,
           uCenter: this.uCenter,
@@ -284,7 +288,10 @@ export class PlasmaOrb {
           uCool: this.uCool,
           uWarm: this.uWarm,
           uHot: this.uHot,
-        });
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        }) as any;
+        Discard(sample.a.lessThan(0.5));
+        return sample;
       })();
       material.colorNode = colorNode as unknown as THREE.MeshBasicNodeMaterial['colorNode'];
     } catch (err) {

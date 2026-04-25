@@ -255,7 +255,7 @@ export class HandTracker {
     return vec(
       (0.5 - source.x) * 1.8,
       (1 - source.y) * 1.35,
-      clamp(-(source.z ?? 0) * 2.4, -0.35, 0.5)
+      clamp(-(source.z ?? 0) * 5.5, -0.55, 1.0)
     );
   }
 
