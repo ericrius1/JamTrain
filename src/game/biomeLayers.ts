@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { Fn, attribute, texture, uniform } from 'three/tsl';
-import { SpriteAtlas, type AtlasEntry, type AtlasId } from './spriteAtlas';
+import { SpriteAtlas, type AtlasEntry } from './spriteAtlas';
 import {
   type BiomeScheduler,
   type ForegroundBiome,
@@ -16,9 +15,9 @@ const MAX_SPRITES_PER_LAYER = 220;
 type LayerKind = 'foreground' | 'midground';
 
 interface SpritePlacement {
-  originX: number;       // strip-local x of the anchor
-  baseY: number;         // world Y of anchor (after mesh offset)
-  scale: number;         // sprite size in meters
+  originX: number;
+  baseY: number;
+  scale: number;
   atlas: AtlasEntry;
   tint: THREE.Color;
 }
@@ -33,14 +32,11 @@ interface LayerHandle {
   meshY: number;
   capacity: number;
   positions: Float32Array;
-  atlasUvs: Float32Array;
-  tints: Float32Array;
-  fades: Float32Array;
+  uvs: Float32Array;
+  colors: Float32Array;
   positionAttr: THREE.BufferAttribute;
-  atlasAttr: THREE.BufferAttribute;
-  tintAttr: THREE.BufferAttribute;
-  fadeAttr: THREE.BufferAttribute;
-  daylightUniform: ReturnType<typeof uniform>;
+  uvAttr: THREE.BufferAttribute;
+  colorAttr: THREE.BufferAttribute;
   placements: SpritePlacement[];
 }
 
@@ -67,8 +63,6 @@ export class BiomeLayers {
   build(): void {
     this.root.name = 'biome-layers';
     for (const side of [-1]) {
-      // Midground sits behind, foreground in front. mesh.position.y bumps the
-      // anchor row up to silhouette nicely above the background hill peaks.
       this.layers.push(this.createLayer(side, 'midground',  0.55, side * 2.18, 0.55));
       this.layers.push(this.createLayer(side, 'foreground', 0.85, side * 2.10, 0.45));
       this.villagePoints.push(this.createVillageGroup(side));
@@ -94,8 +88,7 @@ export class BiomeLayers {
     for (const layer of this.layers) {
       layer.scrollOffset += delta * trainSpeed * layer.scrollSpeed;
       if (layer.scrollOffset > LAYER_WIDTH) layer.scrollOffset -= LAYER_WIDTH;
-      layer.daylightUniform.value = ctx.daylight;
-      this.bakePositions(layer);
+      this.bakePositionsAndColors(layer, ctx.daylight);
     }
 
     for (const vg of this.villagePoints) {
@@ -107,9 +100,8 @@ export class BiomeLayers {
   private createLayer(side: number, kind: LayerKind, scrollSpeed: number, x: number, meshY: number): LayerHandle {
     const cap = MAX_SPRITES_PER_LAYER;
     const positions = new Float32Array(cap * 4 * 3);
-    const atlasUvs = new Float32Array(cap * 4 * 2);
-    const tints = new Float32Array(cap * 4 * 3);
-    const fades = new Float32Array(cap * 4);
+    const uvs = new Float32Array(cap * 4 * 2);
+    const colors = new Float32Array(cap * 4 * 3);
     const indices = new Uint16Array(cap * 6);
 
     for (let i = 0; i < cap; i += 1) {
@@ -124,45 +116,32 @@ export class BiomeLayers {
     }
 
     const positionAttr = new THREE.BufferAttribute(positions, 3);
-    const atlasAttr = new THREE.BufferAttribute(atlasUvs, 2);
-    const tintAttr = new THREE.BufferAttribute(tints, 3);
-    const fadeAttr = new THREE.BufferAttribute(fades, 1);
+    const uvAttr = new THREE.BufferAttribute(uvs, 2);
+    const colorAttr = new THREE.BufferAttribute(colors, 3);
     positionAttr.setUsage(THREE.DynamicDrawUsage);
-    fadeAttr.setUsage(THREE.DynamicDrawUsage);
-    atlasAttr.setUsage(THREE.DynamicDrawUsage);
-    tintAttr.setUsage(THREE.DynamicDrawUsage);
+    colorAttr.setUsage(THREE.DynamicDrawUsage);
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', positionAttr);
-    geometry.setAttribute('aAtlasUv', atlasAttr);
-    geometry.setAttribute('aTint', tintAttr);
-    geometry.setAttribute('aFade', fadeAttr);
+    geometry.setAttribute('uv', uvAttr);
+    geometry.setAttribute('color', colorAttr);
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), LAYER_WIDTH);
     geometry.computeBoundingSphere = () => {
       geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), LAYER_WIDTH);
     };
 
-    const daylightUniform = uniform(1);
-
-    const material = new THREE.MeshBasicNodeMaterial();
-    material.transparent = true;
-    material.depthWrite = false;
-    material.fog = false;
-    material.alphaTest = 0.05;
-
-    material.colorNode = Fn(() => {
-      const tint = attribute('aTint', 'vec3' as const);
-      const dayMul = daylightUniform.mul(0.6).add(0.4);
-      return tint.mul(dayMul);
-    })();
-
-    material.opacityNode = Fn(() => {
-      const atlasUvAttr = attribute('aAtlasUv', 'vec2' as const);
-      const sample = texture(this.atlas.texture, atlasUvAttr);
-      const fade = attribute('aFade', 'float' as const);
-      return sample.a.mul(fade);
-    })();
+    // Plain MeshBasicMaterial — atlas texture as map, vertex colors for tint.
+    // The atlas's white silhouettes get multiplied by per-vertex color, alpha
+    // comes straight from the atlas texture. alphaTest lets us avoid sorting.
+    const material = new THREE.MeshBasicMaterial({
+      map: this.atlas.texture,
+      transparent: true,
+      alphaTest: 0.1,
+      vertexColors: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false;
@@ -175,9 +154,8 @@ export class BiomeLayers {
       mesh, geometry, side, kind,
       scrollOffset: 0, scrollSpeed, meshY,
       capacity: cap,
-      positions, atlasUvs, tints, fades,
-      positionAttr, atlasAttr, tintAttr, fadeAttr,
-      daylightUniform,
+      positions, uvs, colors,
+      positionAttr, uvAttr, colorAttr,
       placements: [],
     };
   }
@@ -211,59 +189,65 @@ export class BiomeLayers {
       }
     }
 
-    // Write atlas UVs, tints, fades. Positions are written each frame via bakePositions.
+    // Bake atlas UVs into the geometry (these don't change per frame).
     for (let i = 0; i < layer.capacity; i += 1) {
       const v = i * 4;
       const p = layer.placements[i];
-      if (!p) {
-        for (let c = 0; c < 4; c += 1) layer.fades[v + c] = 0;
-        continue;
-      }
+      if (!p) continue;
       const { rect } = p.atlas;
-      // UVs: corners (-.5,0)→(u0,v1), (+.5,0)→(u1,v1), (+.5,+1)→(u1,v0), (-.5,+1)→(u0,v0)
-      layer.atlasUvs[(v + 0) * 2 + 0] = rect.x; layer.atlasUvs[(v + 0) * 2 + 1] = rect.w;
-      layer.atlasUvs[(v + 1) * 2 + 0] = rect.z; layer.atlasUvs[(v + 1) * 2 + 1] = rect.w;
-      layer.atlasUvs[(v + 2) * 2 + 0] = rect.z; layer.atlasUvs[(v + 2) * 2 + 1] = rect.y;
-      layer.atlasUvs[(v + 3) * 2 + 0] = rect.x; layer.atlasUvs[(v + 3) * 2 + 1] = rect.y;
-      for (let c = 0; c < 4; c += 1) {
-        layer.tints[(v + c) * 3 + 0] = p.tint.r;
-        layer.tints[(v + c) * 3 + 1] = p.tint.g;
-        layer.tints[(v + c) * 3 + 2] = p.tint.b;
-        layer.fades[v + c] = 1;
-      }
+      // Corners (xLo,yLo)→(u0,v1), (xHi,yLo)→(u1,v1), (xHi,yHi)→(u1,v0), (xLo,yHi)→(u0,v0)
+      layer.uvs[(v + 0) * 2 + 0] = rect.x; layer.uvs[(v + 0) * 2 + 1] = rect.w;
+      layer.uvs[(v + 1) * 2 + 0] = rect.z; layer.uvs[(v + 1) * 2 + 1] = rect.w;
+      layer.uvs[(v + 2) * 2 + 0] = rect.z; layer.uvs[(v + 2) * 2 + 1] = rect.y;
+      layer.uvs[(v + 3) * 2 + 0] = rect.x; layer.uvs[(v + 3) * 2 + 1] = rect.y;
     }
-    layer.atlasAttr.needsUpdate = true;
-    layer.tintAttr.needsUpdate = true;
-    layer.fadeAttr.needsUpdate = true;
+    layer.uvAttr.needsUpdate = true;
   }
 
-  private bakePositions(layer: LayerHandle): void {
+  private bakePositionsAndColors(layer: LayerHandle, daylight: number): void {
     const positions = layer.positions;
+    const colors = layer.colors;
     const scroll = layer.scrollOffset;
+    const dayMul = 0.4 + daylight * 0.6;
+
     for (let i = 0; i < layer.capacity; i += 1) {
       const v = i * 4;
       const p = layer.placements[i];
       if (!p) {
-        // collapse degenerate quad to (0,0,0)
+        // Hide this slot — collapse the quad to a degenerate point so it's invisible.
         for (let c = 0; c < 4; c += 1) {
           positions[(v + c) * 3 + 0] = 0;
           positions[(v + c) * 3 + 1] = 0;
           positions[(v + c) * 3 + 2] = 0;
+          colors[(v + c) * 3 + 0] = 0;
+          colors[(v + c) * 3 + 1] = 0;
+          colors[(v + c) * 3 + 2] = 0;
         }
         continue;
       }
-      // Wrap origin within strip
       let wx = p.originX - scroll;
       wx = ((wx + HALF_WIDTH) % LAYER_WIDTH + LAYER_WIDTH) % LAYER_WIDTH - HALF_WIDTH;
       const half = p.scale * 0.5;
-      // Anchor: bottom-center. Corners (in strip-local: x, y, z=0):
-      // (-half, 0), (+half, 0), (+half, scale), (-half, scale)
-      positions[(v + 0) * 3 + 0] = wx - half; positions[(v + 0) * 3 + 1] = p.baseY;
-      positions[(v + 1) * 3 + 0] = wx + half; positions[(v + 1) * 3 + 1] = p.baseY;
-      positions[(v + 2) * 3 + 0] = wx + half; positions[(v + 2) * 3 + 1] = p.baseY + p.scale;
-      positions[(v + 3) * 3 + 0] = wx - half; positions[(v + 3) * 3 + 1] = p.baseY + p.scale;
+      const yLo = p.baseY;
+      const yHi = p.baseY + p.scale;
+      const xLo = wx - half;
+      const xHi = wx + half;
+      positions[(v + 0) * 3 + 0] = xLo; positions[(v + 0) * 3 + 1] = yLo;
+      positions[(v + 1) * 3 + 0] = xHi; positions[(v + 1) * 3 + 1] = yLo;
+      positions[(v + 2) * 3 + 0] = xHi; positions[(v + 2) * 3 + 1] = yHi;
+      positions[(v + 3) * 3 + 0] = xLo; positions[(v + 3) * 3 + 1] = yHi;
+
+      const r = p.tint.r * dayMul;
+      const g = p.tint.g * dayMul;
+      const b = p.tint.b * dayMul;
+      for (let c = 0; c < 4; c += 1) {
+        colors[(v + c) * 3 + 0] = r;
+        colors[(v + c) * 3 + 1] = g;
+        colors[(v + c) * 3 + 2] = b;
+      }
     }
     layer.positionAttr.needsUpdate = true;
+    layer.colorAttr.needsUpdate = true;
   }
 
   private createVillageGroup(side: number) {
@@ -323,7 +307,9 @@ export class BiomeLayers {
 }
 
 function colorFromBiomeBand(groundDay: THREE.Color, _band: SpriteBand, rand: () => number): THREE.Color {
-  const c = new THREE.Color().copy(groundDay).multiplyScalar(0.30);
+  // Brighter than before — silhouettes still read as dark against the sky
+  // but aren't pitch-black for biomes with dark groundColor.
+  const c = new THREE.Color().copy(groundDay).multiplyScalar(0.55);
   const v = 0.85 + rand() * 0.30;
   return c.multiplyScalar(v);
 }

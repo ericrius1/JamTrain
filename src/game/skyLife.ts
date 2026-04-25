@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import { Fn, attribute, texture } from 'three/tsl';
 import { SpriteAtlas, type AtlasEntry, type AtlasId } from './spriteAtlas';
 import type { BiomeScheduler, MagicEvent, TimeOfDay } from './biomes';
 import { mulberry32 } from './seedRandom';
@@ -16,13 +15,11 @@ interface SpriteLayer {
   side: number;
   capacity: number;
   positions: Float32Array;
-  atlasUvs: Float32Array;
-  tints: Float32Array;
-  fades: Float32Array;
+  uvs: Float32Array;
+  colors: Float32Array;
   positionAttr: THREE.BufferAttribute;
-  atlasAttr: THREE.BufferAttribute;
-  tintAttr: THREE.BufferAttribute;
-  fadeAttr: THREE.BufferAttribute;
+  uvAttr: THREE.BufferAttribute;
+  colorAttr: THREE.BufferAttribute;
 }
 
 interface CloudData {
@@ -100,9 +97,8 @@ export class SkyLife {
 
   private createSpriteLayer(side: number, capacity: number, x: number, renderOrder: number): SpriteLayer {
     const positions = new Float32Array(capacity * 4 * 3);
-    const atlasUvs = new Float32Array(capacity * 4 * 2);
-    const tints = new Float32Array(capacity * 4 * 3);
-    const fades = new Float32Array(capacity * 4);
+    const uvs = new Float32Array(capacity * 4 * 2);
+    const colors = new Float32Array(capacity * 4 * 3);
     const indices = new Uint16Array(capacity * 6);
     for (let i = 0; i < capacity; i += 1) {
       const v = i * 4;
@@ -115,37 +111,30 @@ export class SkyLife {
       indices[baseIdx + 5] = v + 3;
     }
     const positionAttr = new THREE.BufferAttribute(positions, 3);
-    const atlasAttr = new THREE.BufferAttribute(atlasUvs, 2);
-    const tintAttr = new THREE.BufferAttribute(tints, 3);
-    const fadeAttr = new THREE.BufferAttribute(fades, 1);
+    const uvAttr = new THREE.BufferAttribute(uvs, 2);
+    const colorAttr = new THREE.BufferAttribute(colors, 3);
     positionAttr.setUsage(THREE.DynamicDrawUsage);
-    atlasAttr.setUsage(THREE.DynamicDrawUsage);
-    tintAttr.setUsage(THREE.DynamicDrawUsage);
-    fadeAttr.setUsage(THREE.DynamicDrawUsage);
+    uvAttr.setUsage(THREE.DynamicDrawUsage);
+    colorAttr.setUsage(THREE.DynamicDrawUsage);
 
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', positionAttr);
-    geometry.setAttribute('aAtlasUv', atlasAttr);
-    geometry.setAttribute('aTint', tintAttr);
-    geometry.setAttribute('aFade', fadeAttr);
+    geometry.setAttribute('uv', uvAttr);
+    geometry.setAttribute('color', colorAttr);
     geometry.setIndex(new THREE.BufferAttribute(indices, 1));
     geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), SKY_WIDTH);
     geometry.computeBoundingSphere = () => {
       geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), SKY_WIDTH);
     };
 
-    const material = new THREE.MeshBasicNodeMaterial();
-    material.transparent = true;
-    material.depthWrite = false;
-    material.fog = false;
-    material.alphaTest = 0.05;
-    material.colorNode = Fn(() => attribute('aTint', 'vec3' as const))();
-    material.opacityNode = Fn(() => {
-      const atlasUvAttr = attribute('aAtlasUv', 'vec2' as const);
-      const sample = texture(this.atlas.texture, atlasUvAttr);
-      const fade = attribute('aFade', 'float' as const);
-      return sample.a.mul(fade);
-    })();
+    const material = new THREE.MeshBasicMaterial({
+      map: this.atlas.texture,
+      transparent: true,
+      alphaTest: 0.05,
+      vertexColors: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+    });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.frustumCulled = false;
@@ -154,7 +143,7 @@ export class SkyLife {
     mesh.renderOrder = -25 + renderOrder;
     this.root.add(mesh);
 
-    return { mesh, geometry, side, capacity, positions, atlasUvs, tints, fades, positionAttr, atlasAttr, tintAttr, fadeAttr };
+    return { mesh, geometry, side, capacity, positions, uvs, colors, positionAttr, uvAttr, colorAttr };
   }
 
   private spawnClouds(): void {
@@ -198,32 +187,33 @@ export class SkyLife {
     for (let i = 0; i < this.cloudLayer.capacity; i += 1) {
       const cloud = this.clouds[i];
       if (!cloud) {
-        this.writeFade(this.cloudLayer, i, 0);
+        this.collapseSlot(this.cloudLayer, i);
         continue;
       }
       let x = cloud.baseX + cloud.speed * this.elapsedSeconds;
       x = ((x + HALF_WIDTH) % SKY_WIDTH + SKY_WIDTH) % SKY_WIDTH - HALF_WIDTH;
       baseTint.copy(whiteTint).lerp(sunsetTint, ctx.goldenHour * 0.7);
       baseTint.lerp(greyTint, Math.min(1, ctx.rainAmount * 1.4));
-      baseTint.multiplyScalar(0.6 + ctx.daylight * 0.4);
+      baseTint.multiplyScalar((0.6 + ctx.daylight * 0.4) * opacityMul);
       const entry = this.atlas.entries[cloudIds[cloud.variant]];
-      this.writeSprite(this.cloudLayer, i, x, cloud.baseY, cloud.scale, entry, baseTint, opacityMul, 'center');
+      this.writeSprite(this.cloudLayer, i, x, cloud.baseY, cloud.scale, entry, baseTint, 'center');
     }
     this.markLayerDirty(this.cloudLayer);
   }
 
-  private updateBirds(ctx: { phase: TimeOfDay; daylight: number; currentForegroundId: string }): void {
+  private updateBirds(ctx: { daylight: number; currentForegroundId: string; phase: TimeOfDay }): void {
     const fgScheduler = this.scheduler.foreground();
     const fg = fgScheduler.t < 0.5 ? fgScheduler.from : fgScheduler.to;
     const palette = fg.birdPalette;
     const enabledCount = Math.max(0, Math.min(this.birdLayer.capacity, Math.round(BIRDS_PER_SIDE * fg.birdBias)));
     const tint = new THREE.Color(palette === 'seabird' ? 0xefefe6 : 0x12161c);
-    const nightFade = ctx.daylight * 0.5 + 0.25;
+    const nightFade = ctx.daylight * 0.5 + 0.30;
+    const renderTint = tint.clone().multiplyScalar(nightFade);
 
     for (let i = 0; i < this.birdLayer.capacity; i += 1) {
       const bird = this.birds[i];
       if (!bird || i >= enabledCount) {
-        this.writeFade(this.birdLayer, i, 0);
+        this.collapseSlot(this.birdLayer, i);
         continue;
       }
       const t = this.elapsedSeconds * bird.speed + bird.spawnPhase;
@@ -235,7 +225,7 @@ export class SkyLife {
         ? ['seabirdA', 'seabirdB', 'seabirdC']
         : ['birdA', 'birdB', 'birdC'];
       const entry = this.atlas.entries[ids[frame]];
-      this.writeSprite(this.birdLayer, i, x, y, bird.scale, entry, tint, nightFade, 'center');
+      this.writeSprite(this.birdLayer, i, x, y, bird.scale, entry, renderTint, 'center');
     }
     this.markLayerDirty(this.birdLayer);
   }
@@ -291,7 +281,7 @@ export class SkyLife {
   }
 
   private updateMagic(ctx: { goldenHour: number }): void {
-    for (let i = 0; i < this.magicLayer.capacity; i += 1) this.writeFade(this.magicLayer, i, 0);
+    for (let i = 0; i < this.magicLayer.capacity; i += 1) this.collapseSlot(this.magicLayer, i);
     const now = this.getEpochSeconds();
     const events = this.scheduler.magicAt(now);
     let slot = 0;
@@ -313,32 +303,34 @@ export class SkyLife {
       const x = startX + (-1.4) * t;
       const y = startY + (-0.5) * t;
       const fade = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
-      const tint = new THREE.Color(0xfff4d6);
-      this.writeSprite(layer, slot, x, y, 0.6, this.atlas.entries.shootingStarTrail, tint, Math.max(0, fade), 'center');
+      const tint = new THREE.Color(0xfff4d6).multiplyScalar(Math.max(0, fade));
+      this.writeSprite(layer, slot, x, y, 0.6, this.atlas.entries.shootingStarTrail, tint, 'center');
     } else if (ev.kind === 'balloon') {
       const baseY = 1.6 + rand() * 0.4;
       const x = (rand() - 0.5) * SKY_WIDTH * 0.4 + Math.sin(t * 0.6) * 0.2;
       const fade = t < 0.05 ? t / 0.05 : t > 0.95 ? (1 - t) / 0.05 : 1;
-      const tint = new THREE.Color(0xfff0d8).lerp(new THREE.Color(0xff9b78), ctx.goldenHour * 0.7);
-      this.writeSprite(layer, slot, x, baseY + Math.sin(t * 1.1) * 0.05, 0.4, this.atlas.entries.hotAirBalloon, tint, fade, 'center');
+      const tint = new THREE.Color(0xfff0d8).lerp(new THREE.Color(0xff9b78), ctx.goldenHour * 0.7).multiplyScalar(fade);
+      this.writeSprite(layer, slot, x, baseY + Math.sin(t * 1.1) * 0.05, 0.4, this.atlas.entries.hotAirBalloon, tint, 'center');
     } else if (ev.kind === 'whale') {
       const x = (rand() - 0.5) * SKY_WIDTH * 0.4;
       const y = 0.55;
       if (t < 0.6) {
         const localT = t / 0.6;
         const fade = localT < 0.2 ? localT / 0.2 : 1 - (localT - 0.2) / 0.8;
-        this.writeSprite(layer, slot, x, y, 0.36, this.atlas.entries.whaleSpout, new THREE.Color(0xddeef5), Math.max(0, fade), 'bottom');
+        const tint = new THREE.Color(0xddeef5).multiplyScalar(Math.max(0, fade));
+        this.writeSprite(layer, slot, x, y, 0.36, this.atlas.entries.whaleSpout, tint, 'bottom');
       } else {
         const localT = (t - 0.6) / 0.4;
         const fade = 1 - localT;
-        this.writeSprite(layer, slot, x + 0.4, y, 0.32, this.atlas.entries.whaleTail, new THREE.Color(0x202830), Math.max(0, fade), 'bottom');
+        const tint = new THREE.Color(0x202830).multiplyScalar(Math.max(0, fade));
+        this.writeSprite(layer, slot, x + 0.4, y, 0.32, this.atlas.entries.whaleTail, tint, 'bottom');
       }
     } else if (ev.kind === 'plane') {
       const x = -SKY_WIDTH * 0.45 + t * SKY_WIDTH * 0.9;
       const y = 2.0 + Math.sin(t * 6) * 0.05;
       const blink = Math.sin(this.elapsedSeconds * 6) * 0.5 + 0.5;
       const tint = new THREE.Color(0xff8a8a).multiplyScalar(blink);
-      this.writeSprite(layer, slot, x, y, 0.05, this.atlas.entries.cloudSmall, tint, 0.85, 'center');
+      this.writeSprite(layer, slot, x, y, 0.05, this.atlas.entries.cloudSmall, tint, 'center');
     }
   }
 
@@ -350,7 +342,6 @@ export class SkyLife {
     scale: number,
     entry: AtlasEntry,
     tint: THREE.Color,
-    fade: number,
     anchor: 'center' | 'bottom',
   ): void {
     const v = index * 4;
@@ -365,34 +356,39 @@ export class SkyLife {
     }
     const xLo = originX - half;
     const xHi = originX + half;
-    layer.positions[(v + 0) * 3 + 0] = xLo; layer.positions[(v + 0) * 3 + 1] = yLo;
-    layer.positions[(v + 1) * 3 + 0] = xHi; layer.positions[(v + 1) * 3 + 1] = yLo;
-    layer.positions[(v + 2) * 3 + 0] = xHi; layer.positions[(v + 2) * 3 + 1] = yHi;
-    layer.positions[(v + 3) * 3 + 0] = xLo; layer.positions[(v + 3) * 3 + 1] = yHi;
+    layer.positions[(v + 0) * 3 + 0] = xLo; layer.positions[(v + 0) * 3 + 1] = yLo; layer.positions[(v + 0) * 3 + 2] = 0;
+    layer.positions[(v + 1) * 3 + 0] = xHi; layer.positions[(v + 1) * 3 + 1] = yLo; layer.positions[(v + 1) * 3 + 2] = 0;
+    layer.positions[(v + 2) * 3 + 0] = xHi; layer.positions[(v + 2) * 3 + 1] = yHi; layer.positions[(v + 2) * 3 + 2] = 0;
+    layer.positions[(v + 3) * 3 + 0] = xLo; layer.positions[(v + 3) * 3 + 1] = yHi; layer.positions[(v + 3) * 3 + 2] = 0;
 
     const { rect } = entry;
-    layer.atlasUvs[(v + 0) * 2 + 0] = rect.x; layer.atlasUvs[(v + 0) * 2 + 1] = rect.w;
-    layer.atlasUvs[(v + 1) * 2 + 0] = rect.z; layer.atlasUvs[(v + 1) * 2 + 1] = rect.w;
-    layer.atlasUvs[(v + 2) * 2 + 0] = rect.z; layer.atlasUvs[(v + 2) * 2 + 1] = rect.y;
-    layer.atlasUvs[(v + 3) * 2 + 0] = rect.x; layer.atlasUvs[(v + 3) * 2 + 1] = rect.y;
+    layer.uvs[(v + 0) * 2 + 0] = rect.x; layer.uvs[(v + 0) * 2 + 1] = rect.w;
+    layer.uvs[(v + 1) * 2 + 0] = rect.z; layer.uvs[(v + 1) * 2 + 1] = rect.w;
+    layer.uvs[(v + 2) * 2 + 0] = rect.z; layer.uvs[(v + 2) * 2 + 1] = rect.y;
+    layer.uvs[(v + 3) * 2 + 0] = rect.x; layer.uvs[(v + 3) * 2 + 1] = rect.y;
+
     for (let c = 0; c < 4; c += 1) {
-      layer.tints[(v + c) * 3 + 0] = tint.r;
-      layer.tints[(v + c) * 3 + 1] = tint.g;
-      layer.tints[(v + c) * 3 + 2] = tint.b;
-      layer.fades[v + c] = fade;
+      layer.colors[(v + c) * 3 + 0] = tint.r;
+      layer.colors[(v + c) * 3 + 1] = tint.g;
+      layer.colors[(v + c) * 3 + 2] = tint.b;
     }
-    layer.positionAttr.needsUpdate = true;
   }
 
-  private writeFade(layer: SpriteLayer, index: number, fade: number): void {
+  private collapseSlot(layer: SpriteLayer, index: number): void {
     const v = index * 4;
-    for (let c = 0; c < 4; c += 1) layer.fades[v + c] = fade;
+    for (let c = 0; c < 4; c += 1) {
+      layer.positions[(v + c) * 3 + 0] = 0;
+      layer.positions[(v + c) * 3 + 1] = 0;
+      layer.positions[(v + c) * 3 + 2] = 0;
+      layer.colors[(v + c) * 3 + 0] = 0;
+      layer.colors[(v + c) * 3 + 1] = 0;
+      layer.colors[(v + c) * 3 + 2] = 0;
+    }
   }
 
   private markLayerDirty(layer: SpriteLayer): void {
-    layer.atlasAttr.needsUpdate = true;
-    layer.tintAttr.needsUpdate = true;
-    layer.fadeAttr.needsUpdate = true;
     layer.positionAttr.needsUpdate = true;
+    layer.uvAttr.needsUpdate = true;
+    layer.colorAttr.needsUpdate = true;
   }
 }
