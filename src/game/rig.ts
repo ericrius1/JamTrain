@@ -137,6 +137,14 @@ export class PlayerRig {
     this.hands[hand].fingers[finger].node.visible = visible;
   }
 
+  setFingertipNodesVisible(visible: boolean): void {
+    for (const handedness of handednesses) {
+      for (const finger of fingerNames) {
+        this.setFingertipNodeVisible(handedness, finger, visible);
+      }
+    }
+  }
+
   private createFace(): THREE.Group {
     const group = new THREE.Group();
     const eyeGeometry = new THREE.SphereGeometry(0.028, 12, 8);

@@ -6,9 +6,8 @@ import { attachHandDepthPane } from './handDepth';
 import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
 import { MultiplayerClient } from './multiplayer';
-import { OrbMarchingMelt, type OrbMeltFingertip, type OrbMeltVisibility } from './orbMarchingMelt';
 import { LinkParticles } from './particles';
-import { PlasmaOrb, type PlasmaOrbAttractor } from './plasmaOrb';
+import { PlasmaOrb, type PlasmaOrbMetaball } from './plasmaOrb';
 import { makePlayerPose } from './pose';
 import { PlayerRig } from './rig';
 import { RobotMotionController } from './robotMotion';
@@ -69,7 +68,6 @@ export class Game {
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
   private plasmaOrb?: PlasmaOrb;
-  private orbMelt?: OrbMarchingMelt;
   private shadowsPane?: Pane;
   private readonly shadowParams = {
     mapSize: 2048,
@@ -128,6 +126,8 @@ export class Game {
 
     this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
     this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
+    this.localRig.setFingertipNodesVisible(false);
+    this.remoteRig.setFingertipNodesVisible(false);
     this.applyPlayerBackOffset();
     this.multiplayer.onSeatChange((localSeat, partnerSeat) => {
       this.localRig.setSeatIndex(localSeat);
@@ -163,11 +163,6 @@ export class Game {
     this.particles.initialize(this.renderer);
     this.plasmaOrb = new PlasmaOrb(this.scene, {
       position: this.sculptureTarget,
-      radius: 0.42,
-      paneDock: this.paneDock,
-    });
-    this.orbMelt = new OrbMarchingMelt(this.scene, {
-      center: this.sculptureTarget,
       radius: 0.42,
       paneDock: this.paneDock,
     });
@@ -293,7 +288,6 @@ export class Game {
     this.robotMotion.dispose();
     this.scenery.dispose();
     this.plasmaOrb?.dispose();
-    this.orbMelt?.dispose();
     this.audio.dispose();
     this.cameraPane?.dispose();
     this.shadowsPane?.dispose();
@@ -304,7 +298,7 @@ export class Game {
   }
 
   private setupRenderer(): void {
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.setClearColor(0x071013, 1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -666,7 +660,7 @@ export class Game {
     this.localRig.update(localPose, delta, 0);
     this.remoteRig.update(remotePose, delta, robotTarget);
 
-    const links = this.updateLinks(elapsed, delta);
+    const links = this.updateLinks();
     this.plasmaOrb?.update(elapsed, delta);
     this.particles.update(this.renderer, links, elapsed);
     const atmosphere = this.scenery.update(delta, elapsed);
@@ -678,17 +672,16 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
   }
 
-  private updateLinks(elapsed: number, delta: number): LinkSample[] {
+  private updateLinks(): LinkSample[] {
     const links: LinkSample[] = [];
-    const meltTips: OrbMeltFingertip[] = [];
+    const metaballs: PlasmaOrbMetaball[] = [];
     let cursor = 0;
 
     for (const handedness of handednesses) {
       for (const finger of fingerNames) {
         const from = this.localRig.getFingertipWorld(handedness, finger);
         const to = this.remoteRig.getFingertipWorld(handedness, finger);
-        meltTips.push({ owner: 'local', hand: handedness, finger, position: from, color: 0x91f7ff });
-        meltTips.push({ owner: 'remote', hand: handedness, finger, position: to, color: 0xb5fbff });
+        metaballs.push({ position: from }, { position: to });
         const fromData = fromThree(from);
         const toData = fromThree(to);
         const tension = clamp(1.25 - Math.abs(distance(fromData, toData) - 1.1) * 0.42, 0.08, 1);
@@ -708,51 +701,10 @@ export class Game {
     const energy = links.reduce((sum, link) => sum + link.tension, 0) / Math.max(links.length, 1);
     material.opacity = 0.18 + energy * 0.48;
     if (this.plasmaOrb) {
-      this.plasmaOrb.setAttractors(this.computeOrbAttractors());
+      this.plasmaOrb.setFingertips(metaballs);
       this.plasmaOrb.setEnergy(energy);
     }
-    this.applyMeltVisibility(this.orbMelt?.update(elapsed, delta, meltTips) ?? []);
     return links;
-  }
-
-  private applyMeltVisibility(states: OrbMeltVisibility[]): void {
-    for (const handedness of handednesses) {
-      for (const finger of fingerNames) {
-        this.localRig.setFingertipNodeVisible(handedness, finger, true);
-        this.remoteRig.setFingertipNodeVisible(handedness, finger, true);
-      }
-    }
-
-    for (const state of states) {
-      const rig = state.owner === 'local' ? this.localRig : this.remoteRig;
-      rig.setFingertipNodeVisible(state.hand, state.finger, !state.hidden);
-    }
-  }
-
-  private computeOrbAttractors(): PlasmaOrbAttractor[] {
-    const attractors: PlasmaOrbAttractor[] = [];
-    const maxReach = 0.9;
-
-    const pushHand = (rig: PlayerRig, hand: 'left' | 'right'): void => {
-      const centroid = new THREE.Vector3();
-      let count = 0;
-      for (const finger of fingerNames) {
-        centroid.add(rig.getFingertipWorld(hand, finger));
-        count += 1;
-      }
-      if (count === 0) return;
-      centroid.divideScalar(count);
-      const distance = centroid.distanceTo(this.sculptureTarget);
-      const weight = Math.max(0, Math.min(1, 1 - distance / maxReach));
-      attractors.push({ position: centroid, weight });
-    };
-
-    pushHand(this.localRig, 'left');
-    pushHand(this.localRig, 'right');
-    pushHand(this.remoteRig, 'left');
-    pushHand(this.remoteRig, 'right');
-
-    return attractors;
   }
 
   private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number }): void {
@@ -780,8 +732,15 @@ export class Game {
   }
 
   private createPaneDock(): HTMLElement {
-    const dock = document.createElement('div');
+    // Single collapsible <details> wrapper so all the per-system tweakpanes
+    // fold into one meta panel that the user can roll up out of the way.
+    const dock = document.createElement('details');
     dock.className = 'tweak-pane-dock';
+    dock.open = true;
+    const summary = document.createElement('summary');
+    summary.className = 'tweak-pane-dock-summary';
+    summary.textContent = 'Tweaks';
+    dock.appendChild(summary);
     // Mount on #stage-wrap (viewport-fixed) rather than #stage so the pane
     // keeps its native size on narrow viewports instead of shrinking with
     // the letterboxed scene.

@@ -92,6 +92,13 @@ export class VideoPanel {
     this.label.textContent = opts.mode === 'local' ? 'you · waiting' : 'partner · waiting';
     this.wrapper.appendChild(this.label);
 
+    // Remote panel stays hidden until the partner actually shares a stream —
+    // otherwise it sits there as an empty black box covering the bottom-right
+    // corner of the scene before anyone else has even joined.
+    if (opts.mode === 'remote') {
+      this.wrapper.classList.add('hidden');
+    }
+
     parent.appendChild(this.wrapper);
   }
 
@@ -202,8 +209,10 @@ export class VideoPanel {
         .then(() => console.info('[webrtc] remote video play() resolved'))
         .catch(err => console.warn('[webrtc] remote video play() rejected', err?.name, err?.message));
       this.label.textContent = 'partner · live';
+      this.wrapper.classList.remove('hidden');
     } else {
       this.label.textContent = 'partner · waiting';
+      this.wrapper.classList.add('hidden');
     }
   }
 

@@ -2,9 +2,8 @@ import * as THREE from 'three/webgpu';
 import { Discard, Fn, cameraPosition, positionWorld, uniform, wgslFn } from 'three/tsl';
 import { Pane } from 'tweakpane';
 
-export type PlasmaOrbAttractor = {
+export type PlasmaOrbMetaball = {
   position: THREE.Vector3;
-  weight: number;
 };
 
 export type PlasmaOrbOptions = {
@@ -13,9 +12,10 @@ export type PlasmaOrbOptions = {
   paneDock?: HTMLElement;
 };
 
-const MAX_ATTRACTORS = 4;
-const MAX_RAYMARCH_STEPS = 11;
-const MAX_INNER_ITERS = 16;
+const MAX_FINGER_METABALLS = 20;
+const MAX_METABALLS = MAX_FINGER_METABALLS + 1;
+const MAX_SURFACE_STEPS = 48;
+const MAX_REFINE_STEPS = 5;
 
 const pseudoNoiseFn = wgslFn(/* wgsl */ `
 fn pseudoNoise(s: vec3<f32>) -> f32 {
@@ -27,52 +27,80 @@ fn pseudoNoise(s: vec3<f32>) -> f32 {
 }
 `);
 
-const fbmNoiseFn = wgslFn(/* wgsl */ `
-fn fbmNoise(seed: vec3<f32>) -> f32 {
-  // Three octaves: doubling-ish frequencies with decreasing amplitude.
-  let n1 = pseudoNoise(seed);
-  let n2 = pseudoNoise(seed * 2.13 + vec3<f32>(7.13, 3.71, 5.27));
-  let n3 = pseudoNoise(seed * 4.71 + vec3<f32>(13.7, 19.3, 11.1));
-  return (n1 + n2 * 0.5 + n3 * 0.25) * (1.0 / 1.75);
-}
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-`, [pseudoNoiseFn] as any);
-
-const plasmaWGSL = /* wgsl */ `
-fn plasmaOrb(
+const metaballWGSL = /* wgsl */ `
+fn plasmaMetaballs(
   ro: vec3<f32>,
   rd: vec3<f32>,
   uCenter: vec3<f32>,
-  uRadius: f32,
+  uBoundRadius: f32,
   uTime: f32,
   uEnergy: f32,
+  uIsoLevel: f32,
+  uBallCount: i32,
   uNoiseAmp: f32,
   uWobbleFreq: f32,
   uWobbleSpeed: f32,
-  uAttractorReach: f32,
-  uAttractorStrength: f32,
-  uA0: vec4<f32>,
-  uA1: vec4<f32>,
-  uA2: vec4<f32>,
-  uA3: vec4<f32>,
+  uB0: vec4<f32>,
+  uB1: vec4<f32>,
+  uB2: vec4<f32>,
+  uB3: vec4<f32>,
+  uB4: vec4<f32>,
+  uB5: vec4<f32>,
+  uB6: vec4<f32>,
+  uB7: vec4<f32>,
+  uB8: vec4<f32>,
+  uB9: vec4<f32>,
+  uB10: vec4<f32>,
+  uB11: vec4<f32>,
+  uB12: vec4<f32>,
+  uB13: vec4<f32>,
+  uB14: vec4<f32>,
+  uB15: vec4<f32>,
+  uB16: vec4<f32>,
+  uB17: vec4<f32>,
+  uB18: vec4<f32>,
+  uB19: vec4<f32>,
+  uB20: vec4<f32>,
   uCool: vec3<f32>,
   uWarm: vec3<f32>,
   uHot: vec3<f32>,
   uSteps: i32,
-  uInnerIters: i32,
-  uFoldSensitivity: f32,
-  uAccumRate: f32,
-  uToneStrength: f32,
-  uBrightness: f32
+  uRefineSteps: i32,
+  uBrightness: f32,
+  uAlpha: f32
 ) -> vec4<f32> {
+  var balls: array<vec4<f32>, ${MAX_METABALLS}>;
+  balls[0] = uB0;
+  balls[1] = uB1;
+  balls[2] = uB2;
+  balls[3] = uB3;
+  balls[4] = uB4;
+  balls[5] = uB5;
+  balls[6] = uB6;
+  balls[7] = uB7;
+  balls[8] = uB8;
+  balls[9] = uB9;
+  balls[10] = uB10;
+  balls[11] = uB11;
+  balls[12] = uB12;
+  balls[13] = uB13;
+  balls[14] = uB14;
+  balls[15] = uB15;
+  balls[16] = uB16;
+  balls[17] = uB17;
+  balls[18] = uB18;
+  balls[19] = uB19;
+  balls[20] = uB20;
+
   let oc = ro - uCenter;
-  let bound = uRadius * 1.4;
+  let bound = max(uBoundRadius, 0.1);
   let b = dot(oc, rd);
   let cTerm = dot(oc, oc) - bound * bound;
   let h = b * b - cTerm;
   if (h < 0.0) {
     return vec4<f32>(0.0);
   }
+
   let hSqrt = sqrt(h);
   let tMin = max(-b - hSqrt, 0.0);
   let tMax = -b + hSqrt;
@@ -80,190 +108,266 @@ fn plasmaOrb(
     return vec4<f32>(0.0);
   }
 
-  // Pack attractors so the inner loop is uniform.
-  var attractorsXyz: array<vec3<f32>, 4>;
-  var attractorsW: array<f32, 4>;
-  attractorsXyz[0] = uA0.xyz;
-  attractorsW[0] = uA0.w;
-  attractorsXyz[1] = uA1.xyz;
-  attractorsW[1] = uA1.w;
-  attractorsXyz[2] = uA2.xyz;
-  attractorsW[2] = uA2.w;
-  attractorsXyz[3] = uA3.xyz;
-  attractorsW[3] = uA3.w;
+  let stepCount = max(uSteps, 4);
+  let invSteps = 1.0 / f32(stepCount);
+  var hit = false;
+  var hitT = tMax;
+  var prevT = tMin;
+  var prevDensity = -1.0;
 
-  // Attractor-weighted swirl offset.
-  var attractorAccum = vec3<f32>(0.0);
-  var attractorWeight = 0.0;
-  for (var ai: i32 = 0; ai < 4; ai = ai + 1) {
-    let aw = attractorsW[ai];
-    if (aw > 0.001) {
-      let local = attractorsXyz[ai] - uCenter;
-      attractorAccum = attractorAccum + local * aw;
-      attractorWeight = attractorWeight + aw;
-    }
-  }
-  var foldOffset = vec3<f32>(0.0);
-  if (attractorWeight > 0.001) {
-    foldOffset = (attractorAccum / attractorWeight) * 0.4;
-  }
-
-  var intensityAccum = 0.0;
-  var t = tMin;
-  let stepCount = max(uSteps, 1);
-  let dtBase = (tMax - tMin) / f32(stepCount);
-  var lastDensity = 0.0;
-  var everInside = false;
-  var maxStep = 0.0;
-  var depthAccum = 0.0;
-
-  for (var i: i32 = 0; i < 96; i = i + 1) {
+  for (var i: i32 = 0; i < ${MAX_SURFACE_STEPS}; i = i + 1) {
     if (i >= stepCount) { break; }
-    let stepDt = dtBase * exp(-2.0 * lastDensity);
-    t = t + stepDt;
-    if (t > tMax) {
+
+    let t = mix(tMin, tMax, f32(i + 1) * invSteps);
+    let p = ro + rd * t;
+    var field = 0.0;
+    for (var bi: i32 = 0; bi < ${MAX_METABALLS}; bi = bi + 1) {
+      if (bi >= uBallCount) { break; }
+      field = field + fieldContribution(p, balls[bi]);
+    }
+
+    var density = field - uIsoLevel;
+    if (uNoiseAmp > 0.001) {
+      let surfaceNoise = pseudoNoise((p - uCenter) * uWobbleFreq + vec3<f32>(
+        uTime * 0.31,
+        uTime * 0.23,
+        uTime * 0.19
+      ) * uWobbleSpeed);
+      density = density + surfaceNoise * uNoiseAmp;
+    }
+
+    if (density >= 0.0 && prevDensity < 0.0) {
+      var lo = prevT;
+      var hi = t;
+      for (var ri: i32 = 0; ri < ${MAX_REFINE_STEPS}; ri = ri + 1) {
+        if (ri >= uRefineSteps) { break; }
+        let mid = (lo + hi) * 0.5;
+        let mp = ro + rd * mid;
+        var mf = 0.0;
+        for (var bi: i32 = 0; bi < ${MAX_METABALLS}; bi = bi + 1) {
+          if (bi >= uBallCount) { break; }
+          mf = mf + fieldContribution(mp, balls[bi]);
+        }
+        var mn = 0.0;
+        if (uNoiseAmp > 0.001) {
+          mn = pseudoNoise((mp - uCenter) * uWobbleFreq + vec3<f32>(
+            uTime * 0.31,
+            uTime * 0.23,
+            uTime * 0.19
+          ) * uWobbleSpeed);
+        }
+        if (mf - uIsoLevel + mn * uNoiseAmp >= 0.0) {
+          hi = mid;
+        } else {
+          lo = mid;
+        }
+      }
+      hitT = (lo + hi) * 0.5;
+      hit = true;
       break;
     }
 
-    let p0 = ro + t * rd - uCenter;
-
-    // Smooth-min attractor pull adds to the SDF radius near hands.
-    var radiusBoost = 0.0;
-    for (var ai: i32 = 0; ai < 4; ai = ai + 1) {
-      let aw = attractorsW[ai];
-      if (aw > 0.001) {
-        let dvec = (attractorsXyz[ai] - uCenter) - p0;
-        let d2 = dot(dvec, dvec);
-        let falloff = exp(-d2 / max(uAttractorReach * uAttractorReach, 1e-4));
-        radiusBoost = radiusBoost + falloff * aw * uAttractorStrength;
-      }
-    }
-
-    // FBM noise: spatial frequency from uWobbleFreq, time-scrolled by uWobbleSpeed.
-    // Multiplicative so uNoiseAmp reads as a percentage of radius.
-    let timeShift = vec3<f32>(uTime * 0.3, uTime * 0.21, uTime * 0.18) * uWobbleSpeed;
-    let nseed = p0 * uWobbleFreq + timeShift;
-    let noise = fbmNoise(nseed);
-    let displacement = uRadius * uNoiseAmp * noise;
-
-    let surfaceR = uRadius + radiusBoost + displacement;
-    let outsideSurface = length(p0) - surfaceR;
-    if (outsideSurface > 0.0) {
-      lastDensity = 0.0;
-      continue;
-    }
-    everInside = true;
-
-    // Plasma fold (port of reference shadertoy 'map').
-    var p = p0 + foldOffset;
-    let cFold = p;
-    var density = 0.0;
-    let innerCount = max(uInnerIters, 1);
-    for (var k: i32 = 0; k < 16; k = k + 1) {
-      if (k >= innerCount) { break; }
-      let dotPP = max(dot(p, p), 1e-4);
-      p = 0.7 * abs(p) / dotPP - 0.7;
-      let yz = vec2<f32>(p.y, p.z);
-      let csq = vec2<f32>(yz.x * yz.x - yz.y * yz.y, 2.0 * yz.x * yz.y);
-      let folded = vec3<f32>(p.x, csq.x, csq.y);
-      p = folded.zxy;
-      density = density + exp(-uFoldSensitivity * abs(dot(p, cFold)));
-    }
-    density = density * 0.5;
-    lastDensity = density;
-
-    let bright = clamp(density, 0.0, 4.0);
-    maxStep = max(maxStep, bright);
-    depthAccum = depthAccum + bright;
-    // Single scalar intensity accumulator. b² balances mid vs peak weight.
-    intensityAccum = intensityAccum * 0.99 + uAccumRate * (bright * bright);
+    prevT = t;
+    prevDensity = density;
   }
 
-  if (!everInside) {
+  if (!hit) {
     return vec4<f32>(0.0);
   }
 
-  // Reinhard on the scalar intensity, guaranteed [0, 1).
-  let exposed = intensityAccum * uToneStrength;
-  let intensity = exposed / (1.0 + exposed);
+  let p = ro + rd * hitT;
+  var grad = vec3<f32>(0.0);
+  var fieldAtHit = 0.0;
+  for (var bi: i32 = 0; bi < ${MAX_METABALLS}; bi = bi + 1) {
+    if (bi >= uBallCount) { break; }
+    fieldAtHit = fieldAtHit + fieldContribution(p, balls[bi]);
+    grad = grad + fieldGradient(p, balls[bi]);
+  }
+  var normal = normalize(uCenter - p);
+  if (dot(grad, grad) > 0.000001) {
+    normal = normalize(-grad);
+  }
 
-  // Cool dominates everywhere; uHot only at true peaks.
-  let coolBlend = mix(uCool * 0.45, uCool, smoothstep(0.05, 0.55, intensity));
-  let withHot = mix(coolBlend, uHot, smoothstep(0.75, 1.0, intensity));
+  let viewDir = normalize(-rd);
+  let lightDir = normalize(vec3<f32>(-0.45, 0.82, 0.35));
+  let halfDir = normalize(lightDir + viewDir);
+  let diffuse = clamp(dot(normal, lightDir) * 0.55 + 0.45, 0.0, 1.0);
+  let fresnel = pow(1.0 - clamp(dot(normal, viewDir), 0.0, 1.0), 2.0);
+  let specular = pow(max(dot(normal, halfDir), 0.0), 34.0);
 
-  // Filaments: rays where a single inner iteration peaks above the
-  // volume average. Amber rides on these threads only.
-  let avgStep = depthAccum / f32(stepCount);
-  let filament = clamp((maxStep - avgStep * 4.0 - 0.35) * 1.6, 0.0, 1.0);
-  let amberAccent = filament * smoothstep(0.25, 0.75, intensity) * uEnergy;
-  let palette = mix(withHot, uWarm, amberAccent * 0.85);
+  var blend = max(abs(normal), vec3<f32>(0.00001));
+  blend = blend / max(blend.x + blend.y + blend.z, 0.00001);
 
-  // Output color is palette directly, scaled by intensity for swirl
-  // contrast. Adding the dim baseFill keeps the back of the volume from
-  // punching through to black where intensity is near zero.
-  let baseFill = uCool * 0.05;
-  let outRgb = palette * intensity * uBrightness + baseFill;
-  let outFinal = clamp(outRgb, vec3<f32>(0.0), vec3<f32>(1.0));
-  return vec4<f32>(outFinal, 1.0);
+  let flow = vec3<f32>(
+    sin(uTime * 0.11),
+    cos(uTime * 0.17),
+    sin(uTime * 0.07)
+  ) * (0.18 * uWobbleSpeed);
+  let xTex = waterTexel(p.yz + flow.yz, uTime, uWobbleFreq, uWobbleSpeed, uCool, uWarm, uHot);
+  let yTex = waterTexel(p.xz + flow.xz, uTime, uWobbleFreq, uWobbleSpeed, uCool, uWarm, uHot);
+  let zTex = waterTexel(p.xy + flow.xy, uTime, uWobbleFreq, uWobbleSpeed, uCool, uWarm, uHot);
+  let water = xTex * blend.x + yTex * blend.y + zTex * blend.z;
+  let nearSurface = smoothstep(uIsoLevel, uIsoLevel * 2.2, fieldAtHit);
+
+  var color = water * (0.62 + diffuse * 0.38);
+  color = color + uHot * (specular * 0.5 + fresnel * 0.18);
+  color = color + uWarm * (nearSurface * uEnergy * 0.06);
+  color = clamp(color * uBrightness, vec3<f32>(0.0), vec3<f32>(1.0));
+
+  let alpha = clamp(uAlpha + fresnel * 0.04, 0.25, 1.0);
+  return vec4<f32>(color, alpha);
+}
+
+fn fieldContribution(p: vec3<f32>, ball: vec4<f32>) -> f32 {
+  let radius = max(ball.w, 0.0);
+  if (radius <= 0.0001) {
+    return 0.0;
+  }
+
+  let d = p - ball.xyz;
+  let d2 = dot(d, d);
+  let r2 = radius * radius;
+
+  // Same reciprocal field shape as the reference WebGPU metaballs, but with
+  // a hard far cutoff so tiny fingertip balls do not affect every sample.
+  if (d2 > r2 * 16.0) {
+    return 0.0;
+  }
+
+  return r2 / max(d2, 0.00001);
+}
+
+fn fieldGradient(p: vec3<f32>, ball: vec4<f32>) -> vec3<f32> {
+  let radius = max(ball.w, 0.0);
+  if (radius <= 0.0001) {
+    return vec3<f32>(0.0);
+  }
+
+  let d = p - ball.xyz;
+  let d2 = dot(d, d);
+  let r2 = radius * radius;
+  if (d2 > r2 * 16.0) {
+    return vec3<f32>(0.0);
+  }
+
+  return -2.0 * r2 * d / max(d2 * d2, 0.00001);
+}
+
+fn waterTexel(
+  uv: vec2<f32>,
+  uTime: f32,
+  uScale: f32,
+  uFlowSpeed: f32,
+  uDeep: vec3<f32>,
+  uSurface: vec3<f32>,
+  uShine: vec3<f32>
+) -> vec3<f32> {
+  let scale = max(uScale, 0.1);
+  let t = uTime * max(uFlowSpeed, 0.0);
+  let p = uv * scale;
+  let flowA = vec2<f32>(t * 0.18, -t * 0.11);
+  let flowB = vec2<f32>(-t * 0.07, t * 0.15);
+
+  let nA = pseudoNoise(vec3<f32>(p + flowA, t * 0.08));
+  let nB = pseudoNoise(vec3<f32>(p.yx * 1.73 + flowB, t * 0.13));
+  let waveA = sin((p.x + nA * 0.8) * 7.0 + t * 1.15);
+  let waveB = cos((p.y + nB * 0.7) * 5.5 - t * 0.82);
+  let ripple = waveA * waveB;
+  let foam = smoothstep(0.52, 0.96, abs(ripple));
+  let body = mix(uDeep, uSurface, clamp(0.45 + nA * 0.18 + nB * 0.12, 0.0, 1.0));
+  return mix(body, uShine, foam * 0.28);
 }
 `;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-const plasmaFn = wgslFn(plasmaWGSL, [fbmNoiseFn] as any);
+const metaballFn = wgslFn(metaballWGSL, [pseudoNoiseFn] as any);
 
 function colorToVec3(hex: number): THREE.Vector3 {
   const c = new THREE.Color(hex);
   return new THREE.Vector3(c.r, c.g, c.b);
 }
 
+type SmoothedMetaball = {
+  position: THREE.Vector3;
+  radius: number;
+};
+
 export class PlasmaOrb {
   readonly mesh: THREE.Mesh;
   private radius: number;
+  private boundRadius = 1.08;
+  private fingerRadius = 0.052;
+  private fingerInfluence = 1.0;
+  private activeTipLimit = 12;
+  private activeTipRange = 1.18;
   private energyBoost = 1;
   private pane?: Pane;
   private smoothedEnergy = 0;
   private targetEnergy = 0;
-  private targetAttractors: PlasmaOrbAttractor[] = [];
-  private smoothedAttractors: PlasmaOrbAttractor[] = Array.from(
-    { length: MAX_ATTRACTORS },
-    () => ({ position: new THREE.Vector3(), weight: 0 })
+  private targetFingertips: PlasmaOrbMetaball[] = [];
+  private smoothedFingertips: SmoothedMetaball[] = Array.from(
+    { length: MAX_FINGER_METABALLS },
+    () => ({ position: new THREE.Vector3(), radius: 0 })
   );
 
   private uTime = uniform(0);
   private uCenter = uniform(new THREE.Vector3());
-  private uRadius = uniform(0.42);
+  private uBoundRadius = uniform(this.boundRadius);
   private uEnergy = uniform(0);
-  private uNoiseAmp = uniform(0.18);
-  private uWobbleFreq = uniform(4.5);
-  private uWobbleSpeed = uniform(1.2);
-  private uAttractorReach = uniform(0.07);
-  private uAttractorStrength = uniform(0.22);
-  private uA0 = uniform(new THREE.Vector4());
-  private uA1 = uniform(new THREE.Vector4());
-  private uA2 = uniform(new THREE.Vector4());
-  private uA3 = uniform(new THREE.Vector4());
-  private uCool = uniform(colorToVec3(0x14e8c0));
-  private uWarm = uniform(colorToVec3(0xff5a18));
-  private uHot = uniform(colorToVec3(0x7af2d4));
+  private uIsoLevel = uniform(1.0);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private uSteps = (uniform as any)(48, 'int');
+  private uBallCount = (uniform as any)(1, 'int');
+  private uNoiseAmp = uniform(0.0);
+  private uWobbleFreq = uniform(3.2);
+  private uWobbleSpeed = uniform(0.75);
+  private uB0 = uniform(new THREE.Vector4());
+  private uB1 = uniform(new THREE.Vector4());
+  private uB2 = uniform(new THREE.Vector4());
+  private uB3 = uniform(new THREE.Vector4());
+  private uB4 = uniform(new THREE.Vector4());
+  private uB5 = uniform(new THREE.Vector4());
+  private uB6 = uniform(new THREE.Vector4());
+  private uB7 = uniform(new THREE.Vector4());
+  private uB8 = uniform(new THREE.Vector4());
+  private uB9 = uniform(new THREE.Vector4());
+  private uB10 = uniform(new THREE.Vector4());
+  private uB11 = uniform(new THREE.Vector4());
+  private uB12 = uniform(new THREE.Vector4());
+  private uB13 = uniform(new THREE.Vector4());
+  private uB14 = uniform(new THREE.Vector4());
+  private uB15 = uniform(new THREE.Vector4());
+  private uB16 = uniform(new THREE.Vector4());
+  private uB17 = uniform(new THREE.Vector4());
+  private uB18 = uniform(new THREE.Vector4());
+  private uB19 = uniform(new THREE.Vector4());
+  private uB20 = uniform(new THREE.Vector4());
+  private uCool = uniform(colorToVec3(0x146f92));
+  private uWarm = uniform(colorToVec3(0x5bd0ca));
+  private uHot = uniform(colorToVec3(0xd8fff8));
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private uInnerIters = (uniform as any)(10, 'int');
-  private uFoldSensitivity = uniform(19.0);
-  private uAccumRate = uniform(0.06);
-  private uToneStrength = uniform(0.7);
-  private uBrightness = uniform(1.0);
+  private uSteps = (uniform as any)(12, 'int');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private uRefineSteps = (uniform as any)(2, 'int');
+  private uBrightness = uniform(1.05);
+  private uAlpha = uniform(0.96);
+
+  private ballUniforms = [
+    this.uB0, this.uB1, this.uB2, this.uB3, this.uB4, this.uB5, this.uB6,
+    this.uB7, this.uB8, this.uB9, this.uB10, this.uB11, this.uB12, this.uB13,
+    this.uB14, this.uB15, this.uB16, this.uB17, this.uB18, this.uB19, this.uB20,
+  ];
 
   constructor(scene: THREE.Scene, options: PlasmaOrbOptions) {
     this.radius = options.radius ?? 0.42;
-    this.uRadius.value = this.radius;
     this.uCenter.value.copy(options.position);
+    this.uB0.value.set(options.position.x, options.position.y, options.position.z, this.radius);
 
-    const geometry = new THREE.SphereGeometry(this.radius * 1.5, 111, 111);
+    const geometry = new THREE.SphereGeometry(1, 48, 24);
     const material = this.buildMaterial();
 
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.position.copy(options.position);
+    this.mesh.scale.setScalar(this.boundRadius);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
     scene.add(this.mesh);
@@ -271,7 +375,7 @@ export class PlasmaOrb {
     if (options.paneDock) {
       const container = document.createElement('div');
       options.paneDock.appendChild(container);
-      this.pane = new Pane({ title: 'Plasma Orb', container });
+      this.pane = new Pane({ title: 'Water Metaballs', container });
       this.pane.expanded = false;
       this.registerTweaks();
     }
@@ -282,118 +386,140 @@ export class PlasmaOrb {
     const pane = this.pane;
     const params = {
       radius: this.radius,
+      boundRadius: this.boundRadius,
+      fingerRadius: this.fingerRadius,
+      fingerInfluence: this.fingerInfluence,
+      activeTipLimit: this.activeTipLimit,
+      activeTipRange: this.activeTipRange,
+      isoLevel: this.uIsoLevel.value,
       noiseAmp: this.uNoiseAmp.value,
       wobbleFreq: this.uWobbleFreq.value,
       wobbleSpeed: this.uWobbleSpeed.value,
-      attractorReach: this.uAttractorReach.value,
-      attractorStrength: this.uAttractorStrength.value,
       energyBoost: this.energyBoost,
       coolColor: vec3ToHex(this.uCool.value),
       warmColor: vec3ToHex(this.uWarm.value),
       hotColor: vec3ToHex(this.uHot.value),
-      raymarchSteps: this.uSteps.value,
-      innerIters: this.uInnerIters.value,
-      foldSensitivity: this.uFoldSensitivity.value,
-      accumRate: this.uAccumRate.value,
-      toneStrength: this.uToneStrength.value,
+      surfaceSteps: this.uSteps.value,
+      refineSteps: this.uRefineSteps.value,
       brightness: this.uBrightness.value,
+      alpha: this.uAlpha.value,
     };
 
-    pane.addBinding(params, 'radius', { min: 0.2, max: 0.8, step: 0.01 }).on('change', e => {
+    pane.addBinding(params, 'radius', { label: 'orb radius', min: 0.2, max: 0.8, step: 0.01 }).on('change', e => {
       this.radius = e.value;
-      this.uRadius.value = e.value;
     });
-    pane.addBinding(params, 'noiseAmp', { label: 'wobble amp', min: 0, max: 0.7, step: 0.01 }).on('change', e => {
+    pane.addBinding(params, 'boundRadius', { label: 'field bounds', min: 0.7, max: 1.8, step: 0.01 }).on('change', e => {
+      this.boundRadius = e.value;
+      this.uBoundRadius.value = e.value;
+      this.mesh.scale.setScalar(e.value);
+    });
+    pane.addBinding(params, 'fingerRadius', { label: 'tip radius', min: 0.015, max: 0.16, step: 0.001 }).on('change', e => {
+      this.fingerRadius = e.value;
+    });
+    pane.addBinding(params, 'fingerInfluence', { label: 'tip influence', min: 0, max: 3, step: 0.01 }).on('change', e => {
+      this.fingerInfluence = e.value;
+    });
+    pane.addBinding(params, 'activeTipLimit', { label: 'active tips', min: 2, max: MAX_FINGER_METABALLS, step: 1 }).on('change', e => {
+      this.activeTipLimit = e.value | 0;
+    });
+    pane.addBinding(params, 'activeTipRange', { label: 'tip range', min: 0.45, max: 1.8, step: 0.01 }).on('change', e => {
+      this.activeTipRange = e.value;
+    });
+    pane.addBinding(params, 'isoLevel', { label: 'melt threshold', min: 0.45, max: 1.8, step: 0.01 }).on('change', e => {
+      this.uIsoLevel.value = e.value;
+    });
+    pane.addBinding(params, 'noiseAmp', { label: 'shape ripple', min: 0, max: 0.25, step: 0.005 }).on('change', e => {
       this.uNoiseAmp.value = e.value;
     });
-    pane.addBinding(params, 'wobbleFreq', { label: 'wobble freq', min: 0.5, max: 24, step: 0.1 }).on('change', e => {
+    pane.addBinding(params, 'wobbleFreq', { label: 'texture scale', min: 0.5, max: 12, step: 0.1 }).on('change', e => {
       this.uWobbleFreq.value = e.value;
     });
-    pane.addBinding(params, 'wobbleSpeed', { label: 'wobble speed', min: 0, max: 4, step: 0.05 }).on('change', e => {
+    pane.addBinding(params, 'wobbleSpeed', { label: 'flow speed', min: 0, max: 4, step: 0.05 }).on('change', e => {
       this.uWobbleSpeed.value = e.value;
-    });
-    pane.addBinding(params, 'attractorReach', { label: 'hand reach', min: 0.01, max: 1.5, step: 0.01 }).on('change', e => {
-      this.uAttractorReach.value = e.value;
-    });
-    pane.addBinding(params, 'attractorStrength', { label: 'hand pull', min: 0, max: 0.4, step: 0.005 }).on('change', e => {
-      this.uAttractorStrength.value = e.value;
     });
     pane.addBinding(params, 'energyBoost', { label: 'energy boost', min: 0, max: 2, step: 0.05 }).on('change', e => {
       this.energyBoost = e.value;
     });
-    pane.addBinding(params, 'coolColor', { label: 'cool' }).on('change', e => {
+    pane.addBinding(params, 'coolColor', { label: 'deep' }).on('change', e => {
       hexToVec3(e.value, this.uCool.value);
     });
-    pane.addBinding(params, 'warmColor', { label: 'warm' }).on('change', e => {
+    pane.addBinding(params, 'warmColor', { label: 'surface' }).on('change', e => {
       hexToVec3(e.value, this.uWarm.value);
     });
-    pane.addBinding(params, 'hotColor', { label: 'hot' }).on('change', e => {
+    pane.addBinding(params, 'hotColor', { label: 'shine' }).on('change', e => {
       hexToVec3(e.value, this.uHot.value);
     });
 
-    const advanced = pane.addFolder({ title: 'raymarch / tone', expanded: false });
-    advanced.addBinding(params, 'raymarchSteps', { label: 'steps', min: 8, max: 96, step: 1 }).on('change', e => {
+    const advanced = pane.addFolder({ title: 'quality / tone', expanded: false });
+    advanced.addBinding(params, 'surfaceSteps', { label: 'surface steps', min: 6, max: MAX_SURFACE_STEPS, step: 1 }).on('change', e => {
       this.uSteps.value = e.value | 0;
     });
-    advanced.addBinding(params, 'innerIters', { label: 'fold iters', min: 1, max: 16, step: 1 }).on('change', e => {
-      this.uInnerIters.value = e.value | 0;
+    advanced.addBinding(params, 'refineSteps', { label: 'edge refine', min: 0, max: MAX_REFINE_STEPS, step: 1 }).on('change', e => {
+      this.uRefineSteps.value = e.value | 0;
     });
-    advanced.addBinding(params, 'foldSensitivity', { label: 'fold sens', min: 4, max: 40, step: 0.5 }).on('change', e => {
-      this.uFoldSensitivity.value = e.value;
-    });
-    advanced.addBinding(params, 'accumRate', { label: 'accum rate', min: 0.005, max: 0.2, step: 0.005 }).on('change', e => {
-      this.uAccumRate.value = e.value;
-    });
-    advanced.addBinding(params, 'toneStrength', { label: 'tone (Reinhard)', min: 0.1, max: 3, step: 0.05 }).on('change', e => {
-      this.uToneStrength.value = e.value;
-    });
-    advanced.addBinding(params, 'brightness', { label: 'brightness', min: 0.2, max: 2, step: 0.05 }).on('change', e => {
+    advanced.addBinding(params, 'brightness', { min: 0.2, max: 2, step: 0.05 }).on('change', e => {
       this.uBrightness.value = e.value;
+    });
+    advanced.addBinding(params, 'alpha', { min: 0.1, max: 1, step: 0.01 }).on('change', e => {
+      this.uAlpha.value = e.value;
     });
   }
 
   private buildMaterial(): THREE.MeshBasicNodeMaterial {
     const material = new THREE.MeshBasicNodeMaterial();
-    material.transparent = false;
-    material.depthWrite = true;
+    material.transparent = true;
+    material.depthWrite = false;
+    material.depthTest = true;
     material.side = THREE.FrontSide;
-    // material.blending = THREE.NormalBlending;
-    // material.alphaTest = 0.5;
-    // material.wireframe = true
 
     try {
       const colorNode = Fn(() => {
         const ro = cameraPosition;
         const rd = positionWorld.sub(cameraPosition).normalize();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const sample = plasmaFn({
+        const sample = metaballFn({
           ro,
           rd,
           uCenter: this.uCenter,
-          uRadius: this.uRadius,
+          uBoundRadius: this.uBoundRadius,
           uTime: this.uTime,
           uEnergy: this.uEnergy,
+          uIsoLevel: this.uIsoLevel,
+          uBallCount: this.uBallCount,
           uNoiseAmp: this.uNoiseAmp,
           uWobbleFreq: this.uWobbleFreq,
           uWobbleSpeed: this.uWobbleSpeed,
-          uAttractorReach: this.uAttractorReach,
-          uAttractorStrength: this.uAttractorStrength,
-          uA0: this.uA0,
-          uA1: this.uA1,
-          uA2: this.uA2,
-          uA3: this.uA3,
+          uB0: this.uB0,
+          uB1: this.uB1,
+          uB2: this.uB2,
+          uB3: this.uB3,
+          uB4: this.uB4,
+          uB5: this.uB5,
+          uB6: this.uB6,
+          uB7: this.uB7,
+          uB8: this.uB8,
+          uB9: this.uB9,
+          uB10: this.uB10,
+          uB11: this.uB11,
+          uB12: this.uB12,
+          uB13: this.uB13,
+          uB14: this.uB14,
+          uB15: this.uB15,
+          uB16: this.uB16,
+          uB17: this.uB17,
+          uB18: this.uB18,
+          uB19: this.uB19,
+          uB20: this.uB20,
           uCool: this.uCool,
           uWarm: this.uWarm,
           uHot: this.uHot,
           uSteps: this.uSteps,
-          uInnerIters: this.uInnerIters,
-          uFoldSensitivity: this.uFoldSensitivity,
-          uAccumRate: this.uAccumRate,
-          uToneStrength: this.uToneStrength,
+          uRefineSteps: this.uRefineSteps,
           uBrightness: this.uBrightness,
+          uAlpha: this.uAlpha,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         }) as any;
-        Discard(sample.a.lessThan(0.5));
+        Discard(sample.a.lessThan(0.04));
         return sample;
       })();
       material.colorNode = colorNode as unknown as THREE.MeshBasicNodeMaterial['colorNode'];
@@ -413,8 +539,8 @@ export class PlasmaOrb {
     return material;
   }
 
-  setAttractors(attractors: PlasmaOrbAttractor[]): void {
-    this.targetAttractors = attractors.slice(0, MAX_ATTRACTORS);
+  setFingertips(fingertips: PlasmaOrbMetaball[]): void {
+    this.targetFingertips = fingertips.slice(0, MAX_FINGER_METABALLS);
   }
 
   setEnergy(energy: number): void {
@@ -425,24 +551,42 @@ export class PlasmaOrb {
     const energyAlpha = 1 - Math.exp(-delta * 5);
     this.smoothedEnergy += (this.targetEnergy - this.smoothedEnergy) * energyAlpha;
 
-    const posAlpha = 1 - Math.exp(-delta * 12);
-    const weightAlpha = 1 - Math.exp(-delta * 8);
-    const slots = [this.uA0, this.uA1, this.uA2, this.uA3];
-    for (let i = 0; i < MAX_ATTRACTORS; i += 1) {
-      const target = this.targetAttractors[i];
-      const slot = this.smoothedAttractors[i];
-      if (target) {
-        slot.position.lerp(target.position, posAlpha);
-        slot.weight += (target.weight - slot.weight) * weightAlpha;
-      } else {
-        slot.weight += (0 - slot.weight) * weightAlpha;
-      }
-      slots[i].value.set(slot.position.x, slot.position.y, slot.position.z, slot.weight);
+    const posAlpha = 1 - Math.exp(-delta * 18);
+    const radiusAlpha = 1 - Math.exp(-delta * 12);
+    const effectiveFingerRadius = this.fingerRadius * Math.sqrt(Math.max(this.fingerInfluence, 0));
+    const activeLimit = Math.max(0, Math.min(MAX_FINGER_METABALLS, this.activeTipLimit | 0));
+    const activeRangeSq = Math.max(0.01, this.activeTipRange * this.activeTipRange);
+    const activeTargets = this.targetFingertips
+      .map(target => ({
+        target,
+        distanceSq: target.position.distanceToSquared(this.mesh.position),
+      }))
+      .filter(entry => entry.distanceSq <= activeRangeSq);
+    if (activeTargets.length > activeLimit) {
+      activeTargets.sort((a, b) => a.distanceSq - b.distanceSq);
+      activeTargets.length = activeLimit;
     }
 
+    this.ballUniforms[0].value.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z, this.radius);
+
+    for (let i = 0; i < MAX_FINGER_METABALLS; i += 1) {
+      const target = activeTargets[i]?.target;
+      const slot = this.smoothedFingertips[i];
+      const targetRadius = target ? effectiveFingerRadius : 0;
+      if (target) {
+        if (slot.radius <= 0.0001) slot.position.copy(target.position);
+        else slot.position.lerp(target.position, posAlpha);
+      }
+      slot.radius += (targetRadius - slot.radius) * radiusAlpha;
+      this.ballUniforms[i + 1].value.set(slot.position.x, slot.position.y, slot.position.z, slot.radius);
+    }
+
+    this.uBallCount.value = 1 + activeTargets.length;
     this.uTime.value = elapsed;
     this.uEnergy.value = this.smoothedEnergy;
     this.uCenter.value.copy(this.mesh.position);
+    this.uBoundRadius.value = this.boundRadius;
+    this.mesh.scale.setScalar(this.boundRadius);
   }
 
   dispose(): void {
