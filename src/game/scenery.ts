@@ -10,6 +10,8 @@ import {
 import { BiomeLayers } from './biomeLayers';
 import { SpriteAtlas } from './spriteAtlas';
 import { WaterStrip } from './waterStrip';
+import { SkyLife } from './skyLife';
+import { timeOfDayPhase } from './biomes';
 
 type Atmosphere = {
   background: THREE.Color;
@@ -84,6 +86,7 @@ export class ScenerySystem {
   private atlas!: SpriteAtlas;
   private layers!: BiomeLayers;
   private water!: WaterStrip;
+  private skyLife!: SkyLife;
   private lastCycle = 0;
   private atmosphere = {
     background: new THREE.Color(0x10202d),
@@ -133,6 +136,14 @@ export class ScenerySystem {
     this.layers.build();
     this.water = new WaterStrip(this.scene);
     this.water.build();
+    this.skyLife = new SkyLife(
+      this.scene,
+      this.atlas,
+      this.scheduler,
+      this.roomSeed,
+      () => (Date.now() - this.epochMs) / 1000,
+    );
+    this.skyLife.build();
     this.scene.add(this.root);
   }
 
@@ -190,6 +201,19 @@ export class ScenerySystem {
     if (this.water) {
       const fg = this.scheduler.foreground();
       this.water.update(fg.t < 0.5 ? fg.from : fg.to, delta);
+    }
+    if (this.skyLife) {
+      const fg = this.scheduler.foreground();
+      const currentFg = fg.t < 0.5 ? fg.from : fg.to;
+      const weatherNow = this.scheduler.weatherAt((Date.now() - this.epochMs) / 1000);
+      this.skyLife.update(delta, {
+        daylight,
+        goldenHour,
+        cloudCover: weatherNow.cloudCover,
+        rainAmount: weatherNow.rain,
+        phase: timeOfDayPhase(cycle),
+        currentForegroundId: currentFg.id,
+      });
     }
 
     const dayColor = new THREE.Color(0x2f6172);
