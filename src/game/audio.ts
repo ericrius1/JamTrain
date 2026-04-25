@@ -7,24 +7,33 @@ type ChordVoicing = {
   drone: string;
 };
 
+// Cozy mysterious — F major / A minor area, voice-led for smooth glides.
 const PALETTE_A_NIGHT: ChordVoicing[] = [
-  { voices: ['A3', 'C4', 'E4'], drone: 'A2' },
-  { voices: ['F3', 'A3', 'C4'], drone: 'F2' },
-  { voices: ['C4', 'E4', 'G4'], drone: 'C2' },
-  { voices: ['G3', 'C4', 'D4'], drone: 'G2' },
+  { voices: ['A3', 'C4', 'E4'], drone: 'F2' }, // Fmaj7
+  { voices: ['C4', 'E4', 'G4'], drone: 'A2' }, // Am9
+  { voices: ['D4', 'F4', 'A4'], drone: 'D2' }, // Dm11
+  { voices: ['B3', 'E4', 'G4'], drone: 'C2' }, // Cmaj9
 ];
 
+// Cozy bright — G major / D major area, higher voicings for daylight warmth.
 const PALETTE_B_DAY: ChordVoicing[] = [
-  { voices: ['D4', 'F#4', 'A4'], drone: 'D2' },
-  { voices: ['A3', 'C#4', 'E4'], drone: 'A2' },
-  { voices: ['E4', 'F#4', 'B4'], drone: 'E2' },
-  { voices: ['F#3', 'A3', 'C#4'], drone: 'F#2' },
+  { voices: ['D4', 'F#4', 'B4'], drone: 'G2' }, // Gmaj7
+  { voices: ['D4', 'G4', 'B4'], drone: 'E2' }, // Em11
+  { voices: ['E4', 'G4', 'B4'], drone: 'C2' }, // Cmaj9
+  { voices: ['D4', 'F#4', 'A4'], drone: 'D2' }, // Dadd9
 ];
 
 const PARAM_RAMP = 0.12;
 const PRESENCE_THRESHOLD = 0.2;
 const REST_HAND_HEIGHT = 1.0;
-const PRESENCE_SMOOTHING_SECONDS = 1.5;
+const STAT_SMOOTH_SECONDS = 1.2;
+const PRESENCE_ATTACK_SECONDS = 0.6;
+const PRESENCE_RELEASE_SECONDS = 2.5;
+
+const BASE_FILTER_HZ = 1500;
+const BASE_REVERB_WET = 0.35;
+const BASE_CHORUS_WET = 0.25;
+const BASE_PAN = 0;
 
 export class AudioEngine {
   private tone?: typeof import('tone');
@@ -49,18 +58,24 @@ export class AudioEngine {
 
   private chordIndex = 0;
   private chordPhase = 0;
-  private smoothedPresence = 0;
   private pane?: Pane;
+
+  // Smoothed input stats — drift slowly so hand-loss does not snap.
+  private smoothed = {
+    avgX: 0,
+    avgY: REST_HAND_HEIGHT,
+    avgCurl: 0.5,
+    spread: 0,
+    presence: 0,
+  };
 
   private params = {
     masterGain: 0.6,
     chordCycleSeconds: 35,
     portamentoSeconds: 4,
-    filterMinHz: 400,
-    filterMaxHz: 5500,
-    reverbMinWet: 0.18,
-    reverbMaxWet: 0.55,
-    shimmerMaxDb: -8,
+    filterMaxHz: 3000,
+    reverbWetRange: 0.18,
+    shimmerMaxDb: -10,
     muteHandModulation: false,
   };
 
@@ -79,35 +94,35 @@ export class AudioEngine {
     await Tone.start();
 
     this.master = new Tone.Gain(this.params.masterGain).toDestination();
-    this.panner = new Tone.Panner(0).connect(this.master);
-    this.reverb = new Tone.Reverb({ decay: 7, wet: 0.32 }).connect(this.panner);
-    this.delay = new Tone.PingPongDelay({ delayTime: '8n.', feedback: 0.32, wet: 0.16 }).connect(this.reverb);
-    this.chorus = new Tone.Chorus({ frequency: 0.35, delayTime: 4, depth: 0.5, wet: 0.4 })
+    this.panner = new Tone.Panner(BASE_PAN).connect(this.master);
+    this.reverb = new Tone.Reverb({ decay: 9, wet: BASE_REVERB_WET }).connect(this.panner);
+    this.delay = new Tone.PingPongDelay({ delayTime: '4n.', feedback: 0.28, wet: 0.12 }).connect(this.reverb);
+    this.chorus = new Tone.Chorus({ frequency: 0.25, delayTime: 6, depth: 0.4, wet: BASE_CHORUS_WET })
       .start()
       .connect(this.delay);
-    this.filter = new Tone.Filter({ frequency: 1100, type: 'lowpass', rolloff: -24 }).connect(this.chorus);
+    this.filter = new Tone.Filter({ frequency: BASE_FILTER_HZ, type: 'lowpass', rolloff: -24 }).connect(this.chorus);
 
     this.bedAGain = new Tone.Gain(1).connect(this.filter);
     this.bedBGain = new Tone.Gain(0).connect(this.filter);
     this.shimmerGain = new Tone.Gain(0).connect(this.filter);
 
     const padOptions = {
-      oscillator: { type: 'fatsawtooth', count: 3, spread: 28 } as any,
-      envelope: { attack: 2.4, decay: 0.6, sustain: 1.0, release: 5.0 },
+      oscillator: { type: 'fattriangle', count: 3, spread: 14 } as any,
+      envelope: { attack: 3.0, decay: 0.6, sustain: 1.0, release: 6.0 },
       portamento: this.params.portamentoSeconds,
-      volume: -16,
+      volume: -14,
     };
     const droneOptions = {
-      oscillator: { type: 'fatsine', count: 2, spread: 8 } as any,
-      envelope: { attack: 3.2, decay: 0.4, sustain: 1.0, release: 6.0 },
+      oscillator: { type: 'sine' } as any,
+      envelope: { attack: 4.0, decay: 0.4, sustain: 1.0, release: 8.0 },
       portamento: this.params.portamentoSeconds,
-      volume: -10,
+      volume: -8,
     };
     const shimmerOptions = {
       oscillator: { type: 'triangle' } as any,
-      envelope: { attack: 1.8, decay: 0.4, sustain: 1.0, release: 4.0 },
+      envelope: { attack: 4.0, decay: 0.4, sustain: 1.0, release: 4.0 },
       portamento: this.params.portamentoSeconds,
-      volume: -12,
+      volume: -16,
     };
 
     const initial = this.currentChord();
@@ -148,31 +163,41 @@ export class AudioEngine {
     this.bedAGain.gain.rampTo(1 - dayT, PARAM_RAMP);
     this.bedBGain.gain.rampTo(dayT, PARAM_RAMP);
 
-    if (this.params.muteHandModulation) {
-      this.applyRest();
-      return;
-    }
-
     const stats = this.computeHandStats(local, remote);
 
-    const heightT = clamp((stats.avgY - 0.6) / 1.4, 0, 1);
-    const filterHz = this.params.filterMinHz + (this.params.filterMaxHz - this.params.filterMinHz) * heightT;
-    this.filter.frequency.rampTo(filterHz, PARAM_RAMP);
+    // Smooth the stats. Presence uses asymmetric attack/release so hand
+    // appearance feels responsive but disappearance fades gently.
+    const k = 1 - Math.exp(-delta / STAT_SMOOTH_SECONDS);
+    this.smoothed.avgX += (stats.avgX - this.smoothed.avgX) * k;
+    this.smoothed.avgY += (stats.avgY - this.smoothed.avgY) * k;
+    this.smoothed.avgCurl += (stats.avgCurl - this.smoothed.avgCurl) * k;
+    this.smoothed.spread += (stats.spread - this.smoothed.spread) * k;
 
-    const panT = clamp(stats.avgX / 0.5, -1, 1) * 0.7;
-    this.panner.pan.rampTo(panT, PARAM_RAMP);
+    const presenceTau =
+      stats.presence > this.smoothed.presence ? PRESENCE_ATTACK_SECONDS : PRESENCE_RELEASE_SECONDS;
+    const pk = 1 - Math.exp(-delta / presenceTau);
+    this.smoothed.presence += (stats.presence - this.smoothed.presence) * pk;
 
-    const reverbWet =
-      this.params.reverbMinWet + (this.params.reverbMaxWet - this.params.reverbMinWet) * stats.avgCurl;
-    this.reverb.wet.rampTo(reverbWet, PARAM_RAMP);
+    // Hand modulation acts as an additive layer on top of cozy baselines.
+    // When presence → 0, every modulator → 0 and the bed sits at its baseline.
+    const p = this.params.muteHandModulation ? 0 : this.smoothed.presence;
 
-    const swellGain = this.params.masterGain * (0.55 + 0.45 * stats.spread);
-    this.master.gain.rampTo(swellGain, PARAM_RAMP);
-    this.chorus.wet.rampTo(0.2 + 0.6 * stats.spread, PARAM_RAMP);
+    const heightT = clamp((this.smoothed.avgY - 0.6) / 1.4, 0, 1);
+    const filterMod = (heightT - 0.3) * (this.params.filterMaxHz - BASE_FILTER_HZ) * p;
+    this.filter.frequency.rampTo(BASE_FILTER_HZ + filterMod, PARAM_RAMP);
 
-    const presenceLerp = Math.min(1, delta / PRESENCE_SMOOTHING_SECONDS);
-    this.smoothedPresence += (stats.presence - this.smoothedPresence) * presenceLerp;
-    const shimmerLinear = this.smoothedPresence * this.tone.dbToGain(this.params.shimmerMaxDb);
+    const panMod = clamp(this.smoothed.avgX / 0.5, -1, 1) * 0.55 * p;
+    this.panner.pan.rampTo(BASE_PAN + panMod, PARAM_RAMP);
+
+    const wetMod = (this.smoothed.avgCurl - 0.5) * this.params.reverbWetRange * p;
+    this.reverb.wet.rampTo(BASE_REVERB_WET + wetMod, PARAM_RAMP);
+
+    // Swell only adds gain — never dips below baseline. Same for chorus.
+    const swellAdd = this.smoothed.spread * 0.25 * p;
+    this.master.gain.rampTo(this.params.masterGain * (0.85 + swellAdd), PARAM_RAMP);
+    this.chorus.wet.rampTo(BASE_CHORUS_WET + this.smoothed.spread * 0.35 * p, PARAM_RAMP);
+
+    const shimmerLinear = p * this.tone.dbToGain(this.params.shimmerMaxDb);
     this.shimmerGain.gain.rampTo(shimmerLinear, PARAM_RAMP);
   }
 
@@ -192,16 +217,6 @@ export class AudioEngine {
     this.master?.dispose?.();
     this.pane?.dispose();
     this.publish();
-  }
-
-  private applyRest(): void {
-    if (!this.tone) return;
-    this.filter.frequency.rampTo(1100, PARAM_RAMP);
-    this.reverb.wet.rampTo(0.32, PARAM_RAMP);
-    this.panner.pan.rampTo(0, PARAM_RAMP);
-    this.chorus.wet.rampTo(0.4, PARAM_RAMP);
-    this.master.gain.rampTo(this.params.masterGain * 0.7, PARAM_RAMP);
-    this.shimmerGain.gain.rampTo(0, PARAM_RAMP);
   }
 
   private advanceChord(): void {
@@ -278,10 +293,8 @@ export class AudioEngine {
     this.pane
       .addBinding(this.params, 'portamentoSeconds', { label: 'glide sec', min: 0.1, max: 8, step: 0.1 })
       .on('change', () => this.advanceChord());
-    this.pane.addBinding(this.params, 'filterMinHz', { label: 'filter min', min: 80, max: 2000, step: 10 });
-    this.pane.addBinding(this.params, 'filterMaxHz', { label: 'filter max', min: 1000, max: 12000, step: 50 });
-    this.pane.addBinding(this.params, 'reverbMinWet', { label: 'verb min', min: 0, max: 1, step: 0.01 });
-    this.pane.addBinding(this.params, 'reverbMaxWet', { label: 'verb max', min: 0, max: 1, step: 0.01 });
+    this.pane.addBinding(this.params, 'filterMaxHz', { label: 'filter ceil', min: 1500, max: 8000, step: 50 });
+    this.pane.addBinding(this.params, 'reverbWetRange', { label: 'verb mod', min: 0, max: 0.6, step: 0.01 });
     this.pane.addBinding(this.params, 'shimmerMaxDb', { label: 'shimmer dB', min: -30, max: 0, step: 0.5 });
     this.pane.addBinding(this.params, 'muteHandModulation', { label: 'mute hands' });
   }
