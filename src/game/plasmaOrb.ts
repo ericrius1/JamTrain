@@ -14,9 +14,26 @@ export type PlasmaOrbOptions = {
 };
 
 const MAX_ATTRACTORS = 4;
-const RAYMARCH_STEPS = 48;
+const MAX_RAYMARCH_STEPS = 96;
+const MAX_INNER_ITERS = 16;
 
 const plasmaWGSL = /* wgsl */ `
+fn pseudoNoise(s: vec3<f32>) -> f32 {
+  return (
+    sin(s.x + cos(s.y * 1.3)) +
+    sin(s.y * 1.1 + cos(s.z * 0.9)) +
+    sin(s.z * 1.2 + cos(s.x * 1.05))
+  ) * (1.0 / 3.0);
+}
+
+fn fbmNoise(seed: vec3<f32>) -> f32 {
+  // Three octaves: doubling-ish frequencies with decreasing amplitude.
+  let n1 = pseudoNoise(seed);
+  let n2 = pseudoNoise(seed * 2.13 + vec3<f32>(7.13, 3.71, 5.27));
+  let n3 = pseudoNoise(seed * 4.71 + vec3<f32>(13.7, 19.3, 11.1));
+  return (n1 + n2 * 0.5 + n3 * 0.25) * (1.0 / 1.75);
+}
+
 fn plasmaOrb(
   ro: vec3<f32>,
   rd: vec3<f32>,
@@ -25,6 +42,8 @@ fn plasmaOrb(
   uTime: f32,
   uEnergy: f32,
   uNoiseAmp: f32,
+  uWobbleFreq: f32,
+  uWobbleSpeed: f32,
   uAttractorReach: f32,
   uAttractorStrength: f32,
   uA0: vec4<f32>,
@@ -33,7 +52,13 @@ fn plasmaOrb(
   uA3: vec4<f32>,
   uCool: vec3<f32>,
   uWarm: vec3<f32>,
-  uHot: vec3<f32>
+  uHot: vec3<f32>,
+  uSteps: i32,
+  uInnerIters: i32,
+  uFoldSensitivity: f32,
+  uAccumRate: f32,
+  uToneStrength: f32,
+  uBrightness: f32
 ) -> vec4<f32> {
   let oc = ro - uCenter;
   let bound = uRadius * 1.4;
@@ -80,13 +105,15 @@ fn plasmaOrb(
 
   var col = vec3<f32>(0.0);
   var t = tMin;
-  let dtBase = (tMax - tMin) / 48.0;
+  let stepCount = max(uSteps, 1);
+  let dtBase = (tMax - tMin) / f32(stepCount);
   var lastDensity = 0.0;
   var everInside = false;
   var maxStep = 0.0;
   var depthAccum = 0.0;
 
-  for (var i: i32 = 0; i < 48; i = i + 1) {
+  for (var i: i32 = 0; i < 96; i = i + 1) {
+    if (i >= stepCount) { break; }
     let stepDt = dtBase * exp(-2.0 * lastDensity);
     t = t + stepDt;
     if (t > tMax) {
@@ -107,13 +134,10 @@ fn plasmaOrb(
       }
     }
 
-    // Cheap 3D pseudo-noise for low-frequency wobble.
-    let nseed = p0 * 2.4 + vec3<f32>(uTime * 0.3, uTime * 0.21, uTime * 0.18);
-    let noise = (
-      sin(nseed.x + cos(nseed.y * 1.3)) +
-      sin(nseed.y * 1.1 + cos(nseed.z * 0.9)) +
-      sin(nseed.z * 1.2 + cos(nseed.x * 1.05))
-    ) * (1.0 / 3.0);
+    // FBM noise: spatial frequency from uWobbleFreq, time-scrolled by uWobbleSpeed.
+    let timeShift = vec3<f32>(uTime * 0.3, uTime * 0.21, uTime * 0.18) * uWobbleSpeed;
+    let nseed = p0 * uWobbleFreq + timeShift;
+    let noise = fbmNoise(nseed);
     let displacement = noise * uNoiseAmp;
 
     let surfaceR = uRadius + radiusBoost + displacement;
@@ -128,14 +152,16 @@ fn plasmaOrb(
     var p = p0 + foldOffset;
     let cFold = p;
     var density = 0.0;
-    for (var k: i32 = 0; k < 10; k = k + 1) {
+    let innerCount = max(uInnerIters, 1);
+    for (var k: i32 = 0; k < 16; k = k + 1) {
+      if (k >= innerCount) { break; }
       let dotPP = max(dot(p, p), 1e-4);
       p = 0.7 * abs(p) / dotPP - 0.7;
       let yz = vec2<f32>(p.y, p.z);
       let csq = vec2<f32>(yz.x * yz.x - yz.y * yz.y, 2.0 * yz.x * yz.y);
       let folded = vec3<f32>(p.x, csq.x, csq.y);
       p = folded.zxy;
-      density = density + exp(-19.0 * abs(dot(p, cFold)));
+      density = density + exp(-uFoldSensitivity * abs(dot(p, cFold)));
     }
     density = density * 0.5;
     lastDensity = density;
@@ -143,7 +169,7 @@ fn plasmaOrb(
     let bright = clamp(density, 0.0, 4.0);
     maxStep = max(maxStep, bright);
     depthAccum = depthAccum + bright;
-    col = col * 0.99 + 0.05 * vec3<f32>(bright * bright * bright, bright * bright, bright);
+    col = col * 0.99 + uAccumRate * vec3<f32>(bright * bright * bright, bright * bright, bright);
   }
 
   if (!everInside) {
@@ -151,7 +177,7 @@ fn plasmaOrb(
   }
 
   // Soft Reinhard tone curve preserves color, no log blow-out.
-  col = col / (1.0 + col * 0.9);
+  col = col / (1.0 + col * uToneStrength);
 
   let lum = clamp(dot(col, vec3<f32>(0.299, 0.587, 0.114)), 0.0, 1.0);
 
@@ -162,7 +188,7 @@ fn plasmaOrb(
   // Amber lives in narrow filaments only: ridges where a single inner-loop
   // peak dominates the volume average. Without this gate, amber paints the
   // whole bright interior.
-  let avgStep = depthAccum / 48.0;
+  let avgStep = depthAccum / f32(stepCount);
   let filament = clamp((maxStep - avgStep * 4.0 - 0.35) * 1.6, 0.0, 1.0);
   let amberAccent = filament * smoothstep(0.35, 0.85, lum) * uEnergy;
   let palette = mix(coolBlend, uWarm, amberAccent * 0.85);
@@ -170,7 +196,7 @@ fn plasmaOrb(
   // Slightly desaturate before the cool tint: keeps the highlights from
   // pumping pure white through the multiplication.
   let baseRgb = mix(vec3<f32>(lum), col, 0.6);
-  let tinted = baseRgb * palette * 0.95;
+  let tinted = baseRgb * palette * uBrightness;
 
   // Floor: dim cool fill so the back of the volume reads as the orb body
   // rather than punching through to black.
@@ -205,6 +231,8 @@ export class PlasmaOrb {
   private uRadius = uniform(0.42);
   private uEnergy = uniform(0);
   private uNoiseAmp = uniform(0.08);
+  private uWobbleFreq = uniform(4.5);
+  private uWobbleSpeed = uniform(1.0);
   private uAttractorReach = uniform(0.55);
   private uAttractorStrength = uniform(0.22);
   private uA0 = uniform(new THREE.Vector4());
@@ -214,6 +242,14 @@ export class PlasmaOrb {
   private uCool = uniform(colorToVec3(0x14e8c0));
   private uWarm = uniform(colorToVec3(0xff5a18));
   private uHot = uniform(colorToVec3(0x7af2d4));
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private uSteps = (uniform as any)(48, 'int');
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private uInnerIters = (uniform as any)(10, 'int');
+  private uFoldSensitivity = uniform(19.0);
+  private uAccumRate = uniform(0.05);
+  private uToneStrength = uniform(0.9);
+  private uBrightness = uniform(0.95);
 
   constructor(scene: THREE.Scene, options: PlasmaOrbOptions) {
     this.radius = options.radius ?? 0.42;
@@ -240,37 +276,76 @@ export class PlasmaOrb {
 
   private registerTweaks(): void {
     if (!this.pane) return;
+    const pane = this.pane;
     const params = {
       radius: this.radius,
       noiseAmp: this.uNoiseAmp.value,
+      wobbleFreq: this.uWobbleFreq.value,
+      wobbleSpeed: this.uWobbleSpeed.value,
       attractorReach: this.uAttractorReach.value,
       attractorStrength: this.uAttractorStrength.value,
       energyBoost: this.energyBoost,
       coolColor: vec3ToHex(this.uCool.value),
       warmColor: vec3ToHex(this.uWarm.value),
+      hotColor: vec3ToHex(this.uHot.value),
+      raymarchSteps: this.uSteps.value,
+      innerIters: this.uInnerIters.value,
+      foldSensitivity: this.uFoldSensitivity.value,
+      accumRate: this.uAccumRate.value,
+      toneStrength: this.uToneStrength.value,
+      brightness: this.uBrightness.value,
     };
 
-    this.pane.addBinding(params, 'radius', { min: 0.2, max: 0.8, step: 0.01 }).on('change', e => {
+    pane.addBinding(params, 'radius', { min: 0.2, max: 0.8, step: 0.01 }).on('change', e => {
       this.radius = e.value;
       this.uRadius.value = e.value;
     });
-    this.pane.addBinding(params, 'noiseAmp', { label: 'wobble', min: 0, max: 0.25, step: 0.005 }).on('change', e => {
+    pane.addBinding(params, 'noiseAmp', { label: 'wobble amp', min: 0, max: 0.4, step: 0.005 }).on('change', e => {
       this.uNoiseAmp.value = e.value;
     });
-    this.pane.addBinding(params, 'attractorReach', { label: 'hand reach', min: 0.2, max: 1.5, step: 0.01 }).on('change', e => {
+    pane.addBinding(params, 'wobbleFreq', { label: 'wobble freq', min: 0.5, max: 24, step: 0.1 }).on('change', e => {
+      this.uWobbleFreq.value = e.value;
+    });
+    pane.addBinding(params, 'wobbleSpeed', { label: 'wobble speed', min: 0, max: 4, step: 0.05 }).on('change', e => {
+      this.uWobbleSpeed.value = e.value;
+    });
+    pane.addBinding(params, 'attractorReach', { label: 'hand reach', min: 0.2, max: 1.5, step: 0.01 }).on('change', e => {
       this.uAttractorReach.value = e.value;
     });
-    this.pane.addBinding(params, 'attractorStrength', { label: 'hand pull', min: 0, max: 0.4, step: 0.005 }).on('change', e => {
+    pane.addBinding(params, 'attractorStrength', { label: 'hand pull', min: 0, max: 0.4, step: 0.005 }).on('change', e => {
       this.uAttractorStrength.value = e.value;
     });
-    this.pane.addBinding(params, 'energyBoost', { label: 'energy boost', min: 0, max: 2, step: 0.05 }).on('change', e => {
+    pane.addBinding(params, 'energyBoost', { label: 'energy boost', min: 0, max: 2, step: 0.05 }).on('change', e => {
       this.energyBoost = e.value;
     });
-    this.pane.addBinding(params, 'coolColor', { label: 'cool' }).on('change', e => {
+    pane.addBinding(params, 'coolColor', { label: 'cool' }).on('change', e => {
       hexToVec3(e.value, this.uCool.value);
     });
-    this.pane.addBinding(params, 'warmColor', { label: 'warm' }).on('change', e => {
+    pane.addBinding(params, 'warmColor', { label: 'warm' }).on('change', e => {
       hexToVec3(e.value, this.uWarm.value);
+    });
+    pane.addBinding(params, 'hotColor', { label: 'hot' }).on('change', e => {
+      hexToVec3(e.value, this.uHot.value);
+    });
+
+    const advanced = pane.addFolder({ title: 'raymarch / tone', expanded: false });
+    advanced.addBinding(params, 'raymarchSteps', { label: 'steps', min: 8, max: 96, step: 1 }).on('change', e => {
+      this.uSteps.value = e.value | 0;
+    });
+    advanced.addBinding(params, 'innerIters', { label: 'fold iters', min: 1, max: 16, step: 1 }).on('change', e => {
+      this.uInnerIters.value = e.value | 0;
+    });
+    advanced.addBinding(params, 'foldSensitivity', { label: 'fold sens', min: 4, max: 40, step: 0.5 }).on('change', e => {
+      this.uFoldSensitivity.value = e.value;
+    });
+    advanced.addBinding(params, 'accumRate', { label: 'accum rate', min: 0.005, max: 0.2, step: 0.005 }).on('change', e => {
+      this.uAccumRate.value = e.value;
+    });
+    advanced.addBinding(params, 'toneStrength', { label: 'tone (Reinhard)', min: 0.1, max: 3, step: 0.05 }).on('change', e => {
+      this.uToneStrength.value = e.value;
+    });
+    advanced.addBinding(params, 'brightness', { label: 'brightness', min: 0.2, max: 2, step: 0.05 }).on('change', e => {
+      this.uBrightness.value = e.value;
     });
   }
 
@@ -295,6 +370,8 @@ export class PlasmaOrb {
           uTime: this.uTime,
           uEnergy: this.uEnergy,
           uNoiseAmp: this.uNoiseAmp,
+          uWobbleFreq: this.uWobbleFreq,
+          uWobbleSpeed: this.uWobbleSpeed,
           uAttractorReach: this.uAttractorReach,
           uAttractorStrength: this.uAttractorStrength,
           uA0: this.uA0,
@@ -304,6 +381,12 @@ export class PlasmaOrb {
           uCool: this.uCool,
           uWarm: this.uWarm,
           uHot: this.uHot,
+          uSteps: this.uSteps,
+          uInnerIters: this.uInnerIters,
+          uFoldSensitivity: this.uFoldSensitivity,
+          uAccumRate: this.uAccumRate,
+          uToneStrength: this.uToneStrength,
+          uBrightness: this.uBrightness,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         }) as any;
         Discard(sample.a.lessThan(0.5));
