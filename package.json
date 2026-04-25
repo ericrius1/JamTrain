@@ -1,0 +1,28 @@
+{
+  "name": "aura-cabin",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "spacetime:start": "spacetime start --listen-addr 127.0.0.1:3000 --in-memory --non-interactive",
+    "spacetime:server": "spacetime dev aura-cabin --server local --project-path . --module-bindings-path src/module_bindings --client-lang typescript --server-only -y",
+    "spacetime:dev": "spacetime dev aura-cabin --server local --project-path . --module-bindings-path src/module_bindings --client-lang typescript --run \"npm run dev\" -y",
+    "spacetime:generate": "spacetime generate --lang typescript --out-dir src/module_bindings --module-path spacetimedb -y"
+  },
+  "dependencies": {
+    "@svenflow/micro-handpose": "0.3.0",
+    "@tweakpane/core": "^2.0.5",
+    "spacetimedb": "2.1.0",
+    "three": "0.184.0",
+    "tone": "15.1.22",
+    "tweakpane": "^4.0.5"
+  },
+  "devDependencies": {
+    "@types/three": "^0.184.0",
+    "typescript": "6.0.3",
+    "vite": "8.0.10"
+  }
+}
