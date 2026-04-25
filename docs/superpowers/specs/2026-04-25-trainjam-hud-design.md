@@ -1,4 +1,4 @@
-# TrainJam HUD — Aura Cabin Port
+# TrainJam HUD — Jam Train Port
 
 Port the high-fidelity solar-steampunk HUD from `~/Downloads/design_handoff_trainjam_hud/` (React reference) into the existing Vite + TypeScript + Three.js project as **vanilla TS DOM**. Replace the current minimal top-left HUD entirely. Add a `/` keybinding that toggles a dev overlay (Tweakpane dock + `stats.js`).
 

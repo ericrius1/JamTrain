@@ -29,7 +29,7 @@ export class TitlePlaque {
 
     const name = document.createElement('div');
     name.className = 'title-name';
-    name.innerHTML = 'Aura&nbsp;Cabin';
+    name.innerHTML = 'Jam&nbsp;Train';
     this.el.appendChild(name);
 
     const tagline = document.createElement('div');

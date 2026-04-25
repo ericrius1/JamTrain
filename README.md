@@ -37,7 +37,7 @@ The connection pill in the HUD will read `local` — that's expected without a S
 Multiplayer needs three things running:
 
 1. A local SpacetimeDB server
-2. The `aura-cabin` module published to that server
+2. The `jam-train` module published to that server
 3. The Vite dev server
 
 The simplest path is two terminals:
@@ -56,7 +56,7 @@ This starts SpacetimeDB on `127.0.0.1:3000` in in-memory mode. Leave it running.
 npm run spacetime:dev
 ```
 
-This builds and publishes the `aura-cabin` module to your local SpacetimeDB, regenerates the TypeScript bindings in `src/module_bindings/`, and then runs `npm run dev`.
+This builds and publishes the `jam-train` module to your local SpacetimeDB, regenerates the TypeScript bindings in `src/module_bindings/`, and then runs `npm run dev`.
 
 When the web app comes up, the HUD's connection pill should switch from `local` → `connecting` → `spacetime`. Type the same room name (e.g. `cabin-01`) in two browser tabs — or share your LAN IP with another machine — and you'll see the other player's hands.
 
@@ -71,7 +71,7 @@ Multiplayer endpoints come from `.env.local` (already checked in for local dev):
 
 ```
 VITE_SPACETIMEDB_HOST=http://127.0.0.1:3000
-VITE_SPACETIMEDB_DB_NAME=aura-cabin
+VITE_SPACETIMEDB_DB_NAME=jam-train
 ```
 
 Override `VITE_STDB_URI` (use `ws://` or `wss://`) and `VITE_STDB_DATABASE` to point at a different SpacetimeDB deployment.

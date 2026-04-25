@@ -5,7 +5,7 @@ import { DevOverlay } from './hud/DevOverlay';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#scene');
 if (!canvas) {
-  throw new Error('Aura Cabin: #scene canvas missing');
+  throw new Error('Jam Train: #scene canvas missing');
 }
 
 const initialRoom = 'cabin-01';
@@ -36,8 +36,10 @@ let started = false;
 const hud = new Hud({
   room: initialRoom,
   callbacks: {
-    onBegin: async () => {
+    onBegin: async _conductorName => {
       // Single user-gesture entry: kicks off both camera and audio together.
+      // The Hud already pushed the chosen name into the conductor plaque.
+      // TODO: forward the name to multiplayer once SpacetimeDB wiring exists.
       await Promise.all([game.startCamera(), game.startAudio()]);
       started = true;
     },

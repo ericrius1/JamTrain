@@ -9,7 +9,7 @@ import { createCornerFiligree } from './components/CornerFiligree';
 import { BeginGate } from './components/BeginGate';
 
 export type HudCallbacks = {
-  onBegin: () => Promise<void> | void;
+  onBegin: (conductorName: string) => Promise<void> | void;
   onRoomChange: (room: string) => void;
   onRecalibrate: () => void;
   onDisembark: () => void;
@@ -93,12 +93,25 @@ export class Hud {
     this.capture = new CaptureControl();
     this.uiEl.appendChild(this.capture.el);
 
-    this.beginGate = new BeginGate({ onBegin: opts.callbacks.onBegin });
+    this.beginGate = new BeginGate({
+      onBegin: async name => {
+        this.setConductorName(name);
+        await opts.callbacks.onBegin(name);
+      },
+    });
     stage.appendChild(this.beginGate.el);
 
     this.resizeHandler = () => this.fitStage();
     window.addEventListener('resize', this.resizeHandler);
     this.fitStage();
+  }
+
+  setConductorName(name: string): void {
+    this.playerLeft.set({
+      name,
+      voice: 'Glass Bells · Ionian',
+      kind: 'conductor',
+    });
   }
 
   setRoom(room: string): void {

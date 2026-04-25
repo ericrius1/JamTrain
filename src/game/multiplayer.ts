@@ -15,7 +15,7 @@ export class MultiplayerClient {
   private lastSendAt = 0;
   private channel?: BroadcastChannel;
   private listeners = new Set<Listener>();
-  private tokenKey = 'aura-cabin-spacetime-token';
+  private tokenKey = 'jam-train-spacetime-token';
 
   constructor(
     private roomId: string,
@@ -33,7 +33,7 @@ export class MultiplayerClient {
   connect(): void {
     const generatedHost = import.meta.env.VITE_SPACETIMEDB_HOST as string | undefined;
     const uri = import.meta.env.VITE_STDB_URI || generatedHost?.replace(/^http/, 'ws') || 'ws://localhost:3000';
-    const database = import.meta.env.VITE_STDB_DATABASE || import.meta.env.VITE_SPACETIMEDB_DB_NAME || 'aura-cabin';
+    const database = import.meta.env.VITE_STDB_DATABASE || import.meta.env.VITE_SPACETIMEDB_DB_NAME || 'jam-train';
     this.setState('connecting');
 
     try {
@@ -152,7 +152,7 @@ export class MultiplayerClient {
   private openBroadcastChannel(): void {
     this.channel?.close();
     if (!('BroadcastChannel' in window)) return;
-    this.channel = new BroadcastChannel(`aura-cabin-${this.roomId}`);
+    this.channel = new BroadcastChannel(`jam-train-${this.roomId}`);
     this.channel.onmessage = event => {
       const data = event.data as { type?: string; roomId?: string; id?: string; poseJson?: string; sentAt?: number };
       if (data.type !== 'pose' || data.roomId !== this.roomId || data.id === this.localId || !data.poseJson) return;
