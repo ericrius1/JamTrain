@@ -11,6 +11,7 @@ import { PlayerRig } from './rig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
+import { WebRTCClient } from './webrtc';
 
 type GameUi = {
   connectionStatus: HTMLElement;
@@ -34,6 +35,8 @@ export class Game {
   readonly handTracker: HandTracker;
   private audio: AudioEngine;
   private multiplayer: MultiplayerClient;
+  private webrtc: WebRTCClient;
+  private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
   private localRig: PlayerRig;
   private remoteRig: PlayerRig;
   private particles: LinkParticles;
@@ -56,18 +59,31 @@ export class Game {
     private ui: GameUi
   ) {
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+    this.paneDock = this.createPaneDock();
     this.handTracker = new HandTracker(ui.inputStatus);
-    this.audio = new AudioEngine(ui.musicStatus);
+    this.audio = new AudioEngine(ui.musicStatus, this.paneDock);
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
     this.roomId = this.multiplayer.getRoom();
     this.multiplayer.onStateChange(state => {
       ui.connectionStatus.textContent = state;
     });
 
+    this.webrtc = new WebRTCClient(
+      this.multiplayer,
+      () => this.handTracker.getStream(),
+      () => this.multiplayer.localSeatIndex
+    );
+    this.webrtc.onRemoteStream(stream => {
+      for (const listener of this.remoteStreamListeners) listener(stream);
+    });
+
     this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
     this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
+    this.multiplayer.onSeatChange((localSeat, partnerSeat) => {
+      this.localRig.setSeatIndex(localSeat);
+      this.remoteRig.setSeatIndex(partnerSeat);
+    });
     this.particles = new LinkParticles(this.scene);
-    this.paneDock = this.createPaneDock();
     this.robotMotion = new RobotMotionController(this.paneDock);
     this.scenery = new ScenerySystem(this.scene, this.paneDock);
 
@@ -102,8 +118,9 @@ export class Game {
     this.renderer.setAnimationLoop(() => this.update());
   }
 
-  startCamera(): Promise<void> {
-    return this.handTracker.startCamera();
+  async startCamera(): Promise<void> {
+    await this.handTracker.startCamera();
+    this.webrtc.notifyLocalStreamReady();
   }
 
   startAudio(): Promise<void> {
@@ -142,6 +159,14 @@ export class Game {
     this.multiplayer.onPartnerChange(listener);
   }
 
+  onSeatChange(listener: (localSeat: number, partnerSeat: number) => void): void {
+    this.multiplayer.onSeatChange(listener);
+  }
+
+  onRemoteStream(listener: (stream: MediaStream | null) => void): void {
+    this.remoteStreamListeners.add(listener);
+  }
+
   setDisplayName(name: string): void {
     this.multiplayer.setDisplayName(name);
   }
@@ -166,9 +191,11 @@ export class Game {
   dispose(): void {
     this.handTracker.dispose();
     this.multiplayer.dispose();
+    this.webrtc.dispose();
     this.robotMotion.dispose();
     this.scenery.dispose();
     this.plasmaOrb?.dispose();
+    this.audio.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -210,16 +237,15 @@ export class Game {
   private createCabin(): void {
     const floorMat = new THREE.MeshStandardMaterial({ color: 0x273034, roughness: 0.72, metalness: 0.08 });
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x18252a, roughness: 0.6, metalness: 0.18 });
-    const trimMat = new THREE.MeshStandardMaterial({ color: 0xd0b46b, roughness: 0.38, metalness: 0.22 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x6e9684, roughness: 0.68, metalness: 0.22 });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x9c7e4d, roughness: 0.58, metalness: 0.08 });
     const seatMat = new THREE.MeshStandardMaterial({ color: 0x4c233b, roughness: 0.7, metalness: 0.02 });
     const glassMat = new THREE.MeshStandardMaterial({
-      color: 0x9bd9f0,
-      emissive: 0x1e5f72,
-      emissiveIntensity: 0.45,
+      color: 0xb5dbe6,
       transparent: true,
-      opacity: 0.28,
-      roughness: 0.08,
-      metalness: 0.05,
+      opacity: 0.14,
+      roughness: 0.62,
+      metalness: 0,
       depthWrite: false,
     });
 
@@ -232,29 +258,57 @@ export class Game {
     ceiling.position.y = 2.24;
     this.scene.add(ceiling);
 
+    const glassY = 1.36;
+    const glassHeight = 1.18;
+    const glassTop = glassY + glassHeight / 2;
+    const glassBottom = glassY - glassHeight / 2;
+    const glassZs = [-1.5, 0, 1.5];
+    const paneDepth = 1.32;
+    const glassSpan = glassZs.length * paneDepth;
+    const frameThick = 0.05;
+    const frameOuterSpan = glassSpan + frameThick;
+
+    const ceilingBottom = 2.24 - 0.04;
+    const lowerWallHeight = glassBottom - 0.06;
+    const upperWallHeight = ceilingBottom - glassTop;
+    const endCapHeight = ceilingBottom - 0.06;
+    const endCapDepth = 4.8 / 2 - glassSpan / 2;
+
     for (const x of [-1.72, 1.72]) {
-      const lowerWall = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.52, 4.8), wallMat);
-      lowerWall.position.set(x, 0.32, 0);
+      const lowerWall = new THREE.Mesh(new THREE.BoxGeometry(0.08, lowerWallHeight, 4.8), wallMat);
+      lowerWall.position.set(x, 0.06 + lowerWallHeight / 2, 0);
       lowerWall.receiveShadow = true;
       this.scene.add(lowerWall);
 
-      const topRail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.12, 4.8), trimMat);
-      topRail.position.set(x, 2.04, 0);
-      this.scene.add(topRail);
+      const upperWall = new THREE.Mesh(new THREE.BoxGeometry(0.08, upperWallHeight, 4.8), wallMat);
+      upperWall.position.set(x, glassTop + upperWallHeight / 2, 0);
+      this.scene.add(upperWall);
 
-      const bottomRail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.1, 4.8), trimMat);
-      bottomRail.position.set(x, 0.7, 0);
-      this.scene.add(bottomRail);
-
-      for (const z of [-2.24, -0.76, 0.76, 2.24]) {
-        const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 1.32, 0.08), trimMat);
-        post.position.set(x, 1.36, z);
-        this.scene.add(post);
+      for (const zSign of [-1, 1]) {
+        const endCap = new THREE.Mesh(new THREE.BoxGeometry(0.08, endCapHeight, endCapDepth), wallMat);
+        endCap.position.set(x, 0.06 + endCapHeight / 2, zSign * (glassSpan / 2 + endCapDepth / 2));
+        this.scene.add(endCap);
       }
 
-      for (const z of [-1.5, 0, 1.5]) {
-        const windowPane = new THREE.Mesh(new THREE.BoxGeometry(0.035, 1.18, 1.32), glassMat);
-        windowPane.position.set(x * 1.005, 1.36, z);
+      const frameX = x * 1.012;
+
+      const topRail = new THREE.Mesh(new THREE.BoxGeometry(frameThick, frameThick, frameOuterSpan), trimMat);
+      topRail.position.set(frameX, glassTop + frameThick / 2, 0);
+      this.scene.add(topRail);
+
+      const bottomRail = new THREE.Mesh(new THREE.BoxGeometry(frameThick, frameThick, frameOuterSpan), trimMat);
+      bottomRail.position.set(frameX, glassBottom - frameThick / 2, 0);
+      this.scene.add(bottomRail);
+
+      for (const z of [-glassSpan / 2 - frameThick / 2, glassSpan / 2 + frameThick / 2]) {
+        const endPost = new THREE.Mesh(new THREE.BoxGeometry(frameThick, glassHeight, frameThick), trimMat);
+        endPost.position.set(frameX, glassY, z);
+        this.scene.add(endPost);
+      }
+
+      for (const z of glassZs) {
+        const windowPane = new THREE.Mesh(new THREE.BoxGeometry(0.035, glassHeight, paneDepth), glassMat);
+        windowPane.position.set(x * 1.005, glassY, z);
         windowPane.renderOrder = 2;
         this.scene.add(windowPane);
       }
@@ -276,12 +330,12 @@ export class Game {
       this.scene.add(back);
     }
 
-    const table = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.06, 0.64), trimMat);
+    const table = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.06, 0.64), woodMat);
     table.position.set(0, 0.72, 0);
     table.castShadow = true;
     this.scene.add(table);
 
-    const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), trimMat);
+    const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), woodMat);
     tableLeg.position.set(0, 0.36, 0);
     this.scene.add(tableLeg);
 
@@ -314,10 +368,12 @@ export class Game {
     const elapsed = (now - this.startedAt) / 1000;
     this.lastFrameAt = now;
     const hands = this.handTracker.update(elapsed);
-    const localPose = makePlayerPose(this.multiplayer.localId, 'Player', this.roomId, 0, hands, false);
+    const localSeat = this.multiplayer.localSeatIndex;
+    const partnerSeat = this.multiplayer.partnerSeatIndex;
+    const localPose = makePlayerPose(this.multiplayer.localId, 'Player', this.roomId, localSeat, hands, false);
     const remoteFromNetwork = this.multiplayer.getRemotePose();
     const robotHands = this.robotMotion.update(elapsed, delta, localPose);
-    const robotPose = makePlayerPose('robot', 'Robot', this.roomId, 1, robotHands, true);
+    const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, true);
     const remotePose = remoteFromNetwork ?? robotPose;
     const robotTarget = remoteFromNetwork ? 0 : 1;
 
@@ -329,9 +385,10 @@ export class Game {
     const links = this.updateLinks();
     this.plasmaOrb?.update(elapsed, delta);
     this.particles.update(this.renderer, links, elapsed);
-    this.audio.update(localPose, remotePose, elapsed);
+    const atmosphere = this.scenery.update(delta, elapsed);
+    this.updateAtmosphere(atmosphere);
+    this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
     this.multiplayer.sendPose(localPose, elapsed);
-    this.updateAtmosphere(this.scenery.update(delta, elapsed));
     if (this.cameraMode === 'game') this.lockGameCamera();
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
