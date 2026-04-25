@@ -1,7 +1,4 @@
 import * as THREE from 'three/webgpu';
-import { mrt, output, normalView, pass, vec4 } from 'three/tsl';
-import { ssgi } from 'three/addons/tsl/display/SSGINode.js';
-import { denoise } from 'three/addons/tsl/display/DenoiseNode.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { AudioEngine } from './audio';
 import { HandTracker } from './handTracking';
@@ -69,32 +66,13 @@ export class Game {
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
   private plasmaOrb?: PlasmaOrb;
-  private renderPipeline?: THREE.RenderPipeline;
-  private ssgiNode?: ReturnType<typeof ssgi>;
   private shadowsPane?: Pane;
-  private ssgiPane?: Pane;
   private readonly shadowParams = {
     mapSize: 2048,
     radius: 6,
     normalBias: 0.04,
     bias: -0.0002,
     blurSamples: 16,
-  };
-  private readonly ssgiParams = {
-    enabled: true,
-    sliceCount: 2,
-    stepCount: 8,
-    aoIntensity: 1.0,
-    giIntensity: 6,
-    radius: 4,
-    thickness: 0.6,
-    expFactor: 2,
-    backfaceLighting: 0,
-    useScreenSpaceSampling: true,
-    denoiseRadius: 5,
-    denoiseLuma: 5,
-    denoiseDepth: 5,
-    denoiseNormal: 5,
   };
   readonly paneDock: HTMLElement;
   private roomId: string;
@@ -171,7 +149,6 @@ export class Game {
       radius: 0.42,
       paneDock: this.paneDock,
     });
-    this.setupPostProcessing();
     this.setupShadowsPane();
     this.handTracker.attachPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
@@ -344,82 +321,6 @@ export class Game {
     this.camera.position.copy(this.gameCameraPosition);
     this.camera.lookAt(this.gameCameraTarget);
     this.camera.updateProjectionMatrix();
-  }
-
-  private setupPostProcessing(): void {
-    const scenePass = pass(this.scene, this.camera);
-    scenePass.setMRT(mrt({ output, normal: normalView }));
-
-    const sceneColor = scenePass.getTextureNode('output');
-    const sceneDepth = scenePass.getTextureNode('depth');
-    const sceneNormal = scenePass.getTextureNode('normal');
-
-    const ssgiNode = ssgi(sceneColor, sceneDepth, sceneNormal, this.camera);
-    ssgiNode.useTemporalFiltering = false;
-    this.ssgiNode = ssgiNode;
-    this.applySsgiParams();
-
-    const denoised = denoise(ssgiNode, sceneDepth, sceneNormal, this.camera);
-    denoised.radius.value = this.ssgiParams.denoiseRadius;
-    denoised.lumaPhi.value = this.ssgiParams.denoiseLuma;
-    denoised.depthPhi.value = this.ssgiParams.denoiseDepth;
-    denoised.normalPhi.value = this.ssgiParams.denoiseNormal;
-
-    // Composite: color * AO + indirect GI. SSGINode packs GI into rgb and AO into a.
-    // TSL swizzle accessors aren't surfaced through DenoiseNode's TS types,
-    // so we untype the swizzles and re-cast back into vec3/float TSL nodes.
-    const denoisedNode = denoised as unknown as Record<string, unknown>;
-    const ao = denoisedNode.a as typeof sceneColor.a;
-    const gi = denoisedNode.rgb as typeof sceneColor.rgb;
-    const composite = vec4(sceneColor.rgb.mul(ao).add(gi), 1);
-
-    this.renderPipeline = new THREE.RenderPipeline(this.renderer);
-    this.renderPipeline.outputNode = composite;
-
-    const container = document.createElement('div');
-    this.paneDock.appendChild(container);
-    this.ssgiPane = new Pane({ title: 'SSGI', container });
-    this.ssgiPane.expanded = false;
-    this.ssgiPane.addBinding(this.ssgiParams, 'enabled', { label: 'enabled' });
-    this.ssgiPane.addBinding(this.ssgiParams, 'sliceCount', { label: 'slices', min: 1, max: 4, step: 1 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'stepCount', { label: 'steps', min: 1, max: 32, step: 1 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'aoIntensity', { label: 'ao intensity', min: 0, max: 4, step: 0.05 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'giIntensity', { label: 'gi intensity', min: 0, max: 30, step: 0.1 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'radius', { label: 'radius', min: 0.5, max: 25, step: 0.1 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'thickness', { label: 'thickness', min: 0.01, max: 5, step: 0.01 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'expFactor', { label: 'exp factor', min: 1, max: 3, step: 0.05 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'backfaceLighting', { label: 'backface', min: 0, max: 1, step: 0.01 })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'useScreenSpaceSampling', { label: 'screen-space' })
-      .on('change', () => this.applySsgiParams());
-    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseRadius', { label: 'denoise r', min: 1, max: 16, step: 0.5 })
-      .on('change', () => { denoised.radius.value = this.ssgiParams.denoiseRadius; });
-    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseLuma', { label: 'denoise luma', min: 0, max: 20, step: 0.5 })
-      .on('change', () => { denoised.lumaPhi.value = this.ssgiParams.denoiseLuma; });
-    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseDepth', { label: 'denoise depth', min: 0, max: 20, step: 0.5 })
-      .on('change', () => { denoised.depthPhi.value = this.ssgiParams.denoiseDepth; });
-    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseNormal', { label: 'denoise normal', min: 0, max: 20, step: 0.5 })
-      .on('change', () => { denoised.normalPhi.value = this.ssgiParams.denoiseNormal; });
-  }
-
-  private applySsgiParams(): void {
-    if (!this.ssgiNode) return;
-    this.ssgiNode.sliceCount.value = this.ssgiParams.sliceCount;
-    this.ssgiNode.stepCount.value = this.ssgiParams.stepCount;
-    this.ssgiNode.aoIntensity.value = this.ssgiParams.aoIntensity;
-    this.ssgiNode.giIntensity.value = this.ssgiParams.giIntensity;
-    this.ssgiNode.radius.value = this.ssgiParams.radius;
-    this.ssgiNode.thickness.value = this.ssgiParams.thickness;
-    this.ssgiNode.expFactor.value = this.ssgiParams.expFactor;
-    this.ssgiNode.backfaceLighting.value = this.ssgiParams.backfaceLighting;
-    this.ssgiNode.useScreenSpaceSampling.value = this.ssgiParams.useScreenSpaceSampling;
   }
 
   private setupShadowsPane(): void {
