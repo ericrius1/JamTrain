@@ -1,3 +1,4 @@
+import { HandFilter } from './handFilter';
 import { clamp, lerpVec, vec } from './math';
 import { makeSimulatedHands } from './pose';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type Vec3Data } from './types';
@@ -46,6 +47,7 @@ export class HandTracker {
   private pointer = { x: 0, y: 0 };
   private mode: 'simulated' | 'camera' | 'error' = 'simulated';
   private status = 'hands: simulated';
+  readonly filter = new HandFilter();
 
   constructor(private statusTarget?: HTMLElement) {
     window.addEventListener('pointermove', event => {
@@ -141,6 +143,11 @@ export class HandTracker {
       for (const track of this.video.srcObject.getTracks()) track.stop();
     }
     this.video?.remove();
+    this.filter.dispose();
+  }
+
+  attachPane(paneDock: HTMLElement): void {
+    this.filter.attachPane(paneDock);
   }
 
   private mapDetections(results: unknown[], time: number): Record<Handedness, HandPose> | undefined {
@@ -180,14 +187,19 @@ export class HandTracker {
 
     const mapped = {} as Partial<Record<Handedness, HandPose>>;
     for (const { hand, handedness } of assignments) {
-      if (hand.landmarks?.length) {
+      const filteredHand: RawHand = {
+        ...hand,
+        landmarks: hand.landmarks ? this.filter.applyToLandmarks(handedness, hand.landmarks) : undefined,
+        keypoints: hand.keypoints ? this.filter.applyToKeypoints(handedness, hand.keypoints) : undefined,
+      };
+      if (filteredHand.landmarks?.length) {
         this.rawDetections.push({
           handedness,
-          score: clamp(hand.score ?? 0.7, 0, 1),
-          landmarks: hand.landmarks,
+          score: clamp(filteredHand.score ?? 0.7, 0, 1),
+          landmarks: filteredHand.landmarks,
         });
       }
-      mapped[handedness] = this.handFromLandmarks(hand, handedness, time);
+      mapped[handedness] = this.handFromLandmarks(filteredHand, handedness, time);
     }
 
     if (!mapped.left && !mapped.right) return undefined;
@@ -255,7 +267,7 @@ export class HandTracker {
     return vec(
       (0.5 - source.x) * 1.8,
       (1 - source.y) * 1.35,
-      clamp(-(source.z ?? 0) * 5.5, -0.55, 1.0)
+      clamp(-(source.z ?? 0) * 4.5, -0.45, 0.45)
     );
   }
 

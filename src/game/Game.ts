@@ -96,6 +96,7 @@ export class Game {
       radius: 0.42,
       paneDock: this.paneDock,
     });
+    this.handTracker.attachPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.renderer.setAnimationLoop(() => this.update());

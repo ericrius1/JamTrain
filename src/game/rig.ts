@@ -226,7 +226,7 @@ export class PlayerRig {
     return new THREE.Vector3(
       point.x * 0.54 + side * 0.04,
       0.54 + point.y * 0.68,
-      -0.42 - point.z * 1.05
+      -0.42 - point.z * 0.85
     );
   }
 
