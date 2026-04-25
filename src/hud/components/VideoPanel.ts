@@ -18,6 +18,20 @@ const COLORS: Record<Handedness, { stroke: string; fill: string; label: string }
 type VideoPanelMode = 'local' | 'remote';
 type VideoPanelSide = 'left' | 'right';
 
+const CAMERA_SVG = `
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2.5" y="6.5" width="13" height="11" rx="1.5"/>
+  <path d="M15.5 10.5l5.5-3v9l-5.5-3z"/>
+</svg>`;
+
+const MIC_SVG = `
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="9" y="3" width="6" height="12" rx="3"/>
+  <path d="M5 11a7 7 0 0 0 14 0"/>
+  <line x1="12" y1="18" x2="12" y2="22"/>
+  <line x1="8.5" y1="22" x2="15.5" y2="22"/>
+</svg>`;
+
 export class VideoPanel {
   private wrapper: HTMLDivElement;
   private video: HTMLVideoElement;
@@ -28,6 +42,10 @@ export class VideoPanel {
   private streamBound = false;
   private handTracker?: HandTracker;
   private mode: VideoPanelMode;
+  private micButton?: HTMLButtonElement;
+  private cameraButton?: HTMLButtonElement;
+  private micListeners = new Set<() => void>();
+  private cameraListeners = new Set<() => void>();
 
   constructor(parent: HTMLElement, opts: { side: VideoPanelSide; mode: VideoPanelMode }) {
     this.mode = opts.mode;
@@ -47,6 +65,33 @@ export class VideoPanel {
       const ctx = this.canvas.getContext('2d');
       if (!ctx) throw new Error('VideoPanel: 2d context unavailable');
       this.ctx = ctx;
+
+      const controls = document.createElement('div');
+      controls.className = 'video-panel-controls';
+
+      this.cameraButton = document.createElement('button');
+      this.cameraButton.className = 'video-panel-control';
+      this.cameraButton.type = 'button';
+      this.cameraButton.setAttribute('aria-label', 'Toggle camera');
+      this.cameraButton.title = 'Toggle camera';
+      this.cameraButton.innerHTML = CAMERA_SVG;
+      this.cameraButton.addEventListener('click', () => {
+        for (const listener of this.cameraListeners) listener();
+      });
+      controls.appendChild(this.cameraButton);
+
+      this.micButton = document.createElement('button');
+      this.micButton.className = 'video-panel-control';
+      this.micButton.type = 'button';
+      this.micButton.setAttribute('aria-label', 'Toggle microphone');
+      this.micButton.title = 'Toggle microphone';
+      this.micButton.innerHTML = MIC_SVG;
+      this.micButton.addEventListener('click', () => {
+        for (const listener of this.micListeners) listener();
+      });
+      controls.appendChild(this.micButton);
+
+      this.wrapper.appendChild(controls);
     }
 
     this.label = document.createElement('div');
@@ -55,6 +100,22 @@ export class VideoPanel {
     this.wrapper.appendChild(this.label);
 
     parent.appendChild(this.wrapper);
+  }
+
+  setMicEnabled(enabled: boolean): void {
+    this.micButton?.classList.toggle('enabled', enabled);
+  }
+
+  setCameraEnabled(enabled: boolean): void {
+    this.cameraButton?.classList.toggle('enabled', enabled);
+  }
+
+  onMicClick(listener: () => void): void {
+    this.micListeners.add(listener);
+  }
+
+  onCameraClick(listener: () => void): void {
+    this.cameraListeners.add(listener);
   }
 
   setHandTracker(tracker: HandTracker): void {

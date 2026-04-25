@@ -38,6 +38,11 @@ type SceneryParams = {
   moonPhase: string;
 };
 
+export type SceneryOptions = {
+  roomSeed: number;
+  sharedEpoch: number;
+};
+
 const fullTurn = Math.PI * 2;
 
 export class ScenerySystem {
@@ -66,11 +71,16 @@ export class ScenerySystem {
     daylight: 1,
     night: 0,
   };
+  private roomSeed: number;
+  private epochMs: number;
 
   constructor(
     private scene: THREE.Scene,
-    paneContainer?: HTMLElement
+    paneContainer: HTMLElement | undefined,
+    options: SceneryOptions
   ) {
+    this.roomSeed = options.roomSeed;
+    this.epochMs = options.sharedEpoch;
     const moonPhase = getMoonPhase(new Date());
     this.params = {
       cycleLengthSeconds: 180,
@@ -98,8 +108,21 @@ export class ScenerySystem {
     this.scene.add(this.root);
   }
 
-  update(delta: number, elapsed: number): Atmosphere {
-    const cycle = ((elapsed / Math.max(this.params.cycleLengthSeconds, 1) + this.params.cycleOffset) % 1 + 1) % 1;
+  setRoomSeed(seed: number): void {
+    this.roomSeed = seed;
+  }
+
+  getRoomSeed(): number {
+    return this.roomSeed;
+  }
+
+  getEpochMs(): number {
+    return this.epochMs;
+  }
+
+  update(delta: number, _elapsed: number): Atmosphere {
+    const wallElapsed = (Date.now() - this.epochMs) / 1000;
+    const cycle = ((wallElapsed / Math.max(this.params.cycleLengthSeconds, 1) + this.params.cycleOffset) % 1 + 1) % 1;
     const sunWave = Math.sin(cycle * fullTurn);
     const daylight = clamp(sunWave * 0.58 + 0.48, 0, 1);
     const night = 1 - daylight;

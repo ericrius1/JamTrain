@@ -1,5 +1,4 @@
 import { appendRivets } from './Rivets';
-import { createSunburst } from './Sunburst';
 
 export class TitlePlaque {
   readonly el: HTMLElement;
@@ -15,11 +14,6 @@ export class TitlePlaque {
     this.el = document.createElement('div');
     this.el.className = 'plaque title-plaque';
     appendRivets(this.el);
-
-    const sunburstWrap = document.createElement('div');
-    sunburstWrap.className = 'title-sunburst spin-slow';
-    sunburstWrap.appendChild(createSunburst({ size: 60, rays: 12, opacity: 0.7 }));
-    this.el.appendChild(sunburstWrap);
 
     const stamp = document.createElement('div');
     stamp.className = 'stamp';

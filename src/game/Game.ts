@@ -1,4 +1,7 @@
 import * as THREE from 'three/webgpu';
+import { mrt, output, normalView, pass, vec4 } from 'three/tsl';
+import { ssgi } from 'three/addons/tsl/display/SSGINode.js';
+import { denoise } from 'three/addons/tsl/display/DenoiseNode.js';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { AudioEngine } from './audio';
 import { HandTracker } from './handTracking';
@@ -10,6 +13,7 @@ import { makePlayerPose } from './pose';
 import { PlayerRig } from './rig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
+import { hashString, roomEpoch } from './seedRandom';
 import { fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
 import { Pane } from 'tweakpane';
@@ -65,8 +69,37 @@ export class Game {
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
   private plasmaOrb?: PlasmaOrb;
+  private renderPipeline?: THREE.RenderPipeline;
+  private ssgiNode?: ReturnType<typeof ssgi>;
+  private shadowsPane?: Pane;
+  private ssgiPane?: Pane;
+  private readonly shadowParams = {
+    mapSize: 2048,
+    radius: 6,
+    normalBias: 0.04,
+    bias: -0.0002,
+    blurSamples: 16,
+  };
+  private readonly ssgiParams = {
+    enabled: true,
+    sliceCount: 2,
+    stepCount: 8,
+    aoIntensity: 1.0,
+    giIntensity: 6,
+    radius: 4,
+    thickness: 0.6,
+    expFactor: 2,
+    backfaceLighting: 0,
+    useScreenSpaceSampling: true,
+    denoiseRadius: 5,
+    denoiseLuma: 5,
+    denoiseDepth: 5,
+    denoiseNormal: 5,
+  };
   readonly paneDock: HTMLElement;
   private roomId: string;
+  private roomSeed: number;
+  private sharedEpoch: number;
   private localPose?: PlayerPose;
   private remotePose?: PlayerPose;
 
@@ -76,13 +109,20 @@ export class Game {
     private ui: GameUi
   ) {
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+    this.renderer.setPixelRatio(1)
     this.paneDock = this.createPaneDock();
     this.handTracker = new HandTracker(ui.inputStatus);
     this.audio = new AudioEngine(ui.musicStatus, this.paneDock);
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
     this.roomId = this.multiplayer.getRoom();
+    this.roomSeed = hashString(this.roomId);
+    this.sharedEpoch = roomEpoch();
     this.multiplayer.onStateChange(state => {
       ui.connectionStatus.textContent = state;
+    });
+    this.multiplayer.onAssignedRoom(room => {
+      this.roomSeed = hashString(room);
+      this.scenery.setRoomSeed(this.roomSeed);
     });
 
     this.webrtc = new WebRTCClient(
@@ -101,7 +141,10 @@ export class Game {
     });
     this.particles = new LinkParticles(this.scene);
     this.robotMotion = new RobotMotionController(this.paneDock);
-    this.scenery = new ScenerySystem(this.scene, this.paneDock);
+    this.scenery = new ScenerySystem(this.scene, this.paneDock, {
+      roomSeed: this.roomSeed,
+      sharedEpoch: this.sharedEpoch,
+    });
 
     this.linkGeometry.setAttribute('position', new THREE.BufferAttribute(this.linkPositions, 3));
     const linkMaterial = new THREE.LineBasicMaterial({
@@ -128,6 +171,8 @@ export class Game {
       radius: 0.42,
       paneDock: this.paneDock,
     });
+    this.setupPostProcessing();
+    this.setupShadowsPane();
     this.handTracker.attachPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -217,6 +262,9 @@ export class Game {
     this.plasmaOrb?.dispose();
     this.audio.dispose();
     this.cameraPane?.dispose();
+    this.shadowsPane?.dispose();
+    this.ssgiPane?.dispose();
+    this.renderPipeline?.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -225,6 +273,7 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x071013, 1);
     this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.scene.background = new THREE.Color(0x071013);
     this.scene.fog = new THREE.Fog(0x071013, 7, 22);
   }
@@ -281,6 +330,106 @@ export class Game {
     this.camera.updateProjectionMatrix();
   }
 
+  private setupPostProcessing(): void {
+    const scenePass = pass(this.scene, this.camera);
+    scenePass.setMRT(mrt({ output, normal: normalView }));
+
+    const sceneColor = scenePass.getTextureNode('output');
+    const sceneDepth = scenePass.getTextureNode('depth');
+    const sceneNormal = scenePass.getTextureNode('normal');
+
+    const ssgiNode = ssgi(sceneColor, sceneDepth, sceneNormal, this.camera);
+    ssgiNode.useTemporalFiltering = false;
+    this.ssgiNode = ssgiNode;
+    this.applySsgiParams();
+
+    const denoised = denoise(ssgiNode, sceneDepth, sceneNormal, this.camera);
+    denoised.radius.value = this.ssgiParams.denoiseRadius;
+    denoised.lumaPhi.value = this.ssgiParams.denoiseLuma;
+    denoised.depthPhi.value = this.ssgiParams.denoiseDepth;
+    denoised.normalPhi.value = this.ssgiParams.denoiseNormal;
+
+    // Composite: color * AO + indirect GI. SSGINode packs GI into rgb and AO into a.
+    // TSL swizzle accessors aren't surfaced through DenoiseNode's TS types,
+    // so we untype the swizzles and re-cast back into vec3/float TSL nodes.
+    const denoisedNode = denoised as unknown as Record<string, unknown>;
+    const ao = denoisedNode.a as typeof sceneColor.a;
+    const gi = denoisedNode.rgb as typeof sceneColor.rgb;
+    const composite = vec4(sceneColor.rgb.mul(ao).add(gi), 1);
+
+    this.renderPipeline = new THREE.RenderPipeline(this.renderer);
+    this.renderPipeline.outputNode = composite;
+
+    const container = document.createElement('div');
+    this.paneDock.appendChild(container);
+    this.ssgiPane = new Pane({ title: 'SSGI', container });
+    this.ssgiPane.expanded = false;
+    this.ssgiPane.addBinding(this.ssgiParams, 'enabled', { label: 'enabled' });
+    this.ssgiPane.addBinding(this.ssgiParams, 'sliceCount', { label: 'slices', min: 1, max: 4, step: 1 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'stepCount', { label: 'steps', min: 1, max: 32, step: 1 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'aoIntensity', { label: 'ao intensity', min: 0, max: 4, step: 0.05 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'giIntensity', { label: 'gi intensity', min: 0, max: 30, step: 0.1 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'radius', { label: 'radius', min: 0.5, max: 25, step: 0.1 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'thickness', { label: 'thickness', min: 0.01, max: 5, step: 0.01 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'expFactor', { label: 'exp factor', min: 1, max: 3, step: 0.05 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'backfaceLighting', { label: 'backface', min: 0, max: 1, step: 0.01 })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'useScreenSpaceSampling', { label: 'screen-space' })
+      .on('change', () => this.applySsgiParams());
+    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseRadius', { label: 'denoise r', min: 1, max: 16, step: 0.5 })
+      .on('change', () => { denoised.radius.value = this.ssgiParams.denoiseRadius; });
+    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseLuma', { label: 'denoise luma', min: 0, max: 20, step: 0.5 })
+      .on('change', () => { denoised.lumaPhi.value = this.ssgiParams.denoiseLuma; });
+    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseDepth', { label: 'denoise depth', min: 0, max: 20, step: 0.5 })
+      .on('change', () => { denoised.depthPhi.value = this.ssgiParams.denoiseDepth; });
+    this.ssgiPane.addBinding(this.ssgiParams, 'denoiseNormal', { label: 'denoise normal', min: 0, max: 20, step: 0.5 })
+      .on('change', () => { denoised.normalPhi.value = this.ssgiParams.denoiseNormal; });
+  }
+
+  private applySsgiParams(): void {
+    if (!this.ssgiNode) return;
+    this.ssgiNode.sliceCount.value = this.ssgiParams.sliceCount;
+    this.ssgiNode.stepCount.value = this.ssgiParams.stepCount;
+    this.ssgiNode.aoIntensity.value = this.ssgiParams.aoIntensity;
+    this.ssgiNode.giIntensity.value = this.ssgiParams.giIntensity;
+    this.ssgiNode.radius.value = this.ssgiParams.radius;
+    this.ssgiNode.thickness.value = this.ssgiParams.thickness;
+    this.ssgiNode.expFactor.value = this.ssgiParams.expFactor;
+    this.ssgiNode.backfaceLighting.value = this.ssgiParams.backfaceLighting;
+    this.ssgiNode.useScreenSpaceSampling.value = this.ssgiParams.useScreenSpaceSampling;
+  }
+
+  private setupShadowsPane(): void {
+    if (!this.keyLight) return;
+    const container = document.createElement('div');
+    this.paneDock.appendChild(container);
+    this.shadowsPane = new Pane({ title: 'Shadows', container });
+    this.shadowsPane.expanded = false;
+    this.shadowsPane.addBinding(this.shadowParams, 'mapSize', {
+      label: 'map size', options: { '1024': 1024, '2048': 2048, '4096': 4096 },
+    }).on('change', () => {
+      if (!this.keyLight) return;
+      this.keyLight.shadow.mapSize.set(this.shadowParams.mapSize, this.shadowParams.mapSize);
+      this.keyLight.shadow.map?.dispose();
+      this.keyLight.shadow.map = null;
+    });
+    this.shadowsPane.addBinding(this.shadowParams, 'radius', { label: 'radius', min: 0, max: 20, step: 0.1 })
+      .on('change', () => { if (this.keyLight) this.keyLight.shadow.radius = this.shadowParams.radius; });
+    this.shadowsPane.addBinding(this.shadowParams, 'normalBias', { label: 'normal bias', min: 0, max: 0.2, step: 0.001 })
+      .on('change', () => { if (this.keyLight) this.keyLight.shadow.normalBias = this.shadowParams.normalBias; });
+    this.shadowsPane.addBinding(this.shadowParams, 'bias', { label: 'bias', min: -0.005, max: 0.005, step: 0.0001 })
+      .on('change', () => { if (this.keyLight) this.keyLight.shadow.bias = this.shadowParams.bias; });
+    this.shadowsPane.addBinding(this.shadowParams, 'blurSamples', { label: 'blur samples', min: 1, max: 32, step: 1 })
+      .on('change', () => { if (this.keyLight) this.keyLight.shadow.blurSamples = this.shadowParams.blurSamples; });
+  }
+
   private setupCameraPane(): void {
     if (this.cameraPane) return;
     const container = document.createElement('div');
@@ -330,6 +479,7 @@ export class Game {
     const ceilingY = 2.55;
     const ceiling = new THREE.Mesh(new THREE.BoxGeometry(3.45, 0.08, 4.8), wallMat);
     ceiling.position.y = ceilingY;
+    ceiling.receiveShadow = true;
     this.scene.add(ceiling);
 
     const glassBottom = 0.19;
@@ -359,11 +509,13 @@ export class Game {
 
       const upperWall = new THREE.Mesh(new THREE.BoxGeometry(0.08, upperWallHeight, 4.8), wallMat);
       upperWall.position.set(x, glassTop + upperWallHeight / 2, 0);
+      upperWall.receiveShadow = true;
       this.scene.add(upperWall);
 
       for (const zSign of [-1, 1]) {
         const endCap = new THREE.Mesh(new THREE.BoxGeometry(0.08, endCapHeight, endCapDepth), wallMat);
         endCap.position.set(x, 0.06 + endCapHeight / 2, zSign * (glassSpan / 2 + endCapDepth / 2));
+        endCap.receiveShadow = true;
         this.scene.add(endCap);
       }
 
@@ -404,16 +556,20 @@ export class Game {
       back.position.set(0, 0.78, z + (z > 0 ? 0.32 : -0.32));
       back.rotation.x = z > 0 ? -0.1 : 0.1;
       back.castShadow = true;
+      back.receiveShadow = true;
       this.scene.add(back);
     }
 
     const table = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.06, 0.64), woodMat);
     table.position.set(0, 0.72, 0);
     table.castShadow = true;
+    table.receiveShadow = true;
     this.scene.add(table);
 
     const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), woodMat);
     tableLeg.position.set(0, 0.36, 0);
+    tableLeg.castShadow = true;
+    tableLeg.receiveShadow = true;
     this.scene.add(tableLeg);
 
     for (const z of [-1.55, 0, 1.55]) {
@@ -435,8 +591,22 @@ export class Game {
     this.keyLight = new THREE.DirectionalLight(0xf7cf72, 1.45);
     this.keyLight.position.set(-2.8, 4.2, 3.5);
     this.keyLight.castShadow = true;
+    this.keyLight.target.position.set(0, 1, 0);
+    this.scene.add(this.keyLight.target);
+    const shadowCam = this.keyLight.shadow.camera as THREE.OrthographicCamera;
+    shadowCam.left = -3.4;
+    shadowCam.right = 3.4;
+    shadowCam.top = 3.4;
+    shadowCam.bottom = -3.4;
+    shadowCam.near = 0.5;
+    shadowCam.far = 14;
+    shadowCam.updateProjectionMatrix();
+    this.keyLight.shadow.mapSize.set(this.shadowParams.mapSize, this.shadowParams.mapSize);
+    this.keyLight.shadow.radius = this.shadowParams.radius;
+    this.keyLight.shadow.bias = this.shadowParams.bias;
+    this.keyLight.shadow.normalBias = this.shadowParams.normalBias;
+    this.keyLight.shadow.blurSamples = this.shadowParams.blurSamples;
     this.scene.add(this.keyLight);
-
   }
 
   private update(): void {
@@ -468,7 +638,11 @@ export class Game {
     this.multiplayer.sendPose(localPose, elapsed);
     if (this.cameraMode === 'game') this.updateCameraDolly(delta);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
-    this.renderer.render(this.scene, this.camera);
+    if (this.ssgiParams.enabled && this.renderPipeline) {
+      this.renderPipeline.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 
   private updateLinks(): LinkSample[] {

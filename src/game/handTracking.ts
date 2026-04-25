@@ -92,6 +92,12 @@ export class HandTracker {
     }
 
     try {
+      // Tracks start disabled — the user toggles them in via the panel icons.
+      // Permission is acquired here so we don't have to re-prompt on toggle.
+      for (const track of stream.getTracks()) {
+        track.enabled = false;
+      }
+
       const video = document.createElement('video');
       video.muted = true;
       video.playsInline = true;
@@ -153,6 +159,40 @@ export class HandTracker {
   getStream(): MediaStream | undefined {
     const src = this.video?.srcObject;
     return src instanceof MediaStream ? src : undefined;
+  }
+
+  setVideoEnabled(enabled: boolean): void {
+    const stream = this.getStream();
+    if (!stream) return;
+    for (const track of stream.getVideoTracks()) {
+      track.enabled = enabled;
+    }
+    if (!enabled) {
+      // Drop stale detections so the rig stops freezing on the last camera
+      // pose the moment the camera goes dark.
+      this.cameraHands = undefined;
+      this.rawDetections = [];
+    }
+  }
+
+  setAudioEnabled(enabled: boolean): void {
+    const stream = this.getStream();
+    if (!stream) return;
+    for (const track of stream.getAudioTracks()) {
+      track.enabled = enabled;
+    }
+  }
+
+  getVideoEnabled(): boolean {
+    const stream = this.getStream();
+    if (!stream) return false;
+    return stream.getVideoTracks().some(t => t.enabled);
+  }
+
+  getAudioEnabled(): boolean {
+    const stream = this.getStream();
+    if (!stream) return false;
+    return stream.getAudioTracks().some(t => t.enabled);
   }
 
   getDetections(): readonly RawDetection[] {

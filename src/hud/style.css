@@ -560,6 +560,51 @@
   letter-spacing: 0.04em;
 }
 
+/* Mic + camera toggle icons in the local panel. Faded out when the matching
+   track is disabled; lit (sun-colored) when enabled. The .enabled class is
+   driven by the actual MediaStreamTrack.enabled state, not just clicks. */
+.video-panel-controls {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+  z-index: 2;
+}
+.video-panel-control {
+  background: rgba(0, 0, 0, 0.55);
+  border: 1px solid rgba(200, 154, 75, 0.35);
+  border-radius: 4px;
+  padding: 5px 6px;
+  cursor: pointer;
+  color: var(--parchment);
+  opacity: 0.32;
+  transition: opacity 0.18s ease, background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.video-panel-control:hover {
+  opacity: 0.65;
+}
+.video-panel-control.enabled {
+  opacity: 1;
+  background: rgba(246, 179, 51, 0.22);
+  color: var(--sun);
+  border-color: rgba(246, 179, 51, 0.55);
+  box-shadow: 0 0 8px rgba(246, 179, 51, 0.35);
+}
+.video-panel-control:focus-visible {
+  outline: 1px solid var(--sun);
+  outline-offset: 2px;
+}
+.video-panel-control svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+}
+
 /* Share button + popover ------------------------------------------------- */
 .share-button {
   position: absolute;
