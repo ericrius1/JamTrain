@@ -1,7 +1,9 @@
 import './style.css';
 import { TitlePlaque } from './components/TitlePlaque';
 import { PlayerPlaque } from './components/PlayerPlaque';
-import { EngineRoomDrawer, type CameraMode } from './components/EngineRoomDrawer';
+import type { CameraMode } from './components/EngineRoomDrawer';
+import { VideoPanel } from './components/VideoPanel';
+import type { HandTracker } from '../game/handTracking';
 import { createCornerFiligree } from './components/CornerFiligree';
 import { BeginGate } from './components/BeginGate';
 import { SharePopover } from './components/SharePopover';
@@ -22,7 +24,8 @@ export class Hud {
   private title: TitlePlaque;
   private playerLeft: PlayerPlaque;
   private playerRight: PlayerPlaque;
-  private drawer: EngineRoomDrawer;
+  private localPanel: VideoPanel;
+  private remotePanel: VideoPanel;
   private beginGate?: BeginGate;
   private sharePopover: SharePopover;
   private shareButton: HTMLButtonElement;
@@ -33,6 +36,9 @@ export class Hud {
   private currentConnection = 'connecting';
   private currentRoom = '';
   private partnerPresent = false;
+  private localSeat = 0;
+  private conductorName = 'AVA';
+  private partnerName: string | null = null;
 
   constructor(opts: { room: string; callbacks: HudCallbacks }) {
     const stageWrap = document.getElementById('stage-wrap');
@@ -97,12 +103,21 @@ export class Hud {
     });
     this.uiEl.appendChild(this.playerRight.el);
 
-    this.drawer = new EngineRoomDrawer({
-      onRecalibrate: opts.callbacks.onRecalibrate,
-      onDisembark: opts.callbacks.onDisembark,
-      onCameraMode: opts.callbacks.onCameraMode,
-    });
-    this.uiEl.appendChild(this.drawer.el);
+    // Engine Room drawer is hidden for now while we surface peer-video
+    // panels. Keep the file around in case we want it back.
+    // this.drawer = new EngineRoomDrawer({
+    //   onRecalibrate: opts.callbacks.onRecalibrate,
+    //   onDisembark: opts.callbacks.onDisembark,
+    //   onCameraMode: opts.callbacks.onCameraMode,
+    // });
+    // this.uiEl.appendChild(this.drawer.el);
+    void opts.callbacks.onRecalibrate;
+    void opts.callbacks.onDisembark;
+    void opts.callbacks.onCameraMode;
+
+    this.localPanel = new VideoPanel(stage, { side: 'left', mode: 'local' });
+    this.remotePanel = new VideoPanel(stage, { side: 'right', mode: 'remote' });
+
     this.currentRoom = opts.room;
     this.renderNetRow();
 
@@ -120,11 +135,25 @@ export class Hud {
   }
 
   setConductorName(name: string): void {
-    this.playerLeft.set({
-      name,
-      voice: 'Glass Bells · Ionian',
-      kind: 'conductor',
-    });
+    this.conductorName = name;
+    this.applyPlaques();
+  }
+
+  setLocalSeat(seatIndex: number): void {
+    const next = seatIndex === 1 ? 1 : 0;
+    if (next === this.localSeat) return;
+    this.localSeat = next;
+    this.applyPlaques();
+    this.localPanel.setSide(next === 0 ? 'left' : 'right');
+    this.remotePanel.setSide(next === 0 ? 'right' : 'left');
+  }
+
+  setHandTracker(tracker: HandTracker): void {
+    this.localPanel.setHandTracker(tracker);
+  }
+
+  setRemoteStream(stream: MediaStream | null): void {
+    this.remotePanel.setStream(stream);
   }
 
   setRoom(room: string): void {
@@ -139,21 +168,35 @@ export class Hud {
   }
 
   setPartner(name: string | null): void {
+    this.partnerName = name;
     this.partnerPresent = !!name;
-    if (name) {
-      this.playerRight.set({
-        name: name.toUpperCase(),
+    this.applyPlaques();
+    this.renderNetRow();
+  }
+
+  private applyPlaques(): void {
+    const localPlaque = this.localSeat === 0 ? this.playerLeft : this.playerRight;
+    const partnerPlaque = this.localSeat === 0 ? this.playerRight : this.playerLeft;
+
+    localPlaque.set({
+      name: this.conductorName,
+      voice: 'Glass Bells · Ionian',
+      kind: 'conductor',
+    });
+
+    if (this.partnerName) {
+      partnerPlaque.set({
+        name: this.partnerName.toUpperCase(),
         voice: 'Live hands · improvising',
-        kind: 'passenger',
+        kind: 'conductor',
       });
     } else {
-      this.playerRight.set({
+      partnerPlaque.set({
         name: 'KORO·v3',
         voice: 'Wire Loom · Lydian',
         kind: 'automaton',
       });
     }
-    this.renderNetRow();
   }
 
   setConnection(state: string): void {
@@ -162,30 +205,34 @@ export class Hud {
   }
 
   private renderNetRow(): void {
+    // Drawer hidden — net status currently un-surfaced in the UI. Logged so
+    // it's still recoverable from devtools.
     const parts: string[] = [this.currentConnection];
     if (this.currentRoom) parts.push(this.currentRoom);
     if (this.currentConnection === 'spacetime') {
       parts.push(this.partnerPresent ? 'paired' : 'solo');
     }
-    this.drawer.setRow('Net', parts.join(' · '));
+    console.debug('[hud] net', parts.join(' · '));
   }
 
   setInputStatus(text: string): void {
-    this.drawer.setRow('Hands', text);
+    void text;
   }
 
   setMusicStatus(text: string): void {
-    this.drawer.setRow('Audio Out', text);
+    void text;
   }
 
   setCameraMode(mode: CameraMode): void {
-    this.drawer.setCameraMode(mode);
+    void mode;
   }
 
   dispose(): void {
     window.removeEventListener('resize', this.resizeHandler);
     this.sharePopover.dispose();
     this.announcement.dispose();
+    this.localPanel.dispose();
+    this.remotePanel.dispose();
   }
 
   private fitStage(): void {
