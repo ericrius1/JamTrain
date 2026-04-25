@@ -2,9 +2,7 @@ import './style.css';
 import { TitlePlaque } from './components/TitlePlaque';
 import { ResonanceGauge, type Scenario } from './components/ResonanceGauge';
 import { PlayerPlaque } from './components/PlayerPlaque';
-import { HarmonyBand } from './components/HarmonyBand';
 import { EngineRoomDrawer, type CameraMode } from './components/EngineRoomDrawer';
-import { CaptureControl } from './components/CaptureControl';
 import { createCornerFiligree } from './components/CornerFiligree';
 import { BeginGate } from './components/BeginGate';
 
@@ -24,9 +22,7 @@ export class Hud {
   private gauge: ResonanceGauge;
   private playerLeft: PlayerPlaque;
   private playerRight: PlayerPlaque;
-  private harmony: HarmonyBand;
   private drawer: EngineRoomDrawer;
-  private capture: CaptureControl;
   private beginGate?: BeginGate;
   private resizeHandler: () => void;
 
@@ -79,9 +75,6 @@ export class Hud {
     });
     this.uiEl.appendChild(this.playerRight.el);
 
-    this.harmony = new HarmonyBand();
-    this.uiEl.appendChild(this.harmony.el);
-
     this.drawer = new EngineRoomDrawer({
       onRecalibrate: opts.callbacks.onRecalibrate,
       onDisembark: opts.callbacks.onDisembark,
@@ -89,9 +82,6 @@ export class Hud {
     });
     this.uiEl.appendChild(this.drawer.el);
     this.drawer.setRow('Net', `spacetime · ${opts.room}`);
-
-    this.capture = new CaptureControl();
-    this.uiEl.appendChild(this.capture.el);
 
     this.beginGate = new BeginGate({
       onBegin: async name => {
@@ -154,15 +144,8 @@ export class Hud {
     this.drawer.setCameraMode(mode);
   }
 
-  // TODO: hook to Tone.js synth attack
-  pushNote(who: 'you' | 'peer', pitch: number): void {
-    this.harmony.pushNote(who, pitch);
-  }
-
   dispose(): void {
     window.removeEventListener('resize', this.resizeHandler);
-    this.harmony.dispose();
-    this.capture.dispose();
   }
 
   private fitStage(): void {

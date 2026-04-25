@@ -37,10 +37,13 @@ const hud = new Hud({
   room: initialRoom,
   callbacks: {
     onBegin: async _conductorName => {
-      // Single user-gesture entry: kicks off both camera and audio together.
-      // The Hud already pushed the chosen name into the conductor plaque.
-      // TODO: forward the name to multiplayer once SpacetimeDB wiring exists.
-      await Promise.all([game.startCamera(), game.startAudio()]);
+      // Single user-gesture entry. Camera prompt fires here (webcam only —
+      // audio is synthesized output, no mic needed). Multiplayer connect is
+      // also deferred to this gesture so no network activity happens before
+      // the user opts in.
+      await game.startCamera();
+      await game.startAudio();
+      game.connectMultiplayer();
       started = true;
     },
     onRoomChange: room => {

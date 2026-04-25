@@ -5,6 +5,9 @@ import type { ConnectionState, PlayerPose } from './types';
 
 type Listener = (state: ConnectionState) => void;
 
+const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
+const SPACETIME_DATABASE = 'jam-train';
+
 const safeRoom = (roomId: string): string => roomId.trim().replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48) || 'cabin-01';
 
 export class MultiplayerClient {
@@ -31,15 +34,12 @@ export class MultiplayerClient {
   }
 
   connect(): void {
-    const generatedHost = import.meta.env.VITE_SPACETIMEDB_HOST as string | undefined;
-    const uri = import.meta.env.VITE_STDB_URI || generatedHost?.replace(/^http/, 'ws') || 'ws://localhost:3000';
-    const database = import.meta.env.VITE_STDB_DATABASE || import.meta.env.VITE_SPACETIMEDB_DB_NAME || 'jam-train';
     this.setState('connecting');
 
     try {
       this.connection = DbConnection.builder()
-        .withUri(uri)
-        .withDatabaseName(database)
+        .withUri(SPACETIME_URI)
+        .withDatabaseName(SPACETIME_DATABASE)
         .withToken(localStorage.getItem(this.tokenKey) || undefined)
         .withLightMode(true)
         .onConnect((conn, identity, token) => {

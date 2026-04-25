@@ -7,9 +7,7 @@
     "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "spacetime:start": "spacetime start --listen-addr 127.0.0.1:3000 --in-memory --non-interactive",
-    "spacetime:server": "spacetime dev jam-train --server local --project-path . --module-bindings-path src/module_bindings --client-lang typescript --server-only -y",
-    "spacetime:dev": "spacetime dev jam-train --server local --project-path . --module-bindings-path src/module_bindings --client-lang typescript --run \"npm run dev\" -y",
+    "spacetime:publish": "spacetime publish --server maincloud -p ./spacetimedb jam-train -y && npm run spacetime:generate",
     "spacetime:generate": "spacetime generate --lang typescript --out-dir src/module_bindings --module-path spacetimedb -y"
   },
   "dependencies": {

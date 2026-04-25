@@ -261,9 +261,7 @@
 .player-plaque   { position: absolute; top: 50%;   transform: translateY(-50%); padding: 18px 20px; width: 240px; }
 .player-plaque.left  { left: 24px;  text-align: left; }
 .player-plaque.right { right: 24px; text-align: right; }
-.harmony-band    { position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%); width: 760px; padding: 14px 24px 16px; }
 .engine-room-host { position: absolute; left: 24px;  bottom: 24px; }
-.capture-host     { position: absolute; right: 24px; bottom: 24px; display: flex; align-items: center; gap: 10px; }
 
 .title-sunburst {
   position: absolute;
@@ -368,52 +366,6 @@
   margin-top: 4px;
 }
 
-.harmony-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 10px;
-}
-.harmony-header .key-group   { display: flex; align-items: center; gap: 14px; }
-.harmony-header .key-name    { font-family: 'IM Fell English', serif; font-size: 22px; color: var(--sun); }
-.harmony-header .meta-group  { display: flex; align-items: center; gap: 16px; }
-.harmony-header .meta-num    { font-family: 'IM Fell English', serif; font-size: 16px; color: var(--brass); }
-.harmony-header .meta-label  { font-family: 'IM Fell English SC', serif; font-size: 9px; letter-spacing: 0.22em; color: var(--brass); }
-.harmony-header .weaving {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.harmony-header .weaving span:last-child {
-  font-family: 'IM Fell English', serif;
-  font-size: 13px;
-  color: var(--parchment);
-  font-style: italic;
-}
-
-.harmony-legend {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 6px;
-}
-.harmony-legend span {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.harmony-legend .swatch {
-  width: 14px;
-  height: 2px;
-}
-.harmony-legend .swatch.you   { background: var(--sun);    box-shadow: 0 0 6px var(--sun); }
-.harmony-legend .swatch.peer  { background: var(--patina); box-shadow: 0 0 6px var(--patina); }
-.harmony-legend .label {
-  font-family: 'IM Fell English SC', serif;
-  font-size: 9px;
-  letter-spacing: 0.22em;
-  color: var(--brass);
-}
-
 .engine-room-drawer {
   padding: 18px 22px;
   min-width: 340px;
@@ -471,19 +423,6 @@
   background: linear-gradient(180deg, rgba(246, 179, 51, 0.25), rgba(200, 134, 42, 0.15));
   color: var(--sun);
 }
-
-.capture-elapsed {
-  padding: 10px 16px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.capture-elapsed .timer {
-  font-family: 'IM Fell English', serif;
-  font-size: 18px;
-  color: var(--parchment);
-}
-.capture-elapsed .timer .cs { color: var(--brass); }
 
 /* Begin gate (initial overlay) */
 .begin-gate {
@@ -559,6 +498,11 @@
 }
 .begin-name-input:disabled { opacity: 0.6; }
 .begin-name-input::selection { background: rgba(246, 179, 51, 0.3); }
+.begin-name-input.is-suggestion {
+  color: rgba(246, 179, 51, 0.32);
+  font-style: italic;
+}
+.begin-name-input.is-suggestion:focus { color: rgba(246, 179, 51, 0.32); font-style: italic; }
 .begin-reroll {
   flex: 0 0 auto;
   padding: 0 12px;

@@ -88,7 +88,6 @@ export class Game {
     this.setupRenderer();
     this.setupCamera();
     this.createCabin();
-    this.multiplayer.connect();
     await this.renderer.init();
     this.setupOrbitControls();
     this.particles.initialize(this.renderer);
@@ -103,6 +102,10 @@ export class Game {
 
   startAudio(): Promise<void> {
     return this.audio.start();
+  }
+
+  connectMultiplayer(): void {
+    this.multiplayer.connect();
   }
 
   setRoom(roomId: string): void {

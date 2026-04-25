@@ -38,7 +38,7 @@ export class BeginGate {
 
     const body = document.createElement('div');
     body.className = 'body';
-    body.textContent = 'awaken the cabin — camera & audio';
+    body.textContent = 'awaken the cabin — your browser will ask for webcam access to track your hands';
     plaque.appendChild(body);
 
     const nameLabel = document.createElement('div');
@@ -56,8 +56,10 @@ export class BeginGate {
     this.input.autocomplete = 'off';
     this.input.maxLength = 24;
     this.input.value = pickName();
+    this.input.classList.add('is-suggestion');
     this.input.addEventListener('input', () => {
       this.input.value = this.input.value.toUpperCase();
+      this.input.classList.remove('is-suggestion');
     });
     this.input.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
@@ -78,6 +80,7 @@ export class BeginGate {
         next = pickName();
       }
       this.input.value = next;
+      this.input.classList.add('is-suggestion');
       this.input.focus();
       this.input.select();
     });
