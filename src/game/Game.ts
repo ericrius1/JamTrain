@@ -85,7 +85,7 @@ export class Game {
   };
   private playersPane?: Pane;
   private readonly playersParams = {
-    backOffset: 0.15,
+    backOffset: -0.03,
   };
   readonly paneDock: HTMLElement;
   private roomId: string;
@@ -244,6 +244,14 @@ export class Game {
 
   getShareVideoEnabled(): boolean {
     return this.webrtc.getShareVideo();
+  }
+
+  setMusicVolume(value: number): void {
+    this.audio.setMasterGain(value);
+  }
+
+  getMusicVolume(): number {
+    return this.audio.getMasterGain();
   }
 
   setDisplayName(name: string): void {

@@ -1,6 +1,6 @@
 import './style.css';
 import { Game } from './game/Game';
-import { Hud } from './hud/Hud';
+import { Hud, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME } from './hud/Hud';
 import { DevOverlay } from './hud/DevOverlay';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
 
@@ -8,19 +8,38 @@ import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router'
 // itself is sticky on the same origin, so re-enabling on next load just
 // flips track.enabled — no second prompt.
 const PREFS_KEY = 'jam-train-av-prefs';
-type AvPrefs = { camera: boolean; shareVideo: boolean; mic: boolean };
+type AvPrefs = {
+  camera: boolean;
+  shareVideo: boolean;
+  mic: boolean;
+  musicVolume: number;
+  voiceVolume: number;
+};
+const clampUnit = (n: unknown, fallback: number): number => {
+  const v = typeof n === 'number' && Number.isFinite(n) ? n : fallback;
+  return Math.max(0, Math.min(1, v));
+};
 const loadPrefs = (): AvPrefs => {
+  const defaults: AvPrefs = {
+    camera: false,
+    shareVideo: false,
+    mic: false,
+    musicVolume: DEFAULT_MUSIC_VOLUME,
+    voiceVolume: DEFAULT_VOICE_VOLUME,
+  };
   try {
     const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return { camera: false, shareVideo: false, mic: false };
+    if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<AvPrefs>;
     return {
       camera: !!parsed.camera,
       shareVideo: !!parsed.shareVideo,
       mic: !!parsed.mic,
+      musicVolume: clampUnit(parsed.musicVolume, DEFAULT_MUSIC_VOLUME),
+      voiceVolume: clampUnit(parsed.voiceVolume, DEFAULT_VOICE_VOLUME),
     };
   } catch {
-    return { camera: false, shareVideo: false, mic: false };
+    return defaults;
   }
 };
 const savePrefs = (prefs: AvPrefs): void => {
@@ -92,6 +111,10 @@ const hud = new Hud({
       hud.setCameraEnabled(avPrefs.camera);
       hud.setMicEnabled(avPrefs.mic);
       hud.setShareVideoEnabled(avPrefs.shareVideo);
+
+      game.setMusicVolume(avPrefs.musicVolume);
+      hud.setRemoteVolume(avPrefs.voiceVolume);
+      hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
 
       started = true;
     },
@@ -204,6 +227,22 @@ hud.onMicToggle(() => {
   avPrefs.mic = next;
   savePrefs(avPrefs);
 });
+hud.onMusicVolumeChange(value => {
+  game.setMusicVolume(value);
+  avPrefs.musicVolume = value;
+  savePrefs(avPrefs);
+});
+hud.onVoiceVolumeChange(value => {
+  hud.setRemoteVolume(value);
+  avPrefs.voiceVolume = value;
+  savePrefs(avPrefs);
+});
+
+// Apply any persisted mixer values to the HUD immediately so the sliders
+// reflect saved state from frame one (audio engine + music gain are applied
+// after Begin in onBegin since they require a user gesture).
+hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
+hud.setRemoteVolume(avPrefs.voiceVolume);
 
 void game.start();
 

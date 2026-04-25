@@ -20,9 +20,9 @@ export type HandDepthParams = {
 };
 
 const DEFAULTS: HandDepthParams = {
-  depthGain: 1,
-  worldDepthScale: 1,
-  worldDepthOffset: 0,
+  depthGain: .1,
+  worldDepthScale: 0.55,
+  worldDepthOffset: -.1,
   referencePalmSize: 0.09,
 };
 

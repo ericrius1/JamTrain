@@ -74,7 +74,7 @@ export class AudioEngine {
   };
 
   private params = {
-    masterGain: 0.6,
+    masterGain: 0.35,
     chordCycleSeconds: 35,
     attackSeconds: 1.6,
     releaseSeconds: 5.5,
@@ -198,6 +198,15 @@ export class AudioEngine {
 
     const shimmerLinear = p * this.tone.dbToGain(this.params.shimmerMaxDb);
     this.shimmerGain.gain.rampTo(shimmerLinear, PARAM_RAMP);
+  }
+
+  setMasterGain(value: number): void {
+    this.params.masterGain = clamp(value, 0, 1);
+    this.pane?.refresh();
+  }
+
+  getMasterGain(): number {
+    return this.params.masterGain;
   }
 
   // Cozy lo-fi thunder: short low-passed noise burst with a long convolution

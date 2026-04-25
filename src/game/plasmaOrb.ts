@@ -236,7 +236,7 @@ export class PlasmaOrb {
   private uNoiseAmp = uniform(0.18);
   private uWobbleFreq = uniform(4.5);
   private uWobbleSpeed = uniform(1.2);
-  private uAttractorReach = uniform(0.55);
+  private uAttractorReach = uniform(0.07);
   private uAttractorStrength = uniform(0.22);
   private uA0 = uniform(new THREE.Vector4());
   private uA1 = uniform(new THREE.Vector4());
@@ -259,7 +259,7 @@ export class PlasmaOrb {
     this.uRadius.value = this.radius;
     this.uCenter.value.copy(options.position);
 
-    const geometry = new THREE.SphereGeometry(this.radius * 1.5, 32, 24);
+    const geometry = new THREE.SphereGeometry(this.radius * 1.5, 111, 111);
     const material = this.buildMaterial();
 
     this.mesh = new THREE.Mesh(geometry, material);
@@ -312,7 +312,7 @@ export class PlasmaOrb {
     pane.addBinding(params, 'wobbleSpeed', { label: 'wobble speed', min: 0, max: 4, step: 0.05 }).on('change', e => {
       this.uWobbleSpeed.value = e.value;
     });
-    pane.addBinding(params, 'attractorReach', { label: 'hand reach', min: 0.2, max: 1.5, step: 0.01 }).on('change', e => {
+    pane.addBinding(params, 'attractorReach', { label: 'hand reach', min: 0.01, max: 1.5, step: 0.01 }).on('change', e => {
       this.uAttractorReach.value = e.value;
     });
     pane.addBinding(params, 'attractorStrength', { label: 'hand pull', min: 0, max: 0.4, step: 0.005 }).on('change', e => {
@@ -357,8 +357,9 @@ export class PlasmaOrb {
     material.transparent = false;
     material.depthWrite = true;
     material.side = THREE.FrontSide;
-    material.blending = THREE.NormalBlending;
-    material.alphaTest = 0.5;
+    // material.blending = THREE.NormalBlending;
+    // material.alphaTest = 0.5;
+    // material.wireframe = true
 
     try {
       const colorNode = Fn(() => {

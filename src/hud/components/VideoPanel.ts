@@ -183,6 +183,11 @@ export class VideoPanel {
     this.tickLocal();
   }
 
+  setRemoteVolume(volume: number): void {
+    if (this.mode !== 'remote') return;
+    this.video.volume = Math.max(0, Math.min(1, volume));
+  }
+
   setStream(stream: MediaStream | null): void {
     if (this.mode !== 'remote') return;
     if (stream) {

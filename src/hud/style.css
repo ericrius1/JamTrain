@@ -881,6 +881,104 @@
   display: none;
 }
 
+/* Mixer panel ----------------------------------------------------------- */
+/* Bottom-center floating plaque so it sits between the two video panels.
+   Two compact rows: Music (synth bed) and Voice (incoming partner audio). */
+.mixer-panel {
+  position: absolute;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 280px;
+  padding: 12px 16px 10px;
+  z-index: 11;
+  pointer-events: auto;
+  border-radius: 4px;
+}
+.mixer-panel-title {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--sun);
+  text-align: center;
+  margin-bottom: 8px;
+}
+.mixer-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
+}
+.mixer-panel-row + .mixer-panel-row {
+  border-top: 1px solid rgba(200, 154, 75, 0.18);
+  margin-top: 2px;
+  padding-top: 8px;
+}
+.mixer-panel-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: 64px;
+  font-family: 'IM Fell English SC', serif;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--parchment);
+}
+.mixer-panel-label svg {
+  width: 16px;
+  height: 16px;
+  color: var(--brass);
+  flex: 0 0 auto;
+}
+.mixer-panel-value {
+  width: 28px;
+  text-align: right;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--brass);
+}
+.mixer-panel-slider {
+  flex: 1 1 auto;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: linear-gradient(180deg, rgba(0,0,0,0.6), rgba(0,0,0,0.4));
+  border: 1px solid rgba(200, 154, 75, 0.35);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+.mixer-panel-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #d6a45a 0%, #6b4c20 100%);
+  border: 1px solid var(--brass-2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 150, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.mixer-panel-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #d6a45a 0%, #6b4c20 100%);
+  border: 1px solid var(--brass-2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 220, 150, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.6);
+  cursor: pointer;
+}
+.mixer-panel-slider:focus-visible {
+  outline: 1px solid var(--sun);
+  outline-offset: 2px;
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .spin-slow, .pulse, .rec-pulse, .fade-out { animation: none; }

@@ -8,6 +8,10 @@ import { createCornerFiligree } from './components/CornerFiligree';
 import { BeginGate } from './components/BeginGate';
 import { SharePopover } from './components/SharePopover';
 import { AnnouncementToast } from './components/AnnouncementToast';
+import { MixerPanel } from './components/MixerPanel';
+
+export const DEFAULT_MUSIC_VOLUME = 0.35;
+export const DEFAULT_VOICE_VOLUME = 1.0;
 
 export type HudCallbacks = {
   onBegin: (conductorName: string) => Promise<void> | void;
@@ -26,6 +30,7 @@ export class Hud {
   private playerRight: PlayerPlaque;
   private localPanel: VideoPanel;
   private remotePanel: VideoPanel;
+  private mixerPanel: MixerPanel;
   private beginGate?: BeginGate;
   private sharePopover: SharePopover;
   private shareButton: HTMLButtonElement;
@@ -120,6 +125,13 @@ export class Hud {
     this.localPanel = new VideoPanel(stage, { side: 'left', mode: 'local' });
     this.remotePanel = new VideoPanel(stage, { side: 'right', mode: 'remote' });
 
+    this.mixerPanel = new MixerPanel({
+      music: DEFAULT_MUSIC_VOLUME,
+      voice: DEFAULT_VOICE_VOLUME,
+    });
+    this.remotePanel.setRemoteVolume(DEFAULT_VOICE_VOLUME);
+    this.uiEl.appendChild(this.mixerPanel.el);
+
     this.currentRoom = opts.room;
     this.renderNetRow();
 
@@ -180,6 +192,23 @@ export class Hud {
 
   onShareVideoToggle(listener: () => void): void {
     this.localPanel.onShareVideoClick(listener);
+  }
+
+  setMixerValues(music: number, voice: number): void {
+    this.mixerPanel.setMusicVolume(music);
+    this.mixerPanel.setVoiceVolume(voice);
+  }
+
+  setRemoteVolume(volume: number): void {
+    this.remotePanel.setRemoteVolume(volume);
+  }
+
+  onMusicVolumeChange(listener: (value: number) => void): void {
+    this.mixerPanel.onMusicChange(listener);
+  }
+
+  onVoiceVolumeChange(listener: (value: number) => void): void {
+    this.mixerPanel.onVoiceChange(listener);
   }
 
   setRoom(room: string): void {
