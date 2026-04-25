@@ -82,6 +82,13 @@ export class PlayerRig {
     this.applyRobotBlend(1);
   }
 
+  setSeatIndex(seatIndex: number): void {
+    this.seatZ = seatIndex === 0 ? 1.32 : -1.32;
+    this.facing = seatIndex === 0 ? -1 : 1;
+    this.root.position.z = this.seatZ;
+    this.root.rotation.y = seatIndex === 0 ? 0 : Math.PI;
+  }
+
   update(pose: PlayerPose, delta: number, robotTarget: number): void {
     this.robotBlend = damp(this.robotBlend, robotTarget, 4.5, delta);
     this.applyRobotBlend(delta);

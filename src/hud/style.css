@@ -36,9 +36,11 @@
   height: 1014px;
   transform-origin: center center;
   transform: translate(-50%, -50%);
-  background: #000;
-  overflow: hidden;
-  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+#stage > * {
+  pointer-events: auto;
 }
 
 #scene {

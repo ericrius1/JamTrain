@@ -225,10 +225,23 @@ export class Game {
   }
 
   private lockGameCamera(): void {
-    const narrow = this.camera.aspect < 0.72;
-    this.camera.fov = narrow ? 82 : 62;
-    this.gameCameraPosition.set(narrow ? 2.18 : 1.66, narrow ? 1.42 : 1.34, narrow ? 0.18 : 0.02);
-    this.gameCameraTarget.set(narrow ? -0.06 : -0.12, 1.06, 0);
+    // Continuous lerp between a "wide" framing (16:9-ish) and a "narrow"
+    // framing (square-ish). Pulling back + widening FOV as the viewport
+    // narrows keeps both player rigs in frame instead of cropping them.
+    const referenceAspect = 1920 / 1014;
+    const narrowAspect = 0.72;
+    const t = THREE.MathUtils.clamp(
+      (referenceAspect - this.camera.aspect) / (referenceAspect - narrowAspect),
+      0,
+      1,
+    );
+    this.camera.fov = THREE.MathUtils.lerp(62, 82, t);
+    this.gameCameraPosition.set(
+      THREE.MathUtils.lerp(1.66, 2.18, t),
+      THREE.MathUtils.lerp(1.34, 1.42, t),
+      THREE.MathUtils.lerp(0.02, 0.18, t),
+    );
+    this.gameCameraTarget.set(THREE.MathUtils.lerp(-0.12, -0.06, t), 1.06, 0);
     this.camera.position.copy(this.gameCameraPosition);
     this.camera.lookAt(this.gameCameraTarget);
     this.camera.updateProjectionMatrix();
@@ -258,14 +271,14 @@ export class Game {
     ceiling.position.y = 2.24;
     this.scene.add(ceiling);
 
-    const glassY = 1.36;
-    const glassHeight = 1.18;
-    const glassTop = glassY + glassHeight / 2;
-    const glassBottom = glassY - glassHeight / 2;
+    const glassBottom = 0.19;
+    const glassTop = 1.95;
+    const glassHeight = glassTop - glassBottom;
+    const glassY = (glassBottom + glassTop) / 2;
     const glassZs = [-1.5, 0, 1.5];
     const paneDepth = 1.32;
     const glassSpan = glassZs.length * paneDepth;
-    const frameThick = 0.05;
+    const frameThick = 0.025;
     const frameOuterSpan = glassSpan + frameThick;
 
     const ceilingBottom = 2.24 - 0.04;

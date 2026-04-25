@@ -50,14 +50,16 @@ export class Hud {
     this.stageEl = stage;
     this.uiEl = ui;
 
-    // Vignette overlay between scene and UI
+    // Vignette overlay sits on #stage-wrap so it spans the full viewport
+    // (the canvas now fills the viewport too; #stage is just a sized frame
+    // for HUD layout).
     this.vignetteEl = document.createElement('div');
     this.vignetteEl.id = 'vignette';
     const scene = document.getElementById('scene');
-    if (scene && scene.parentElement === stage) {
-      stage.insertBefore(this.vignetteEl, scene.nextSibling);
+    if (scene && scene.parentElement === stageWrap) {
+      stageWrap.insertBefore(this.vignetteEl, scene.nextSibling);
     } else {
-      stage.appendChild(this.vignetteEl);
+      stageWrap.appendChild(this.vignetteEl);
     }
 
     // Decorative corners (under interactive plaques)
