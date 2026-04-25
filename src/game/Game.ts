@@ -137,6 +137,10 @@ export class Game {
     this.multiplayer.onPlayerLeft(listener);
   }
 
+  onPartnerChange(listener: (name: string | null) => void): void {
+    this.multiplayer.onPartnerChange(listener);
+  }
+
   setDisplayName(name: string): void {
     this.multiplayer.setDisplayName(name);
   }

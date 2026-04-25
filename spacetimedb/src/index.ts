@@ -51,6 +51,7 @@ function nextSeatIndex(ctx: any, roomId: string): number {
 
   for (const row of ctx.db.player.player_room_id.filter(roomId)) {
     if (row.identity.isEqual(ctx.sender)) continue;
+    if (!row.online) continue;
     if (row.seatIndex === 0) takenSeat0 = true;
     if (row.seatIndex === 1) takenSeat1 = true;
   }
@@ -60,10 +61,11 @@ function nextSeatIndex(ctx: any, roomId: string): number {
   return 1;
 }
 
-function countOthers(ctx: any, roomId: string): number {
+function countOnlineOthers(ctx: any, roomId: string): number {
   let n = 0;
   for (const row of ctx.db.player.player_room_id.filter(roomId)) {
     if (row.identity.isEqual(ctx.sender)) continue;
+    if (!row.online) continue;
     n++;
   }
   return n;
@@ -73,6 +75,7 @@ function findSoloRoom(ctx: any): string | null {
   const counts = new Map<string, number>();
   for (const row of ctx.db.player.iter()) {
     if (row.identity.isEqual(ctx.sender)) continue;
+    if (!row.online) continue;
     counts.set(row.roomId, (counts.get(row.roomId) || 0) + 1);
   }
   for (const [roomId, count] of counts) {
@@ -93,7 +96,7 @@ export const request_seat = spacetimedb.reducer(
     const cleanPreferred = sanitizeRoom(preferredRoom);
 
     let target = '';
-    if (cleanPreferred && countOthers(ctx, cleanPreferred) < 2) {
+    if (cleanPreferred && countOnlineOthers(ctx, cleanPreferred) < 2) {
       target = cleanPreferred;
     }
     if (!target) {
@@ -135,9 +138,9 @@ export const update_pose = spacetimedb.reducer(
     if (poseJson.length > 24000) throw new SenderError('pose payload too large');
 
     // The server owns the player's room assignment. The roomId argument is
-    // ignored — clients only get to update poses for the room they were
-    // actually placed into via request_seat. Stale poses (sent before the
-    // first request_seat completes) are silently dropped.
+    // ignored — clients only update poses for the room they were placed
+    // into via request_seat. Stale poses (sent before the first
+    // request_seat completes) are silently dropped.
     const playerRow = ctx.db.player.identity.find(ctx.sender);
     if (!playerRow) return;
 
@@ -163,11 +166,22 @@ export const update_pose = spacetimedb.reducer(
 );
 
 export const leave_room = spacetimedb.reducer(ctx => {
+  // Explicit leave (e.g., user clicks Disembark) — fully remove the rows.
   ctx.db.handState.identity.delete(ctx.sender);
   ctx.db.player.identity.delete(ctx.sender);
 });
 
 export const on_disconnect = spacetimedb.clientDisconnected(ctx => {
-  ctx.db.handState.identity.delete(ctx.sender);
-  ctx.db.player.identity.delete(ctx.sender);
+  // Keep the rows around so a brief disconnect/reconnect doesn't appear
+  // to the partner as a player leaving and rejoining (which would flash
+  // their rig back to robot). Just mark them offline so matchmaking
+  // doesn't pair new players with a ghost.
+  const playerRow = ctx.db.player.identity.find(ctx.sender);
+  if (playerRow) {
+    ctx.db.player.identity.update({
+      ...playerRow,
+      online: false,
+      updatedAt: ctx.timestamp,
+    });
+  }
 });

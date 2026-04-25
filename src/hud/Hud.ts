@@ -28,6 +28,11 @@ export class Hud {
   private shareButton: HTMLButtonElement;
   private announcement: AnnouncementToast;
   private resizeHandler: () => void;
+  // Net-row state. Tracked separately so setRoom / setConnection / setPartner
+  // can each update their own slice without clobbering the others.
+  private currentConnection = 'connecting';
+  private currentRoom = '';
+  private partnerPresent = false;
 
   constructor(opts: { room: string; callbacks: HudCallbacks }) {
     const stageWrap = document.getElementById('stage-wrap');
@@ -98,7 +103,8 @@ export class Hud {
       onCameraMode: opts.callbacks.onCameraMode,
     });
     this.uiEl.appendChild(this.drawer.el);
-    this.drawer.setRow('Net', `spacetime · ${opts.room}`);
+    this.currentRoom = opts.room;
+    this.renderNetRow();
 
     this.beginGate = new BeginGate({
       onBegin: async name => {
@@ -122,19 +128,46 @@ export class Hud {
   }
 
   setRoom(room: string): void {
+    this.currentRoom = room;
     this.title.setRoom(room);
-    this.drawer.setRow('Net', `spacetime · ${room}`);
     this.sharePopover.setRoom(room);
+    this.renderNetRow();
   }
 
   announce(text: string): void {
     this.announcement.show(text);
   }
 
+  setPartner(name: string | null): void {
+    this.partnerPresent = !!name;
+    if (name) {
+      this.playerRight.set({
+        name: name.toUpperCase(),
+        voice: 'Live hands · improvising',
+        kind: 'passenger',
+      });
+    } else {
+      this.playerRight.set({
+        name: 'KORO·v3',
+        voice: 'Wire Loom · Lydian',
+        kind: 'automaton',
+      });
+    }
+    this.renderNetRow();
+  }
+
   setConnection(state: string): void {
-    // TODO: wire to peer presence (SpacetimeDB) — for now treat any connected
-    //       state as paired. Until peer presence is tracked, keep solo.
-    this.drawer.setRow('Net', `spacetime · ${state}`);
+    this.currentConnection = state;
+    this.renderNetRow();
+  }
+
+  private renderNetRow(): void {
+    const parts: string[] = [this.currentConnection];
+    if (this.currentRoom) parts.push(this.currentRoom);
+    if (this.currentConnection === 'spacetime') {
+      parts.push(this.partnerPresent ? 'paired' : 'solo');
+    }
+    this.drawer.setRow('Net', parts.join(' · '));
   }
 
   setInputStatus(text: string): void {

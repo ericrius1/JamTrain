@@ -45,11 +45,12 @@ let started = false;
 const hud = new Hud({
   room: initialDisplayRoom,
   callbacks: {
-    onBegin: async _conductorName => {
+    onBegin: async conductorName => {
       // Single user-gesture entry. Camera prompt fires here (webcam only —
       // audio is synthesized output, no mic needed). Multiplayer connect is
       // also deferred to this gesture so no network activity happens before
       // the user opts in.
+      game.setDisplayName(conductorName);
       await game.startCamera();
       await game.startAudio();
       game.connectMultiplayer();
@@ -82,9 +83,18 @@ game.onAssignedRoom(room => {
   hud.setRoom(room);
 });
 
+// Boarding toast — fires only on a *new* arrival in our cabin (post-subscribe).
+// Existing partners that were already in the cabin when we boarded are silent.
 game.onPlayerJoined(player => {
   const name = player.displayName?.trim() || 'A traveler';
   hud.announce(`${name} has boarded the jam train`);
+});
+
+// Partner name plaque — fires whenever the live partner state changes,
+// including initial sync when we join an already-occupied cabin. This is
+// independent of toast logic so the right plaque always reflects reality.
+game.onPartnerChange(name => {
+  hud.setPartner(name);
 });
 
 onUrlRoomChange(room => {
@@ -108,7 +118,15 @@ const dev = new DevOverlay(game.paneDock, visible => cameraDebug.setVisible(visi
 
 void game.start();
 
+const marquee = '🚂 Jam Train ';
+let marqueeOffset = 0;
+const marqueeTimer = window.setInterval(() => {
+  marqueeOffset = (marqueeOffset - 1 + marquee.length) % marquee.length;
+  document.title = marquee.slice(marqueeOffset) + marquee.slice(0, marqueeOffset);
+}, 250);
+
 window.addEventListener('beforeunload', () => {
+  window.clearInterval(marqueeTimer);
   hud.dispose();
   dev.dispose();
   cameraDebug.dispose();

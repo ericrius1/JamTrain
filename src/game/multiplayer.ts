@@ -7,9 +7,15 @@ import type { ConnectionState, PlayerPose } from './types';
 type StateListener = (state: ConnectionState) => void;
 type RoomListener = (roomId: string) => void;
 type PlayerEventListener = (player: { id: string; displayName: string }) => void;
+type PartnerListener = (name: string | null) => void;
 
 const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
+const TOKEN_STORAGE_KEY = 'jam-train-spacetime-token';
+// Tolerate brief reconnect gaps. The server now keeps player rows on
+// disconnect (marking them offline), so within this window the partner's
+// last pose stays visible instead of snapping back to robot.
+const POSE_STALE_MS = 8000;
 
 export class MultiplayerClient {
   localId = `local-${crypto.randomUUID()}`;
@@ -21,7 +27,13 @@ export class MultiplayerClient {
   private stateListeners = new Set<StateListener>();
   private roomListeners = new Set<RoomListener>();
   private joinListeners = new Set<PlayerEventListener>();
-  private knownPlayers = new Set<string>();
+  private leaveListeners = new Set<PlayerEventListener>();
+  private partnerListeners = new Set<PartnerListener>();
+  // Identities of every player we've ever seen in our current room. Survives
+  // online/offline toggles — we only forget a player when they actually
+  // change rooms or get fully deleted (explicit leave_room).
+  private knownPlayers = new Map<string, string>();
+  private partnerName: string | null = null;
   private subscriptionApplied = false;
   private roomId: string;
   private displayName: string;
@@ -29,6 +41,9 @@ export class MultiplayerClient {
   // server to auto-pair instead of creating a fresh empty room with our
   // randomly-picked display name.
   private bootPreferredRoom: string;
+  private reconnectTimer = 0;
+  private reconnectAttempts = 0;
+  private disposed = false;
 
   constructor(urlRoom: string, displayName: string) {
     const sanitized = sanitizeRoomName(urlRoom);
@@ -53,6 +68,28 @@ export class MultiplayerClient {
     this.joinListeners.add(listener);
   }
 
+  onPlayerLeft(listener: PlayerEventListener): void {
+    this.leaveListeners.add(listener);
+  }
+
+  onPartnerChange(listener: PartnerListener): void {
+    // Fires whenever the "partner present in our cabin and online" state
+    // changes — independent of join/leave toasts. Also fires immediately
+    // with the current value so the consumer can sync UI on subscribe.
+    this.partnerListeners.add(listener);
+    listener(this.partnerName);
+  }
+
+  setDisplayName(displayName: string): void {
+    const next = displayName.trim() || 'Player';
+    if (next === this.displayName) return;
+    this.displayName = next;
+    if (this.connection?.isActive) {
+      // Re-issue request_seat so the server picks up the new name.
+      this.requestSeat(this.roomId);
+    }
+  }
+
   getRoom(): string {
     return this.roomId;
   }
@@ -64,24 +101,41 @@ export class MultiplayerClient {
       this.connection = DbConnection.builder()
         .withUri(SPACETIME_URI)
         .withDatabaseName(SPACETIME_DATABASE)
-        // No token persistence: every connection (every tab, every reload)
-        // gets a brand-new SpacetimeDB identity. Two tabs sharing localStorage
-        // would otherwise collapse onto a single identity and never see each
-        // other as separate players.
-        .withLightMode(true)
-        .onConnect((conn, identity, _token) => {
+        // sessionStorage is per-tab — different tabs get different identities
+        // (so they show up as distinct players), but a reconnect within the
+        // same tab reuses the token, so the partner sees a brief disconnect
+        // rather than a player leaving and a different player arriving.
+        .withToken(sessionStorage.getItem(TOKEN_STORAGE_KEY) || undefined)
+        .onConnect((conn, identity, token) => {
           this.localId = identity.toHexString();
-          console.info('[jam-train] spacetime identity', this.localId);
+          sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
+          const isReconnect = this.reconnectAttempts > 0;
+          this.reconnectAttempts = 0;
+          console.info('[jam-train] connected; identity', this.localId, isReconnect ? '(reconnect)' : '(initial)');
           this.registerSpacetimeHandlers(conn);
-          this.requestSeat(this.bootPreferredRoom);
+          // On reconnect, prefer rejoining the room we were last in so we
+          // converge back on the same cabin. On the very first connect, use
+          // the URL-derived preference (empty → server auto-pairs).
+          this.requestSeat(isReconnect ? this.roomId : this.bootPreferredRoom);
           this.setState('spacetime');
         })
         .onConnectError((_ctx: ErrorContext, error: Error) => {
-          console.warn('SpacetimeDB connection unavailable; using local fallback', error);
+          console.warn('[jam-train] connect error', error);
           this.setState('local');
+          this.scheduleReconnect();
         })
-        .onDisconnect(() => {
+        .onDisconnect((_ctx: ErrorContext, error?: Error) => {
+          console.warn('[jam-train] disconnected', error);
+          this.subscriptionApplied = false;
+          this.knownPlayers.clear();
+          this.remotePose = undefined;
+          // Reset partner-name plaque while we're offline.
+          if (this.partnerName !== null) {
+            this.partnerName = null;
+            for (const listener of this.partnerListeners) listener(null);
+          }
           this.setState('local');
+          this.scheduleReconnect();
         })
         .build();
     } catch (error) {
@@ -129,7 +183,7 @@ export class MultiplayerClient {
 
   getRemotePose(now = Date.now()): PlayerPose | undefined {
     if (!this.remotePose) return undefined;
-    return now - this.remotePose.updatedAt < 3000 ? this.remotePose : undefined;
+    return now - this.remotePose.updatedAt < POSE_STALE_MS ? this.remotePose : undefined;
   }
 
   getState(): ConnectionState {
@@ -137,12 +191,26 @@ export class MultiplayerClient {
   }
 
   dispose(): void {
+    this.disposed = true;
+    window.clearTimeout(this.reconnectTimer);
     this.channel?.close();
     if (this.connection?.isActive) {
       void this.connection.reducers.leaveRoom({}).finally(() => this.connection?.disconnect());
     } else {
       this.connection?.disconnect();
     }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.disposed) return;
+    window.clearTimeout(this.reconnectTimer);
+    const attempt = ++this.reconnectAttempts;
+    const delayMs = Math.min(15000, 500 * Math.pow(1.6, Math.min(attempt, 8)));
+    console.info('[jam-train] reconnecting in', Math.round(delayMs), 'ms (attempt', attempt + ')');
+    this.reconnectTimer = window.setTimeout(() => {
+      this.connection = undefined;
+      this.connect();
+    }, delayMs);
   }
 
   private requestSeat(preferredRoom: string): void {
@@ -161,6 +229,9 @@ export class MultiplayerClient {
     conn.db.handState.onUpdate((_ctx, _oldRow, row) => this.acceptHandState(row));
     conn.db.handState.onDelete((_ctx, row) => {
       const identity = row.identity.toHexString();
+      if (identity !== this.localId) {
+        console.info('[jam-train] partner hand_state deleted', identity, 'in', row.roomId);
+      }
       if (this.remotePose?.id === identity) this.remotePose = undefined;
     });
     conn.db.player.onInsert((_ctx, row) => {
@@ -172,17 +243,33 @@ export class MultiplayerClient {
       this.maybeAnnouncePlayer(row);
     });
     conn.db.player.onDelete((_ctx, row) => {
-      this.knownPlayers.delete(row.identity.toHexString());
+      const id = row.identity.toHexString();
+      const name = this.knownPlayers.get(id);
+      this.knownPlayers.delete(id);
+      if (id !== this.localId && name !== undefined) {
+        for (const listener of this.leaveListeners) {
+          listener({ id, displayName: name });
+        }
+      }
     });
     conn
       .subscriptionBuilder()
       .onApplied(() => {
+        // Pass 1: figure out which room the server actually placed us in.
         for (const row of conn.db.player.iter()) {
-          this.knownPlayers.add(row.identity.toHexString());
-          this.acceptOwnPlayer(row);
+          if (row.identity.toHexString() === this.localId) {
+            this.setRoomId(row.roomId);
+          }
         }
+        // Pass 2: track who's already in the cabin (silent — no toasts;
+        // subscriptionApplied is still false at this point).
+        this.rebuildKnownPlayers();
+        // Pass 3: prime remote pose from any pre-existing hand state.
         for (const row of conn.db.handState.iter()) this.acceptHandState(row);
         this.subscriptionApplied = true;
+        // Now sync the partner plaque with whoever's actually online here.
+        this.updatePartner();
+        console.info('[jam-train] subscription applied; room', this.roomId, 'partners', this.knownPlayers.size);
       })
       .onError(ctx => {
         console.warn('SpacetimeDB subscription failed', ctx.event);
@@ -192,22 +279,37 @@ export class MultiplayerClient {
 
   private maybeAnnouncePlayer(row: Player): void {
     const id = row.identity.toHexString();
-    if (id === this.localId) return;
+    if (id === this.localId) {
+      this.updatePartner();
+      return;
+    }
 
     const inOurRoom = row.roomId === this.roomId;
     const wasInOurRoom = this.knownPlayers.has(id);
+    const name = row.displayName || 'Player';
 
     if (inOurRoom && !wasInOurRoom) {
-      this.knownPlayers.add(id);
+      this.knownPlayers.set(id, name);
       // Players already present at subscription time are silently absorbed
       // — they were in the cabin before we boarded.
-      if (!this.subscriptionApplied) return;
-      for (const listener of this.joinListeners) {
-        listener({ id, displayName: row.displayName });
+      if (this.subscriptionApplied) {
+        console.info('[jam-train] player joined', id, name);
+        for (const listener of this.joinListeners) {
+          listener({ id, displayName: name });
+        }
       }
+    } else if (inOurRoom && wasInOurRoom) {
+      // Same player still here — keep the name fresh in case they renamed.
+      this.knownPlayers.set(id, name);
     } else if (!inOurRoom && wasInOurRoom) {
+      // Real room move — they're gone from our cabin.
       this.knownPlayers.delete(id);
+      for (const listener of this.leaveListeners) {
+        listener({ id, displayName: name });
+      }
     }
+
+    this.updatePartner();
   }
 
   private rebuildKnownPlayers(): void {
@@ -216,9 +318,30 @@ export class MultiplayerClient {
     for (const row of this.connection.db.player.iter()) {
       const id = row.identity.toHexString();
       if (id !== this.localId && row.roomId === this.roomId) {
-        this.knownPlayers.add(id);
+        this.knownPlayers.set(id, row.displayName || 'Player');
       }
     }
+    this.updatePartner();
+  }
+
+  private updatePartner(): void {
+    // The plaque/right-rig should reflect whether there's actually an
+    // ONLINE partner in our cabin. Stale/offline rows don't count.
+    let nextName: string | null = null;
+    if (this.connection) {
+      for (const row of this.connection.db.player.iter()) {
+        const id = row.identity.toHexString();
+        if (id === this.localId) continue;
+        if (row.roomId !== this.roomId) continue;
+        if (!row.online) continue;
+        nextName = row.displayName || 'Player';
+        break;
+      }
+    }
+    if (nextName === this.partnerName) return;
+    this.partnerName = nextName;
+    console.info('[jam-train] partner change ->', nextName);
+    for (const listener of this.partnerListeners) listener(nextName);
   }
 
   private acceptOwnPlayer(row: Player): void {
@@ -227,11 +350,20 @@ export class MultiplayerClient {
   }
 
   private acceptHandState(row: HandState): void {
-    if (row.roomId !== this.roomId) return;
     const id = row.identity.toHexString();
     if (id === this.localId) return;
+    if (row.roomId !== this.roomId) {
+      // Partner is in a different room than us — drop their pose.
+      // (Only log when we previously had them, so we can see the moment
+      // a real divergence kicks in.)
+      if (this.remotePose?.id === id) {
+        console.info('[jam-train] dropping pose: partner room', row.roomId, '!= our room', this.roomId);
+      }
+      return;
+    }
     const pose = parsePose(row.poseJson);
     if (!pose) return;
+    const wasPresent = this.remotePose?.id === id;
     this.remotePose = {
       ...pose,
       id,
@@ -239,6 +371,9 @@ export class MultiplayerClient {
       seatIndex: 1,
       updatedAt: Date.now(),
     };
+    if (!wasPresent) {
+      console.info('[jam-train] partner pose first received', id, 'in', row.roomId);
+    }
   }
 
   private setRoomId(nextRoom: string): void {
