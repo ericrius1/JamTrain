@@ -5,6 +5,7 @@ import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
+import { PlasmaOrb, type PlasmaOrbAttractor } from './plasmaOrb';
 import { makePlayerPose } from './pose';
 import { PlayerRig } from './rig';
 import { RobotMotionController } from './robotMotion';
@@ -43,8 +44,7 @@ export class Game {
   private scenery: ScenerySystem;
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
-  private sculpture = new THREE.Group();
-  private sculptureMaterials: THREE.MeshStandardMaterial[] = [];
+  private plasmaOrb?: PlasmaOrb;
   readonly paneDock: HTMLElement;
   private roomId: string;
   private localPose?: PlayerPose;
@@ -91,6 +91,10 @@ export class Game {
     await this.renderer.init();
     this.setupOrbitControls();
     this.particles.initialize(this.renderer);
+    this.plasmaOrb = new PlasmaOrb(this.scene, {
+      position: this.sculptureTarget,
+      radius: 0.42,
+    });
     window.addEventListener('resize', () => this.resize());
     this.resize();
     this.renderer.setAnimationLoop(() => this.update());
@@ -128,6 +132,14 @@ export class Game {
     this.multiplayer.onPlayerJoined(listener);
   }
 
+  onPlayerLeft(listener: (player: { id: string; displayName: string }) => void): void {
+    this.multiplayer.onPlayerLeft(listener);
+  }
+
+  setDisplayName(name: string): void {
+    this.multiplayer.setDisplayName(name);
+  }
+
   setCameraMode(mode: CameraMode): void {
     this.cameraMode = mode;
     if (this.orbitControls) {
@@ -150,6 +162,7 @@ export class Game {
     this.multiplayer.dispose();
     this.robotMotion.dispose();
     this.scenery.dispose();
+    this.plasmaOrb?.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -266,8 +279,6 @@ export class Game {
     tableLeg.position.set(0, 0.36, 0);
     this.scene.add(tableLeg);
 
-    this.createMusicSculpture();
-
     for (const z of [-1.55, 0, 1.55]) {
       const light = new THREE.PointLight(0xffe8ad, 0.95, 4.8);
       light.position.set(0, 2.08, z);
@@ -291,52 +302,6 @@ export class Game {
 
   }
 
-  private createMusicSculpture(): void {
-    this.sculpture.position.copy(this.sculptureTarget);
-
-    const coreMaterial = new THREE.MeshStandardMaterial({
-      color: 0xdffaff,
-      emissive: 0x35d8ff,
-      emissiveIntensity: 1.2,
-      transparent: true,
-      opacity: 0.72,
-      roughness: 0.2,
-      metalness: 0.18,
-    });
-    const amberMaterial = new THREE.MeshStandardMaterial({
-      color: 0xf7cf72,
-      emissive: 0xf28e4c,
-      emissiveIntensity: 0.8,
-      transparent: true,
-      opacity: 0.58,
-      roughness: 0.26,
-      metalness: 0.12,
-    });
-    this.sculptureMaterials.push(coreMaterial, amberMaterial);
-
-    const core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.08, 2), coreMaterial);
-    this.sculpture.add(core);
-
-    for (let i = 0; i < 3; i += 1) {
-      const ring = new THREE.Mesh(new THREE.TorusGeometry(0.24 + i * 0.11, 0.006, 8, 96), i % 2 === 0 ? coreMaterial : amberMaterial);
-      ring.rotation.set(i * 0.72, Math.PI * 0.5 + i * 0.42, i * 0.31);
-      this.sculpture.add(ring);
-    }
-
-    const halo = new THREE.Mesh(
-      new THREE.SphereGeometry(0.42, 24, 14),
-      new THREE.MeshBasicMaterial({
-        color: 0x72f1ff,
-        transparent: true,
-        opacity: 0.08,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      })
-    );
-    this.sculpture.add(halo);
-    this.scene.add(this.sculpture);
-  }
-
   private update(): void {
     const now = performance.now();
     const delta = Math.min((now - this.lastFrameAt) / 1000, 0.05);
@@ -356,6 +321,7 @@ export class Game {
     this.remoteRig.update(remotePose, delta, robotTarget);
 
     const links = this.updateLinks();
+    this.plasmaOrb?.update(elapsed, delta);
     this.particles.update(this.renderer, links, elapsed);
     this.audio.update(localPose, remotePose, elapsed);
     this.multiplayer.sendPose(localPose, elapsed);
@@ -391,20 +357,37 @@ export class Game {
     const material = this.linkLines.material as THREE.LineBasicMaterial;
     const energy = links.reduce((sum, link) => sum + link.tension, 0) / Math.max(links.length, 1);
     material.opacity = 0.18 + energy * 0.48;
-    this.updateSculpture(energy);
+    if (this.plasmaOrb) {
+      this.plasmaOrb.setAttractors(this.computeOrbAttractors());
+      this.plasmaOrb.setEnergy(energy);
+    }
     return links;
   }
 
-  private updateSculpture(energy: number): void {
-    this.sculpture.rotation.x += 0.004 + energy * 0.006;
-    this.sculpture.rotation.y += 0.007 + energy * 0.009;
-    const scale = 0.92 + energy * 0.28 + Math.sin(performance.now() * 0.004) * 0.035;
-    this.sculpture.scale.setScalar(scale);
+  private computeOrbAttractors(): PlasmaOrbAttractor[] {
+    const attractors: PlasmaOrbAttractor[] = [];
+    const maxReach = 0.9;
 
-    for (const material of this.sculptureMaterials) {
-      material.emissiveIntensity = 0.7 + energy * 1.4;
-      material.opacity = 0.48 + energy * 0.36;
-    }
+    const pushHand = (rig: PlayerRig, hand: 'left' | 'right'): void => {
+      const centroid = new THREE.Vector3();
+      let count = 0;
+      for (const finger of fingerNames) {
+        centroid.add(rig.getFingertipWorld(hand, finger));
+        count += 1;
+      }
+      if (count === 0) return;
+      centroid.divideScalar(count);
+      const distance = centroid.distanceTo(this.sculptureTarget);
+      const weight = Math.max(0, Math.min(1, 1 - distance / maxReach));
+      attractors.push({ position: centroid, weight });
+    };
+
+    pushHand(this.localRig, 'left');
+    pushHand(this.localRig, 'right');
+    pushHand(this.remoteRig, 'left');
+    pushHand(this.remoteRig, 'right');
+
+    return attractors;
   }
 
   private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number }): void {
