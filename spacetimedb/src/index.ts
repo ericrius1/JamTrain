@@ -38,6 +38,13 @@ const spacetimedb = schema({
 
 export default spacetimedb;
 
+const ROOM_RE = /^[a-z0-9](-?[a-z0-9])*$/;
+
+function sanitizeRoom(name: string): string {
+  const trimmed = name.trim().toLowerCase().slice(0, 48);
+  return ROOM_RE.test(trimmed) ? trimmed : '';
+}
+
 function nextSeatIndex(ctx: any, roomId: string): number {
   let takenSeat0 = false;
   let takenSeat1 = false;
@@ -53,19 +60,57 @@ function nextSeatIndex(ctx: any, roomId: string): number {
   return 1;
 }
 
-export const join_room = spacetimedb.reducer(
-  { roomId: t.string(), displayName: t.string() },
-  (ctx, { roomId, displayName }) => {
-    if (roomId.trim().length === 0) throw new SenderError('roomId required');
+function countOthers(ctx: any, roomId: string): number {
+  let n = 0;
+  for (const row of ctx.db.player.player_room_id.filter(roomId)) {
+    if (row.identity.isEqual(ctx.sender)) continue;
+    n++;
+  }
+  return n;
+}
 
-    const existing = ctx.db.player.identity.find(ctx.sender);
+function findSoloRoom(ctx: any): string | null {
+  const counts = new Map<string, number>();
+  for (const row of ctx.db.player.iter()) {
+    if (row.identity.isEqual(ctx.sender)) continue;
+    counts.set(row.roomId, (counts.get(row.roomId) || 0) + 1);
+  }
+  for (const [roomId, count] of counts) {
+    if (count === 1) return roomId;
+  }
+  return null;
+}
+
+export const request_seat = spacetimedb.reducer(
+  {
+    preferredRoom: t.string(),
+    fallbackName: t.string(),
+    displayName: t.string(),
+  },
+  (ctx, { preferredRoom, fallbackName, displayName }) => {
     const cleanName = displayName.trim().slice(0, 32) || 'Player';
+    const cleanFallback = sanitizeRoom(fallbackName) || 'cabin';
+    const cleanPreferred = sanitizeRoom(preferredRoom);
+
+    let target = '';
+    if (cleanPreferred && countOthers(ctx, cleanPreferred) < 2) {
+      target = cleanPreferred;
+    }
+    if (!target) {
+      const solo = findSoloRoom(ctx);
+      if (solo) target = solo;
+    }
+    if (!target) target = cleanFallback;
+
+    const seatIndex = nextSeatIndex(ctx, target);
+    const existing = ctx.db.player.identity.find(ctx.sender);
 
     if (existing) {
       ctx.db.player.identity.update({
         ...existing,
-        roomId,
+        roomId: target,
         displayName: cleanName,
+        seatIndex,
         online: true,
         updatedAt: ctx.timestamp,
       });
@@ -74,9 +119,9 @@ export const join_room = spacetimedb.reducer(
 
     ctx.db.player.insert({
       identity: ctx.sender,
-      roomId,
+      roomId: target,
       displayName: cleanName,
-      seatIndex: nextSeatIndex(ctx, roomId),
+      seatIndex,
       online: true,
       connectedAt: ctx.timestamp,
       updatedAt: ctx.timestamp,

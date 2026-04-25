@@ -147,15 +147,39 @@ export class HandTracker {
     this.rawDetections = [];
     if (results.length === 0) return undefined;
 
+    type RawHand = {
+      handedness?: Handedness | string;
+      score?: number;
+      landmarks?: LandmarkLike[];
+      keypoints?: Record<string, LandmarkLike>;
+    };
+
+    const candidates = results
+      .slice(0, 2)
+      .map(raw => raw as RawHand)
+      .filter(hand => hand.landmarks?.length || hand.keypoints?.wrist);
+
+    const wristX = (hand: RawHand): number =>
+      hand.keypoints?.wrist?.x ?? hand.landmarks?.[0]?.x ?? 0.5;
+
+    // Selfie/mirror convention: leftmost wrist (smallest image x) = user's right.
+    // We override the model label here because micro-handpose frequently reports
+    // both detections with the same handedness, which collapses one hand.
+    const assignments: { hand: RawHand; handedness: Handedness }[] = [];
+    if (candidates.length >= 2) {
+      const sorted = [...candidates].sort((a, b) => wristX(a) - wristX(b));
+      assignments.push({ hand: sorted[0], handedness: 'right' });
+      assignments.push({ hand: sorted[1], handedness: 'left' });
+    } else if (candidates.length === 1) {
+      const hand = candidates[0];
+      const handedness = hand.handedness === 'left' || hand.handedness === 'right'
+        ? hand.handedness
+        : this.inferHandedness(hand);
+      assignments.push({ hand, handedness });
+    }
+
     const mapped = {} as Partial<Record<Handedness, HandPose>>;
-    for (const raw of results.slice(0, 2)) {
-      const hand = raw as {
-        handedness?: Handedness | string;
-        score?: number;
-        landmarks?: LandmarkLike[];
-        keypoints?: Record<string, LandmarkLike>;
-      };
-      const handedness = hand.handedness === 'left' || hand.handedness === 'right' ? hand.handedness : this.inferHandedness(hand);
+    for (const { hand, handedness } of assignments) {
       if (hand.landmarks?.length) {
         this.rawDetections.push({
           handedness,

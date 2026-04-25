@@ -2,6 +2,7 @@ import './style.css';
 import { Game } from './game/Game';
 import { Hud } from './hud/Hud';
 import { DevOverlay } from './hud/DevOverlay';
+import { CameraDebug } from './hud/components/CameraDebug';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#scene');
 if (!canvas) {
@@ -78,13 +79,16 @@ observe(connectionSink, text => hud.setConnection(text));
 observe(inputSink,      text => hud.setInputStatus(text));
 observe(musicSink,      text => hud.setMusicStatus(text));
 
-const dev = new DevOverlay(game.paneDock);
+const cameraDebugMount = document.getElementById('stage') ?? document.body;
+const cameraDebug = new CameraDebug(cameraDebugMount, game.handTracker);
+const dev = new DevOverlay(game.paneDock, visible => cameraDebug.setVisible(visible));
 
 void game.start();
 
 window.addEventListener('beforeunload', () => {
   hud.dispose();
   dev.dispose();
+  cameraDebug.dispose();
   game.dispose();
 });
 

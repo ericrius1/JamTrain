@@ -30,7 +30,7 @@ export class Game {
   private readonly sculptureTarget = new THREE.Vector3(0, 1.08, 0);
   private startedAt = performance.now();
   private lastFrameAt = this.startedAt;
-  private handTracker: HandTracker;
+  readonly handTracker: HandTracker;
   private audio: AudioEngine;
   private multiplayer: MultiplayerClient;
   private localRig: PlayerRig;

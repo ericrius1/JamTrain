@@ -11,6 +11,7 @@ import {
 } from "spacetimedb";
 
 export default {
-  roomId: __t.string(),
+  preferredRoom: __t.string(),
+  fallbackName: __t.string(),
   displayName: __t.string(),
 };

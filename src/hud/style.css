@@ -512,6 +512,48 @@
 }
 #stats-panel.hidden { display: none; }
 
+/* Camera debug — bottom-center of stage, mirrors the source feed with a
+   landmark overlay so we can see which hands are actually being tracked. */
+.camera-debug {
+  position: absolute;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 360px;
+  aspect-ratio: 16 / 9;
+  z-index: 10;
+  border: 1px solid rgba(239, 224, 191, 0.35);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.camera-debug video,
+.camera-debug canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.camera-debug video {
+  object-fit: cover;
+}
+.camera-debug-label {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--parchment);
+  background: rgba(0, 0, 0, 0.55);
+  padding: 2px 6px;
+  border-radius: 3px;
+  letter-spacing: 0.04em;
+}
+.camera-debug.hidden { display: none; }
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .spin-slow, .pulse, .rec-pulse, .fade-out { animation: none; }

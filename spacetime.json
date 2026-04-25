@@ -1,4 +1,5 @@
 {
   "module_path": "./spacetimedb",
-  "server": "maincloud"
+  "server": "maincloud",
+  "database": "jam-train"
 }
