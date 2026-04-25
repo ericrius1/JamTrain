@@ -39,8 +39,8 @@ export class Game {
   private readonly cameraDolly = {
     fovWide: 62,
     fovNarrow: 66,
-    dollyBackMeters: 1.6,
-    riseMeters: 0.12,
+    dollyBackMeters: 2.4,
+    riseMeters: 0.18,
     narrowAspect: 0.55,
     smoothingSeconds: 0.45,
   };
@@ -393,7 +393,7 @@ export class Game {
 
     this.scenery.build();
 
-    for (const z of [1.38, -1.38]) {
+    for (const z of [1.12, -1.12]) {
       const bench = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.24, 0.52), seatMat);
       bench.position.set(0, 0.36, z);
       bench.castShadow = true;

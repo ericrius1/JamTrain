@@ -51,7 +51,7 @@ export class PlayerRig {
     private scene: THREE.Scene,
     options: { seatIndex: number; color: number; robot?: boolean }
   ) {
-    this.seatZ = options.seatIndex === 0 ? 1.32 : -1.32;
+    this.seatZ = options.seatIndex === 0 ? 1.05 : -1.05;
     this.facing = options.seatIndex === 0 ? -1 : 1;
     this.root.position.set(0, 0, this.seatZ);
     this.root.rotation.y = options.seatIndex === 0 ? 0 : Math.PI;
@@ -83,7 +83,7 @@ export class PlayerRig {
   }
 
   setSeatIndex(seatIndex: number): void {
-    this.seatZ = seatIndex === 0 ? 1.32 : -1.32;
+    this.seatZ = seatIndex === 0 ? 1.05 : -1.05;
     this.facing = seatIndex === 0 ? -1 : 1;
     this.root.position.z = this.seatZ;
     this.root.rotation.y = seatIndex === 0 ? 0 : Math.PI;
