@@ -2,7 +2,6 @@ import './style.css';
 import { Game } from './game/Game';
 import { Hud } from './hud/Hud';
 import { DevOverlay } from './hud/DevOverlay';
-import { CameraDebug } from './hud/components/CameraDebug';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#scene');
@@ -46,10 +45,11 @@ const hud = new Hud({
   room: initialDisplayRoom,
   callbacks: {
     onBegin: async conductorName => {
-      // Single user-gesture entry. Camera prompt fires here (webcam only —
-      // audio is synthesized output, no mic needed). Multiplayer connect is
-      // also deferred to this gesture so no network activity happens before
-      // the user opts in.
+      // Single user-gesture entry. Camera + mic prompt fires here (mic is
+      // needed for the WebRTC peer-video feed; the synth itself doesn't need
+      // it but if the prompt is denied we fall back gracefully). Multiplayer
+      // connect is also deferred to this gesture so no network activity
+      // happens before the user opts in.
       game.setDisplayName(conductorName);
       await game.startCamera();
       await game.startAudio();
@@ -97,6 +97,13 @@ game.onPartnerChange(name => {
   hud.setPartner(name);
 });
 
+// Seat assignment — server-assigned by join order. First joiner gets seat 0
+// (left), second gets seat 1 (right). The HUD swaps which plaque shows the
+// local conductor vs the partner so each player sees themselves on their side.
+game.onSeatChange(localSeat => {
+  hud.setLocalSeat(localSeat);
+});
+
 onUrlRoomChange(room => {
   // Browser back/forward → re-issue request_seat for the new path.
   game.setRoom(room);
@@ -112,9 +119,16 @@ observe(connectionSink, text => hud.setConnection(text));
 observe(inputSink,      text => hud.setInputStatus(text));
 observe(musicSink,      text => hud.setMusicStatus(text));
 
-const cameraDebugMount = document.getElementById('stage') ?? document.body;
-const cameraDebug = new CameraDebug(cameraDebugMount, game.handTracker);
-const dev = new DevOverlay(game.paneDock, visible => cameraDebug.setVisible(visible));
+const dev = new DevOverlay(game.paneDock);
+
+// Hand the local stream + remote stream into the HUD's video panels. The
+// local panel binds to the HandTracker's video element (so it can also draw
+// the landmark overlay); the remote panel re-binds whenever the WebRTC peer
+// connection delivers (or drops) a remote MediaStream.
+hud.setHandTracker(game.handTracker);
+game.onRemoteStream(stream => {
+  hud.setRemoteStream(stream);
+});
 
 void game.start();
 
@@ -129,7 +143,6 @@ window.addEventListener('beforeunload', () => {
   window.clearInterval(marqueeTimer);
   hud.dispose();
   dev.dispose();
-  cameraDebug.dispose();
   game.dispose();
 });
 
