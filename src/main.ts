@@ -4,6 +4,34 @@ import { Hud } from './hud/Hud';
 import { DevOverlay } from './hud/DevOverlay';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
 
+// Persisted toggle state (camera / share-video / mic). Browser permission
+// itself is sticky on the same origin, so re-enabling on next load just
+// flips track.enabled — no second prompt.
+const PREFS_KEY = 'jam-train-av-prefs';
+type AvPrefs = { camera: boolean; shareVideo: boolean; mic: boolean };
+const loadPrefs = (): AvPrefs => {
+  try {
+    const raw = localStorage.getItem(PREFS_KEY);
+    if (!raw) return { camera: false, shareVideo: false, mic: false };
+    const parsed = JSON.parse(raw) as Partial<AvPrefs>;
+    return {
+      camera: !!parsed.camera,
+      shareVideo: !!parsed.shareVideo,
+      mic: !!parsed.mic,
+    };
+  } catch {
+    return { camera: false, shareVideo: false, mic: false };
+  }
+};
+const savePrefs = (prefs: AvPrefs): void => {
+  try {
+    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* storage may be disabled — non-fatal */
+  }
+};
+const avPrefs = loadPrefs();
+
 const canvas = document.querySelector<HTMLCanvasElement>('#scene');
 if (!canvas) {
   throw new Error('Jam Train: #scene canvas missing');
@@ -45,15 +73,26 @@ const hud = new Hud({
   room: initialDisplayRoom,
   callbacks: {
     onBegin: async conductorName => {
-      // Single user-gesture entry. Camera + mic prompt fires here (mic is
-      // needed for the WebRTC peer-video feed; the synth itself doesn't need
-      // it but if the prompt is denied we fall back gracefully). Multiplayer
-      // connect is also deferred to this gesture so no network activity
-      // happens before the user opts in.
+      // Single user-gesture entry. Camera + mic permission prompts may fire
+      // (the browser remembers the grant for next time, so subsequent loads
+      // skip them). Multiplayer connect is also deferred to this gesture so
+      // no network activity happens before the user opts in.
       game.setDisplayName(conductorName);
       await game.startCamera();
       await game.startAudio();
       game.connectMultiplayer();
+
+      // Restore the previous session's toggle preferences. Browser permission
+      // is already granted (no prompt), so this is just flipping the saved
+      // tracks on. shareVideo only makes sense if camera is on too — we save
+      // the user's intent either way and apply it on the WebRTC clone.
+      game.setCameraEnabled(avPrefs.camera);
+      game.setMicEnabled(avPrefs.mic);
+      game.setShareVideoEnabled(avPrefs.shareVideo);
+      hud.setCameraEnabled(avPrefs.camera);
+      hud.setMicEnabled(avPrefs.mic);
+      hud.setShareVideoEnabled(avPrefs.shareVideo);
+
       started = true;
     },
     onRoomChange: room => {
@@ -139,18 +178,31 @@ game.onRemoteStream(stream => {
   hud.setRemoteStream(stream);
 });
 
-// Mic + camera toggles on the local panel. Both tracks start disabled (the
-// HandTracker acquires permission at Begin and immediately calls
-// track.enabled = false), and the icons reflect the live track state.
-hud.onMicToggle(() => {
-  const next = !game.getMicEnabled();
-  game.setMicEnabled(next);
-  hud.setMicEnabled(next);
-});
+// Three independent toggles on the local panel:
+//   Camera       — enables the local hand-tracking feed (no partner share)
+//   Share Video  — separately opts in to letting the partner see the camera
+//   Mic          — opts in to letting the partner hear you
+// Each click also persists to localStorage so next session restores it.
 hud.onCameraToggle(() => {
   const next = !game.getCameraEnabled();
   game.setCameraEnabled(next);
   hud.setCameraEnabled(next);
+  avPrefs.camera = next;
+  savePrefs(avPrefs);
+});
+hud.onShareVideoToggle(() => {
+  const next = !game.getShareVideoEnabled();
+  game.setShareVideoEnabled(next);
+  hud.setShareVideoEnabled(next);
+  avPrefs.shareVideo = next;
+  savePrefs(avPrefs);
+});
+hud.onMicToggle(() => {
+  const next = !game.getMicEnabled();
+  game.setMicEnabled(next);
+  hud.setMicEnabled(next);
+  avPrefs.mic = next;
+  savePrefs(avPrefs);
 });
 
 void game.start();

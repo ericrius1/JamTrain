@@ -24,12 +24,24 @@ const CAMERA_SVG = `
   <path d="M15.5 10.5l5.5-3v9l-5.5-3z"/>
 </svg>`;
 
+const SHARE_SVG = `
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>
+  <circle cx="12" cy="12" r="3"/>
+</svg>`;
+
 const MIC_SVG = `
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
   <rect x="9" y="3" width="6" height="12" rx="3"/>
   <path d="M5 11a7 7 0 0 0 14 0"/>
   <line x1="12" y1="18" x2="12" y2="22"/>
   <line x1="8.5" y1="22" x2="15.5" y2="22"/>
+</svg>`;
+
+const EMPTY_CAMERA_SVG = `
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2.5" y="6.5" width="13" height="11" rx="1.5"/>
+  <path d="M15.5 10.5l5.5-3v9l-5.5-3z"/>
 </svg>`;
 
 export class VideoPanel {
@@ -42,10 +54,13 @@ export class VideoPanel {
   private streamBound = false;
   private handTracker?: HandTracker;
   private mode: VideoPanelMode;
-  private micButton?: HTMLButtonElement;
   private cameraButton?: HTMLButtonElement;
-  private micListeners = new Set<() => void>();
+  private shareButton?: HTMLButtonElement;
+  private micButton?: HTMLButtonElement;
+  private emptyOverlay?: HTMLDivElement;
   private cameraListeners = new Set<() => void>();
+  private shareVideoListeners = new Set<() => void>();
+  private micListeners = new Set<() => void>();
 
   constructor(parent: HTMLElement, opts: { side: VideoPanelSide; mode: VideoPanelMode }) {
     this.mode = opts.mode;
@@ -66,32 +81,8 @@ export class VideoPanel {
       if (!ctx) throw new Error('VideoPanel: 2d context unavailable');
       this.ctx = ctx;
 
-      const controls = document.createElement('div');
-      controls.className = 'video-panel-controls';
-
-      this.cameraButton = document.createElement('button');
-      this.cameraButton.className = 'video-panel-control';
-      this.cameraButton.type = 'button';
-      this.cameraButton.setAttribute('aria-label', 'Toggle camera');
-      this.cameraButton.title = 'Toggle camera';
-      this.cameraButton.innerHTML = CAMERA_SVG;
-      this.cameraButton.addEventListener('click', () => {
-        for (const listener of this.cameraListeners) listener();
-      });
-      controls.appendChild(this.cameraButton);
-
-      this.micButton = document.createElement('button');
-      this.micButton.className = 'video-panel-control';
-      this.micButton.type = 'button';
-      this.micButton.setAttribute('aria-label', 'Toggle microphone');
-      this.micButton.title = 'Toggle microphone';
-      this.micButton.innerHTML = MIC_SVG;
-      this.micButton.addEventListener('click', () => {
-        for (const listener of this.micListeners) listener();
-      });
-      controls.appendChild(this.micButton);
-
-      this.wrapper.appendChild(controls);
+      this.buildLocalControls();
+      this.buildEmptyOverlay();
     }
 
     this.label = document.createElement('div');
@@ -102,20 +93,75 @@ export class VideoPanel {
     parent.appendChild(this.wrapper);
   }
 
-  setMicEnabled(enabled: boolean): void {
-    this.micButton?.classList.toggle('enabled', enabled);
+  private buildLocalControls(): void {
+    const toolbar = document.createElement('div');
+    toolbar.className = 'video-panel-toolbar';
+
+    this.cameraButton = makeToolbarButton({
+      label: 'Camera',
+      title: 'Turn on your camera so the game can track your hands.',
+      icon: CAMERA_SVG,
+      onClick: () => { for (const l of this.cameraListeners) l(); },
+    });
+    this.shareButton = makeToolbarButton({
+      label: 'Share Video',
+      title: 'Optional — let your partner see your camera feed.',
+      icon: SHARE_SVG,
+      onClick: () => { for (const l of this.shareVideoListeners) l(); },
+    });
+    this.micButton = makeToolbarButton({
+      label: 'Mic',
+      title: 'Optional — let your partner hear you.',
+      icon: MIC_SVG,
+      onClick: () => { for (const l of this.micListeners) l(); },
+    });
+
+    toolbar.append(this.cameraButton, this.shareButton, this.micButton);
+
+    const hint = document.createElement('div');
+    hint.className = 'video-panel-toolbar-hint';
+    hint.textContent = 'Camera tracks your hands. Sharing & mic are optional.';
+    toolbar.appendChild(hint);
+
+    this.wrapper.appendChild(toolbar);
+  }
+
+  private buildEmptyOverlay(): void {
+    const empty = document.createElement('div');
+    empty.className = 'video-panel-empty';
+    empty.innerHTML = `
+      <div class="icon">${EMPTY_CAMERA_SVG}</div>
+      <div class="heading">· Camera Off ·</div>
+      <div class="subhead">Tap <em>Camera</em> above to track your hands</div>
+      <div class="hint">You can still play without it — pointer-driven hands work too.</div>
+    `;
+    this.wrapper.appendChild(empty);
+    this.emptyOverlay = empty;
   }
 
   setCameraEnabled(enabled: boolean): void {
     this.cameraButton?.classList.toggle('enabled', enabled);
+    this.emptyOverlay?.classList.toggle('hidden', enabled);
   }
 
-  onMicClick(listener: () => void): void {
-    this.micListeners.add(listener);
+  setShareVideoEnabled(enabled: boolean): void {
+    this.shareButton?.classList.toggle('enabled', enabled);
+  }
+
+  setMicEnabled(enabled: boolean): void {
+    this.micButton?.classList.toggle('enabled', enabled);
   }
 
   onCameraClick(listener: () => void): void {
     this.cameraListeners.add(listener);
+  }
+
+  onShareVideoClick(listener: () => void): void {
+    this.shareVideoListeners.add(listener);
+  }
+
+  onMicClick(listener: () => void): void {
+    this.micListeners.add(listener);
   }
 
   setHandTracker(tracker: HandTracker): void {
@@ -237,4 +283,20 @@ export class VideoPanel {
     );
     this.label.textContent = `you · L:${counts.left ?? 0} R:${counts.right ?? 0}`;
   }
+}
+
+function makeToolbarButton(opts: {
+  label: string;
+  title: string;
+  icon: string;
+  onClick: () => void;
+}): HTMLButtonElement {
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'video-panel-toolbar-btn';
+  btn.title = opts.title;
+  btn.setAttribute('aria-label', opts.label);
+  btn.innerHTML = `${opts.icon}<span>${opts.label}</span>`;
+  btn.addEventListener('click', opts.onClick);
+  return btn;
 }

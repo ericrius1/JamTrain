@@ -574,49 +574,138 @@
   letter-spacing: 0.04em;
 }
 
-/* Mic + camera toggle icons in the local panel. Faded out when the matching
-   track is disabled; lit (sun-colored) when enabled. The .enabled class is
-   driven by the actual MediaStreamTrack.enabled state, not just clicks. */
-.video-panel-controls {
+/* Three labeled brass keys above the local panel: Camera (local hand
+   tracking), Share Video (partner visibility, optional), Mic (partner
+   audio, optional). Clear visual hierarchy + always-visible hint about
+   what's optional. */
+.video-panel-toolbar {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  bottom: calc(100% + 12px);
+  left: 0;
+  right: 0;
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
   pointer-events: auto;
-  z-index: 2;
+  justify-content: flex-start;
+  z-index: 3;
 }
-.video-panel-control {
-  background: rgba(0, 0, 0, 0.55);
-  border: 1px solid rgba(200, 154, 75, 0.35);
-  border-radius: 4px;
-  padding: 5px 6px;
-  cursor: pointer;
-  color: var(--parchment);
-  opacity: 0.32;
-  transition: opacity 0.18s ease, background 0.18s ease, color 0.18s ease, border-color 0.18s ease;
+.video-panel.right .video-panel-toolbar {
+  justify-content: flex-end;
+}
+
+.video-panel-toolbar-btn {
   display: inline-flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
+  gap: 4px;
+  padding: 8px 12px 7px;
+  min-width: 76px;
+  background: linear-gradient(180deg, #6b4c20 0%, #3a2812 100%);
+  border: 1px solid var(--brass-2);
+  color: var(--text-dim);
+  font-family: 'IM Fell English SC', serif;
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  cursor: pointer;
+  border-radius: 3px;
+  opacity: 0.7;
+  transition:
+    opacity 0.18s ease, color 0.18s ease, background 0.18s ease,
+    border-color 0.18s ease, box-shadow 0.18s ease;
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.20),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 2px 4px rgba(0, 0, 0, 0.5);
 }
-.video-panel-control:hover {
-  opacity: 0.65;
-}
-.video-panel-control.enabled {
+.video-panel-toolbar-btn:hover {
   opacity: 1;
-  background: rgba(246, 179, 51, 0.22);
-  color: var(--sun);
-  border-color: rgba(246, 179, 51, 0.55);
-  box-shadow: 0 0 8px rgba(246, 179, 51, 0.35);
+  color: var(--parchment);
 }
-.video-panel-control:focus-visible {
+.video-panel-toolbar-btn.enabled {
+  opacity: 1;
+  color: var(--sun);
+  background: linear-gradient(180deg, #8a6328 0%, #4d3618 100%);
+  border-color: rgba(246, 179, 51, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.40),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 0 12px rgba(246, 179, 51, 0.32),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+}
+.video-panel-toolbar-btn:focus-visible {
   outline: 1px solid var(--sun);
   outline-offset: 2px;
 }
-.video-panel-control svg {
-  display: block;
-  width: 16px;
-  height: 16px;
+.video-panel-toolbar-btn svg {
+  width: 20px;
+  height: 20px;
+}
+.video-panel-toolbar-btn span { white-space: nowrap; }
+
+.video-panel-toolbar-hint {
+  width: 100%;
+  margin-top: 2px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-align: left;
+}
+.video-panel.right .video-panel-toolbar-hint {
+  text-align: right;
+}
+
+/* "Camera off" placeholder shown inside the local panel when there's no
+   live feed. Tells the user explicitly that they CAN play without the
+   camera and that sharing is a separate, optional concern. */
+.video-panel-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 18px;
+  text-align: center;
+  background: linear-gradient(180deg, rgba(20, 14, 8, 0.94), rgba(8, 6, 4, 0.97));
+  pointer-events: none;
+  z-index: 2;
+}
+.video-panel-empty.hidden { display: none; }
+.video-panel-empty .icon {
+  color: var(--brass);
+  margin-bottom: 8px;
+  opacity: 0.85;
+}
+.video-panel-empty .icon svg { width: 36px; height: 36px; }
+.video-panel-empty .heading {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 12px;
+  letter-spacing: 0.24em;
+  color: var(--sun);
+}
+.video-panel-empty .subhead {
+  font-family: 'IM Fell English', serif;
+  font-size: 14px;
+  color: var(--parchment);
+  margin-top: 2px;
+}
+.video-panel-empty .subhead em {
+  color: var(--sun);
+  font-style: normal;
+  letter-spacing: 0.04em;
+}
+.video-panel-empty .hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-top: 8px;
+  line-height: 1.45;
+  max-width: 260px;
 }
 
 /* Share button + popover ------------------------------------------------- */

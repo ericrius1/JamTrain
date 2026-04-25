@@ -166,12 +166,20 @@ export class Hud {
     this.localPanel.setCameraEnabled(enabled);
   }
 
+  setShareVideoEnabled(enabled: boolean): void {
+    this.localPanel.setShareVideoEnabled(enabled);
+  }
+
   onMicToggle(listener: () => void): void {
     this.localPanel.onMicClick(listener);
   }
 
   onCameraToggle(listener: () => void): void {
     this.localPanel.onCameraClick(listener);
+  }
+
+  onShareVideoToggle(listener: () => void): void {
+    this.localPanel.onShareVideoClick(listener);
   }
 
   setRoom(room: string): void {

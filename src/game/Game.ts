@@ -228,12 +228,20 @@ export class Game {
     this.handTracker.setVideoEnabled(enabled);
   }
 
+  setShareVideoEnabled(enabled: boolean): void {
+    this.webrtc.setShareVideo(enabled);
+  }
+
   getMicEnabled(): boolean {
     return this.handTracker.getAudioEnabled();
   }
 
   getCameraEnabled(): boolean {
     return this.handTracker.getVideoEnabled();
+  }
+
+  getShareVideoEnabled(): boolean {
+    return this.webrtc.getShareVideo();
   }
 
   setDisplayName(name: string): void {

@@ -16,6 +16,12 @@ export class WebRTCClient {
   private remoteDescriptionSet = false;
   private makingOffer = false;
   private disposed = false;
+  // Cloned video track that we hand to the peer connection. Kept independent
+  // of HandTracker's original so the user can have local tracking on without
+  // sharing video with the partner (and vice versa).
+  private videoSenderTrack?: MediaStreamTrack;
+  // Pending share state — applied as soon as a video sender track exists.
+  private desiredShareVideo = false;
 
   constructor(
     private multiplayer: MultiplayerClient,
@@ -154,12 +160,37 @@ export class WebRTCClient {
     if (!stream) return false;
     for (const track of stream.getTracks()) {
       try {
-        pc.addTrack(track, stream);
+        if (track.kind === 'video') {
+          // Clone so the local hand-tracker / preview can keep running on the
+          // original even when we mute partner-facing video. The clone has
+          // its own enabled flag that the Share Video toggle controls.
+          const clone = track.clone();
+          clone.enabled = this.desiredShareVideo;
+          pc.addTrack(clone, stream);
+          this.videoSenderTrack = clone;
+        } else {
+          // Mic doesn't have a local-only consumer, so we hand the original
+          // straight to the peer. Toggling the Mic icon disables capture +
+          // transmission together (and the browser's mic indicator follows).
+          pc.addTrack(track, stream);
+        }
       } catch (err) {
         console.warn('[webrtc] addTrack failed', track.kind, err);
       }
     }
     return true;
+  }
+
+  setShareVideo(enabled: boolean): void {
+    this.desiredShareVideo = enabled;
+    if (this.videoSenderTrack) {
+      this.videoSenderTrack.enabled = enabled;
+    }
+    console.info('[webrtc] share video', enabled ? 'enabled' : 'disabled');
+  }
+
+  getShareVideo(): boolean {
+    return this.videoSenderTrack?.enabled ?? this.desiredShareVideo;
   }
 
   private async createAndSendOffer(): Promise<void> {
@@ -324,6 +355,10 @@ export class WebRTCClient {
     }
     this.remoteDescriptionSet = false;
     this.pendingIceCandidates = [];
+    if (this.videoSenderTrack) {
+      try { this.videoSenderTrack.stop(); } catch { /* ignore */ }
+      this.videoSenderTrack = undefined;
+    }
     if (this.remoteStream) {
       this.remoteStream = undefined;
       for (const listener of this.remoteListeners) listener(null);
