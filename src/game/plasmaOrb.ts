@@ -176,31 +176,33 @@ fn plasmaOrb(
     return vec4<f32>(0.0);
   }
 
-  // Soft Reinhard tone curve preserves color, no log blow-out.
+  // Soft Reinhard tone curve. Light shoulder so brighter regions still
+  // separate from mid-density areas; aggressive compression turned the
+  // whole orb flat-white.
   col = col / (1.0 + col * uToneStrength);
 
   let lum = clamp(dot(col, vec3<f32>(0.299, 0.587, 0.114)), 0.0, 1.0);
 
-  // Cool stays dominant. uHot is a brighter teal-green family (not white),
-  // so even peaks read as mystic green-blue rather than overexposed cream.
-  let coolBlend = mix(uCool, uHot, smoothstep(0.55, 1.0, lum));
+  // uHot kicks in only at true peaks (lum > 0.85) so the orb stays in the
+  // uCool family across most of the visible area. uHot is a saturated
+  // brighter teal-green, never white.
+  let coolBlend = mix(uCool, uHot, smoothstep(0.85, 1.05, lum));
 
-  // Amber lives in narrow filaments only: ridges where a single inner-loop
-  // peak dominates the volume average. Without this gate, amber paints the
-  // whole bright interior.
+  // Filaments: rays where a single inner iteration's density dominates
+  // the volume average. These are the bright thread-like ridges.
   let avgStep = depthAccum / f32(stepCount);
   let filament = clamp((maxStep - avgStep * 4.0 - 0.35) * 1.6, 0.0, 1.0);
   let amberAccent = filament * smoothstep(0.35, 0.85, lum) * uEnergy;
-  let palette = mix(coolBlend, uWarm, amberAccent * 0.85);
+  let palette = mix(coolBlend, uWarm, amberAccent * 0.9);
 
-  // Slightly desaturate before the cool tint: keeps the highlights from
-  // pumping pure white through the multiplication.
-  let baseRgb = mix(vec3<f32>(lum), col, 0.6);
-  let tinted = baseRgb * palette * uBrightness;
+  // Tint col directly. col carries the swirl detail (per-channel
+  // accumulation differs for r=b³, g=b², b=b), so tinting it preserves
+  // structure. Don't desaturate — that washed out the internal motion.
+  let tinted = col * palette * uBrightness;
 
-  // Floor: dim cool fill so the back of the volume reads as the orb body
+  // Dim cool fill so the back of the volume reads as the orb body
   // rather than punching through to black.
-  let baseFill = uCool * 0.08;
+  let baseFill = uCool * 0.06;
   let outRgb = max(tinted, baseFill);
   return vec4<f32>(outRgb, 1.0);
 }
@@ -248,8 +250,8 @@ export class PlasmaOrb {
   private uInnerIters = (uniform as any)(10, 'int');
   private uFoldSensitivity = uniform(19.0);
   private uAccumRate = uniform(0.05);
-  private uToneStrength = uniform(0.9);
-  private uBrightness = uniform(0.95);
+  private uToneStrength = uniform(0.45);
+  private uBrightness = uniform(1.1);
 
   constructor(scene: THREE.Scene, options: PlasmaOrbOptions) {
     this.radius = options.radius ?? 0.42;
