@@ -39,11 +39,15 @@ export class AudioEngine {
   private tone?: typeof import('tone');
   private running = false;
 
-  private bedAVoices: any[] = [];
-  private bedBVoices: any[] = [];
-  private droneA?: any;
-  private droneB?: any;
-  private shimmer?: any;
+  // Two voice banks per layer alternate on each chord change. The new bank
+  // attacks into the new chord while the old bank releases into its tail —
+  // crossfading whole chords like sustaining a piano across changes.
+  private bedABanks: any[][] = [[], []];
+  private bedBBanks: any[][] = [[], []];
+  private droneABanks: any[] = [];
+  private droneBBanks: any[] = [];
+  private shimmerBanks: any[] = [];
+  private bankIndex = 0;
 
   private bedAGain?: any;
   private bedBGain?: any;
@@ -72,7 +76,8 @@ export class AudioEngine {
   private params = {
     masterGain: 0.6,
     chordCycleSeconds: 35,
-    portamentoSeconds: 4,
+    attackSeconds: 1.6,
+    releaseSeconds: 5.5,
     filterMaxHz: 3000,
     reverbWetRange: 0.18,
     shimmerMaxDb: -10,
@@ -108,41 +113,35 @@ export class AudioEngine {
 
     const padOptions = {
       oscillator: { type: 'fattriangle', count: 3, spread: 14 } as any,
-      envelope: { attack: 3.0, decay: 0.6, sustain: 1.0, release: 6.0 },
-      portamento: this.params.portamentoSeconds,
+      envelope: { attack: this.params.attackSeconds, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds },
       volume: -14,
     };
     const droneOptions = {
       oscillator: { type: 'sine' } as any,
-      envelope: { attack: 4.0, decay: 0.4, sustain: 1.0, release: 8.0 },
-      portamento: this.params.portamentoSeconds,
+      envelope: { attack: this.params.attackSeconds * 1.5, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds * 1.3 },
       volume: -8,
     };
     const shimmerOptions = {
       oscillator: { type: 'triangle' } as any,
-      envelope: { attack: 4.0, decay: 0.4, sustain: 1.0, release: 4.0 },
-      portamento: this.params.portamentoSeconds,
+      envelope: { attack: this.params.attackSeconds * 1.8, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds * 0.7 },
       volume: -16,
     };
 
-    const initial = this.currentChord();
-    this.bedAVoices = initial.a.voices.map(note => {
-      const v = new Tone.Synth(padOptions).connect(this.bedAGain);
-      v.triggerAttack(note);
-      return v;
-    });
-    this.bedBVoices = initial.b.voices.map(note => {
-      const v = new Tone.Synth(padOptions).connect(this.bedBGain);
-      v.triggerAttack(note);
-      return v;
-    });
-    this.droneA = new Tone.Synth(droneOptions).connect(this.bedAGain);
-    this.droneA.triggerAttack(initial.a.drone);
-    this.droneB = new Tone.Synth(droneOptions).connect(this.bedBGain);
-    this.droneB.triggerAttack(initial.b.drone);
+    for (let bank = 0; bank < 2; bank++) {
+      this.bedABanks[bank] = [0, 1, 2].map(() => new Tone.Synth(padOptions).connect(this.bedAGain));
+      this.bedBBanks[bank] = [0, 1, 2].map(() => new Tone.Synth(padOptions).connect(this.bedBGain));
+      this.droneABanks[bank] = new Tone.Synth(droneOptions).connect(this.bedAGain);
+      this.droneBBanks[bank] = new Tone.Synth(droneOptions).connect(this.bedBGain);
+      this.shimmerBanks[bank] = new Tone.Synth(shimmerOptions).connect(this.shimmerGain);
+    }
 
-    this.shimmer = new Tone.Synth(shimmerOptions).connect(this.shimmerGain);
-    this.shimmer.triggerAttack(this.shimmerNote());
+    const initial = this.currentChord();
+    const b = this.bankIndex;
+    initial.a.voices.forEach((note, i) => this.bedABanks[b][i].triggerAttack(note));
+    initial.b.voices.forEach((note, i) => this.bedBBanks[b][i].triggerAttack(note));
+    this.droneABanks[b].triggerAttack(initial.a.drone);
+    this.droneBBanks[b].triggerAttack(initial.b.drone);
+    this.shimmerBanks[b].triggerAttack(this.shimmerNote());
 
     this.attachPane();
     this.running = true;
@@ -204,7 +203,13 @@ export class AudioEngine {
   dispose(): void {
     if (!this.running) return;
     this.running = false;
-    const all = [...this.bedAVoices, ...this.bedBVoices, this.droneA, this.droneB, this.shimmer];
+    const all = [
+      ...this.bedABanks.flat(),
+      ...this.bedBBanks.flat(),
+      ...this.droneABanks,
+      ...this.droneBBanks,
+      ...this.shimmerBanks,
+    ];
     for (const v of all) v?.dispose?.();
     this.bedAGain?.dispose?.();
     this.bedBGain?.dispose?.();
@@ -220,22 +225,42 @@ export class AudioEngine {
   }
 
   private advanceChord(): void {
-    const portamento = this.params.portamentoSeconds;
+    const oldBank = this.bankIndex;
+    const newBank = 1 - oldBank;
     const { a, b } = this.currentChord();
-    this.bedAVoices.forEach((v, i) => {
-      v.set({ portamento });
-      v.setNote(a.voices[i]);
-    });
-    this.bedBVoices.forEach((v, i) => {
-      v.set({ portamento });
-      v.setNote(b.voices[i]);
-    });
-    this.droneA?.set({ portamento });
-    this.droneA?.setNote(a.drone);
-    this.droneB?.set({ portamento });
-    this.droneB?.setNote(b.drone);
-    this.shimmer?.set({ portamento });
-    this.shimmer?.setNote(this.shimmerNote());
+
+    // Old bank releases into its long tail; new bank attacks into the new chord.
+    this.bedABanks[oldBank].forEach(v => v.triggerRelease());
+    this.bedBBanks[oldBank].forEach(v => v.triggerRelease());
+    this.droneABanks[oldBank]?.triggerRelease();
+    this.droneBBanks[oldBank]?.triggerRelease();
+    this.shimmerBanks[oldBank]?.triggerRelease();
+
+    a.voices.forEach((note, i) => this.bedABanks[newBank][i].triggerAttack(note));
+    b.voices.forEach((note, i) => this.bedBBanks[newBank][i].triggerAttack(note));
+    this.droneABanks[newBank]?.triggerAttack(a.drone);
+    this.droneBBanks[newBank]?.triggerAttack(b.drone);
+    this.shimmerBanks[newBank]?.triggerAttack(this.shimmerNote());
+
+    this.bankIndex = newBank;
+  }
+
+  private applyEnvelopeUpdate(): void {
+    const a = this.params.attackSeconds;
+    const r = this.params.releaseSeconds;
+    const allPads = [...this.bedABanks.flat(), ...this.bedBBanks.flat()];
+    for (const v of allPads) {
+      v.envelope.attack = a;
+      v.envelope.release = r;
+    }
+    for (const v of this.droneABanks.concat(this.droneBBanks)) {
+      v.envelope.attack = a * 1.5;
+      v.envelope.release = r * 1.3;
+    }
+    for (const v of this.shimmerBanks) {
+      v.envelope.attack = a * 1.8;
+      v.envelope.release = r * 0.7;
+    }
   }
 
   private currentChord(): { a: ChordVoicing; b: ChordVoicing } {
@@ -291,8 +316,11 @@ export class AudioEngine {
     this.pane.addBinding(this.params, 'masterGain', { label: 'master', min: 0, max: 1, step: 0.01 });
     this.pane.addBinding(this.params, 'chordCycleSeconds', { label: 'chord seconds', min: 8, max: 120, step: 1 });
     this.pane
-      .addBinding(this.params, 'portamentoSeconds', { label: 'glide sec', min: 0.1, max: 8, step: 0.1 })
-      .on('change', () => this.advanceChord());
+      .addBinding(this.params, 'attackSeconds', { label: 'attack sec', min: 0.2, max: 6, step: 0.1 })
+      .on('change', () => this.applyEnvelopeUpdate());
+    this.pane
+      .addBinding(this.params, 'releaseSeconds', { label: 'release sec', min: 1, max: 12, step: 0.1 })
+      .on('change', () => this.applyEnvelopeUpdate());
     this.pane.addBinding(this.params, 'filterMaxHz', { label: 'filter ceil', min: 1500, max: 8000, step: 50 });
     this.pane.addBinding(this.params, 'reverbWetRange', { label: 'verb mod', min: 0, max: 0.6, step: 0.01 });
     this.pane.addBinding(this.params, 'shimmerMaxDb', { label: 'shimmer dB', min: -30, max: 0, step: 0.5 });

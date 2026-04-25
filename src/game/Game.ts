@@ -12,6 +12,7 @@ import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
+import { Pane } from 'tweakpane';
 
 type GameUi = {
   connectionStatus: HTMLElement;
@@ -29,6 +30,22 @@ export class Game {
   private cameraMode: CameraMode = 'game';
   private readonly gameCameraPosition = new THREE.Vector3(1.48, 1.34, 0.56);
   private readonly gameCameraTarget = new THREE.Vector3(-0.18, 1.06, 0);
+  // Anchor pose for the design aspect (1920×1014). The dolly system pulls
+  // the camera back along the view direction from this anchor as the
+  // viewport narrows.
+  private readonly designCameraPos = new THREE.Vector3(1.66, 1.34, 0.02);
+  private readonly designCameraTarget = new THREE.Vector3(-0.12, 1.06, 0);
+  private readonly _backDir = new THREE.Vector3();
+  private readonly cameraDolly = {
+    fovWide: 62,
+    fovNarrow: 64,
+    dollyBackMeters: 0.85,
+    riseMeters: 0.08,
+    narrowAspect: 0.55,
+    smoothingSeconds: 0.45,
+  };
+  private dollyT = 0;
+  private cameraPane?: Pane;
   private readonly sculptureTarget = new THREE.Vector3(0, 1.08, 0);
   private startedAt = performance.now();
   private lastFrameAt = this.startedAt;
@@ -195,6 +212,7 @@ export class Game {
     this.scenery.dispose();
     this.plasmaOrb?.dispose();
     this.audio.dispose();
+    this.cameraPane?.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -208,7 +226,11 @@ export class Game {
   }
 
   private setupCamera(): void {
+    // Snap to the aspect-derived target so the first frame doesn't animate
+    // in from the wide pose.
+    this.dollyT = this.computeDollyTarget();
     this.lockGameCamera();
+    this.setupCameraPane();
   }
 
   private setupOrbitControls(): void {
@@ -223,27 +245,62 @@ export class Game {
     this.orbitControls.target.copy(this.sculptureTarget);
   }
 
+  private computeDollyTarget(): number {
+    // 0 at the design aspect (or wider); 1 at the configured narrow aspect.
+    const ref = 1920 / 1014;
+    const span = Math.max(0.0001, ref - this.cameraDolly.narrowAspect);
+    return THREE.MathUtils.clamp((ref - this.camera.aspect) / span, 0, 1);
+  }
+
+  private updateCameraDolly(delta: number): void {
+    // Exponential smoothing toward the aspect-derived target so a window
+    // resize feels like a graceful dolly rather than a snap.
+    const target = this.computeDollyTarget();
+    const tau = this.cameraDolly.smoothingSeconds;
+    const alpha = tau <= 0 ? 1 : 1 - Math.exp(-delta / tau);
+    this.dollyT += (target - this.dollyT) * alpha;
+    this.lockGameCamera();
+  }
+
   private lockGameCamera(): void {
-    // Continuous lerp between a "wide" framing (16:9-ish) and a "narrow"
-    // framing (square-ish). Pulling back + widening FOV as the viewport
-    // narrows keeps both player rigs in frame instead of cropping them.
-    const referenceAspect = 1920 / 1014;
-    const narrowAspect = 0.72;
-    const t = THREE.MathUtils.clamp(
-      (referenceAspect - this.camera.aspect) / (referenceAspect - narrowAspect),
-      0,
-      1,
-    );
-    this.camera.fov = THREE.MathUtils.lerp(62, 82, t);
-    this.gameCameraPosition.set(
-      THREE.MathUtils.lerp(1.66, 2.18, t),
-      THREE.MathUtils.lerp(1.34, 1.42, t),
-      THREE.MathUtils.lerp(0.02, 0.18, t),
-    );
-    this.gameCameraTarget.set(THREE.MathUtils.lerp(-0.12, -0.06, t), 1.06, 0);
+    const t = this.dollyT;
+    const p = this.cameraDolly;
+    this.camera.fov = THREE.MathUtils.lerp(p.fovWide, p.fovNarrow, t);
+    this._backDir.subVectors(this.designCameraPos, this.designCameraTarget).normalize();
+    this.gameCameraPosition
+      .copy(this.designCameraPos)
+      .addScaledVector(this._backDir, p.dollyBackMeters * t);
+    this.gameCameraPosition.y += p.riseMeters * t;
+    this.gameCameraTarget.copy(this.designCameraTarget);
     this.camera.position.copy(this.gameCameraPosition);
     this.camera.lookAt(this.gameCameraTarget);
     this.camera.updateProjectionMatrix();
+  }
+
+  private setupCameraPane(): void {
+    if (this.cameraPane) return;
+    const container = document.createElement('div');
+    this.paneDock.appendChild(container);
+    this.cameraPane = new Pane({ title: 'Camera Dolly', container });
+    this.cameraPane.expanded = false;
+    this.cameraPane.addBinding(this.cameraDolly, 'fovWide', {
+      label: 'fov wide', min: 30, max: 90, step: 1,
+    });
+    this.cameraPane.addBinding(this.cameraDolly, 'fovNarrow', {
+      label: 'fov narrow', min: 30, max: 100, step: 1,
+    });
+    this.cameraPane.addBinding(this.cameraDolly, 'dollyBackMeters', {
+      label: 'dolly back m', min: 0, max: 3, step: 0.05,
+    });
+    this.cameraPane.addBinding(this.cameraDolly, 'riseMeters', {
+      label: 'rise m', min: 0, max: 1, step: 0.01,
+    });
+    this.cameraPane.addBinding(this.cameraDolly, 'narrowAspect', {
+      label: 'narrow aspect', min: 0.3, max: 1.5, step: 0.01,
+    });
+    this.cameraPane.addBinding(this.cameraDolly, 'smoothingSeconds', {
+      label: 'lag sec', min: 0, max: 2, step: 0.01,
+    });
   }
 
   private createCabin(): void {
@@ -401,7 +458,7 @@ export class Game {
     this.updateAtmosphere(atmosphere);
     this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
     this.multiplayer.sendPose(localPose, elapsed);
-    if (this.cameraMode === 'game') this.lockGameCamera();
+    if (this.cameraMode === 'game') this.updateCameraDolly(delta);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
   }
