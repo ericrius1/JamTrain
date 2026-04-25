@@ -8,6 +8,7 @@ import {
   type SilhouetteParams,
 } from './biomes';
 import { BiomeLayers } from './biomeLayers';
+import { FOREGROUND_BIOMES, BACKGROUND_BIOMES, type ForegroundBiomeId, type BackgroundBiomeId, type MagicEvent } from './biomes';
 import { SpriteAtlas } from './spriteAtlas';
 import { WaterStrip } from './waterStrip';
 import { SkyLife } from './skyLife';
@@ -255,6 +256,49 @@ export class ScenerySystem {
     this.pane.addBinding(this.params, 'starIntensity', { label: 'stars', min: 0, max: 1, step: 0.01 });
     this.pane.addBinding(this.params, 'moonSize', { label: 'moon size', min: 0.12, max: 0.58, step: 0.01 });
     this.pane.addBinding(this.params, 'moonPhase', { label: 'moon phase', readonly: true } as never);
+
+    this.setupBiomePane();
+  }
+
+  private setupBiomePane(): void {
+    const biomeFolder = this.pane.addFolder({ title: 'Biomes' });
+    const fgIds: Array<ForegroundBiomeId | 'auto'> = ['auto', ...(Object.keys(FOREGROUND_BIOMES) as ForegroundBiomeId[])];
+    const bgIds: Array<BackgroundBiomeId | 'auto'> = ['auto', ...(Object.keys(BACKGROUND_BIOMES) as BackgroundBiomeId[])];
+    const biomeState = { foreground: 'auto' as ForegroundBiomeId | 'auto', background: 'auto' as BackgroundBiomeId | 'auto', transitionSpeed: 1, recencyPenalty: 1 };
+    const fgOptions: Record<string, string> = {};
+    for (const id of fgIds) fgOptions[id] = id;
+    const bgOptions: Record<string, string> = {};
+    for (const id of bgIds) bgOptions[id] = id;
+    biomeFolder.addBinding(biomeState, 'foreground', { options: fgOptions }).on('change', (ev) => {
+      this.scheduler.overrides.forceForeground = ev.value === 'auto' ? undefined : ev.value as ForegroundBiomeId;
+    });
+    biomeFolder.addBinding(biomeState, 'background', { options: bgOptions }).on('change', (ev) => {
+      this.scheduler.overrides.forceBackground = ev.value === 'auto' ? undefined : ev.value as BackgroundBiomeId;
+    });
+    biomeFolder.addBinding(biomeState, 'transitionSpeed', { min: 0.1, max: 10, step: 0.1 }).on('change', (ev) => {
+      this.scheduler.overrides.transitionSpeedMul = ev.value;
+    });
+    biomeFolder.addBinding(biomeState, 'recencyPenalty', { min: 0, max: 2, step: 0.05 }).on('change', (ev) => {
+      this.scheduler.overrides.recencyPenaltyStrength = ev.value;
+    });
+
+    const weatherFolder = this.pane.addFolder({ title: 'Weather' });
+    weatherFolder.addButton({ title: 'trigger lightning' }).on('click', () => {
+      this.scheduler.triggerLightningNow((Date.now() - this.epochMs) / 1000);
+    });
+
+    const magicFolder = this.pane.addFolder({ title: 'Sky life' });
+    const triggers: Array<{ kind: MagicEvent['kind']; label: string }> = [
+      { kind: 'shootingStar', label: 'shooting star' },
+      { kind: 'balloon', label: 'hot air balloon' },
+      { kind: 'whale', label: 'whale spout' },
+      { kind: 'plane', label: 'distant plane' },
+    ];
+    for (const t of triggers) {
+      magicFolder.addButton({ title: t.label }).on('click', () => {
+        this.scheduler.triggerMagic(t.kind, (Date.now() - this.epochMs) / 1000);
+      });
+    }
   }
 
   private createSky(): void {
