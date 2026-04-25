@@ -65,16 +65,33 @@ export class HandTracker {
       return;
     }
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 960 },
-          height: { ideal: 540 },
-          facingMode: 'user',
-        },
-        audio: false,
-      });
+    const baseConstraints: MediaStreamConstraints = {
+      video: { width: { ideal: 960 }, height: { ideal: 540 }, facingMode: 'user' },
+      audio: true,
+    };
 
+    let stream: MediaStream | undefined;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
+    } catch (err) {
+      console.warn(
+        '[webrtc] mic+camera request failed; retrying video-only',
+        (err as Error)?.name,
+        (err as Error)?.message
+      );
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ ...baseConstraints, audio: false });
+        console.warn('[webrtc] mic unavailable; webrtc will be video-only');
+      } catch (err2) {
+        console.warn('[webrtc] camera unavailable; webrtc disabled', err2);
+        this.mode = 'error';
+        this.status = 'hands: simulated';
+        this.publishStatus();
+        return;
+      }
+    }
+
+    try {
       const video = document.createElement('video');
       video.muted = true;
       video.playsInline = true;
@@ -131,6 +148,11 @@ export class HandTracker {
 
   getVideo(): HTMLVideoElement | undefined {
     return this.video;
+  }
+
+  getStream(): MediaStream | undefined {
+    const src = this.video?.srcObject;
+    return src instanceof MediaStream ? src : undefined;
   }
 
   getDetections(): readonly RawDetection[] {
