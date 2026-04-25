@@ -122,8 +122,8 @@ export class Hud {
     void opts.callbacks.onDisembark;
     void opts.callbacks.onCameraMode;
 
-    this.localPanel = new VideoPanel(stage, { side: 'left', mode: 'local' });
-    this.remotePanel = new VideoPanel(stage, { side: 'right', mode: 'remote' });
+    this.localPanel = new VideoPanel(stageWrap, { side: 'left', mode: 'local' });
+    this.remotePanel = new VideoPanel(stageWrap, { side: 'right', mode: 'remote' });
 
     this.mixerPanel = new MixerPanel({
       music: DEFAULT_MUSIC_VOLUME,
@@ -141,7 +141,7 @@ export class Hud {
         await opts.callbacks.onBegin(name);
       },
     });
-    stage.appendChild(this.beginGate.el);
+    stageWrap.appendChild(this.beginGate.el);
 
     this.resizeHandler = () => this.fitStage();
     window.addEventListener('resize', this.resizeHandler);
