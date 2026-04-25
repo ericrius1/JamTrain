@@ -121,7 +121,7 @@ void game.start();
 const marquee = '🚂 Jam Train ';
 let marqueeOffset = 0;
 const marqueeTimer = window.setInterval(() => {
-  marqueeOffset = (marqueeOffset - 1 + marquee.length) % marquee.length;
+  marqueeOffset = (marqueeOffset + 1) % marquee.length;
   document.title = marquee.slice(marqueeOffset) + marquee.slice(0, marqueeOffset);
 }, 250);
 
