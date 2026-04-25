@@ -31,9 +31,34 @@ const handState = table(
   }
 );
 
+const webrtcSignal = table(
+  {
+    name: 'webrtc_signal',
+    public: true,
+    indexes: [
+      {
+        accessor: 'webrtc_signal_recipient',
+        name: 'webrtc_signal_recipient',
+        algorithm: 'btree',
+        columns: ['recipientId'],
+      },
+    ],
+  },
+  {
+    id: t.u64().primaryKey().autoInc(),
+    roomId: t.string(),
+    senderId: t.identity(),
+    recipientId: t.identity(),
+    kind: t.string(),
+    payload: t.string(),
+    createdAt: t.timestamp(),
+  }
+);
+
 const spacetimedb = schema({
   player,
   handState,
+  webrtcSignal,
 });
 
 export default spacetimedb;
@@ -171,8 +196,51 @@ export const leave_room = spacetimedb.reducer(ctx => {
   ctx.db.player.identity.delete(ctx.sender);
 });
 
+const ALLOWED_SIGNAL_KINDS = new Set(['offer', 'answer', 'ice']);
+
+export const send_webrtc_signal = spacetimedb.reducer(
+  {
+    recipientId: t.identity(),
+    kind: t.string(),
+    payload: t.string(),
+  },
+  (ctx, { recipientId, kind, payload }) => {
+    if (!ALLOWED_SIGNAL_KINDS.has(kind)) {
+      throw new SenderError(`invalid signal kind: ${kind}`);
+    }
+    if (payload.length > 16000) {
+      throw new SenderError('signal payload too large');
+    }
+
+    const playerRow = ctx.db.player.identity.find(ctx.sender);
+    if (!playerRow) throw new SenderError('sender has no player row');
+
+    ctx.db.webrtcSignal.insert({
+      id: 0n,
+      roomId: playerRow.roomId,
+      senderId: ctx.sender,
+      recipientId,
+      kind,
+      payload,
+      createdAt: ctx.timestamp,
+    });
+  }
+);
+
+export const consume_webrtc_signal = spacetimedb.reducer(
+  { id: t.u64() },
+  (ctx, { id }) => {
+    const row = ctx.db.webrtcSignal.id.find(id);
+    if (!row) return;
+    if (!row.recipientId.isEqual(ctx.sender)) {
+      throw new SenderError('not authorized to consume this signal');
+    }
+    ctx.db.webrtcSignal.id.delete(id);
+  }
+);
+
 export const on_disconnect = spacetimedb.clientDisconnected(ctx => {
-  // Keep the rows around so a brief disconnect/reconnect doesn't appear
+  // Keep the player row around so a brief disconnect/reconnect doesn't appear
   // to the partner as a player leaving and rejoining (which would flash
   // their rig back to robot). Just mark them offline so matchmaking
   // doesn't pair new players with a ghost.
@@ -183,5 +251,13 @@ export const on_disconnect = spacetimedb.clientDisconnected(ctx => {
       online: false,
       updatedAt: ctx.timestamp,
     });
+  }
+
+  // Drop any pending WebRTC signals to or from this client so a reconnect
+  // doesn't replay stale offers/answers.
+  for (const row of ctx.db.webrtcSignal.iter()) {
+    if (row.senderId.isEqual(ctx.sender) || row.recipientId.isEqual(ctx.sender)) {
+      ctx.db.webrtcSignal.id.delete(row.id);
+    }
   }
 });
