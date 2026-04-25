@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { Pane } from 'tweakpane';
-import { color, float, mix, smoothstep, time, uniform, uv } from 'three/tsl';
+import { Fn, color, float, floor, fract, mix, smoothstep, time, uniform, uv } from 'three/tsl';
 import { clamp, hash } from './math';
 
 type Atmosphere = {
@@ -15,8 +15,8 @@ type HillMesh = {
   seed: number;
   baseY: number;
   amplitude: number;
-  width: number;
   speed: number;
+  scrollOffset: number;
 };
 
 type MovingPoints = {
@@ -47,15 +47,20 @@ export class ScenerySystem {
   private skyNight = uniform(0);
   private skySunset = uniform(0);
   private auroraStrength = uniform(0);
+  private starStrength = uniform(0);
   private moonCos = uniform(0);
   private moonSign = uniform(1);
   private moonVisibility = uniform(0);
   private sunVisibility = uniform(1);
+  private sunPosX = uniform(0.82);
+  private sunPosY = uniform(0.62);
+  private moonPosX = uniform(0.42);
+  private moonPosY = uniform(0.68);
+  private moonRadius = uniform(0.085);
+  private moonRadiusInv = uniform(11.76);
+  private skyTravel = uniform(0);
   private hills: HillMesh[] = [];
   private villages: MovingPoints[] = [];
-  private stars: MovingPoints[] = [];
-  private moonPlanes: THREE.Mesh[] = [];
-  private sunPlanes: THREE.Mesh[] = [];
   private atmosphere = {
     background: new THREE.Color(0x10202d),
     daylight: 1,
@@ -90,8 +95,6 @@ export class ScenerySystem {
     this.createSky();
     this.createHills();
     this.createVillages();
-    this.createStars();
-    this.createMoonAndSun();
     this.scene.add(this.root);
   }
 
@@ -101,6 +104,9 @@ export class ScenerySystem {
     const daylight = clamp(sunWave * 0.58 + 0.48, 0, 1);
     const night = 1 - daylight;
     const moonNight = smoothstepScalar(0.12, 0.34, -sunWave);
+    const sunArc = Math.sin(cycle * fullTurn);
+    const moonCycle = (cycle + 0.5) % 1;
+    const moonArc = Math.sin(moonCycle * fullTurn);
     const sunrise = Math.exp(-Math.pow(cycle / 0.095, 2));
     const sunset = Math.exp(-Math.pow((cycle - 0.5) / 0.105, 2));
     const goldenHour = clamp(Math.max(sunrise, sunset), 0, 1);
@@ -108,14 +114,21 @@ export class ScenerySystem {
 
     this.skyNight.value = night;
     this.skySunset.value = goldenHour;
-    this.auroraStrength.value = night * this.params.auroraIntensity;
+    const auroraVisibility = clamp(night + goldenHour * 0.55, 0, 1);
+    this.auroraStrength.value = auroraVisibility * this.params.auroraIntensity;
+    this.starStrength.value = clamp(night + goldenHour * 0.25, 0, 1) * this.params.starIntensity;
     this.moonVisibility.value = moonNight * clamp(0.35 + this.params.starIntensity * 0.65, 0, 1);
     this.sunVisibility.value = daylight;
+    this.sunPosX.value = 0.88 - cycle * 0.76;
+    this.sunPosY.value = 0.46 + clamp(sunArc, 0, 1) * 0.34;
+    this.moonPosX.value = 0.88 - moonCycle * 0.76;
+    this.moonPosY.value = 0.50 + clamp(moonArc, 0, 1) * 0.34;
+    this.moonRadius.value = clamp(this.params.moonSize * 0.24, 0.035, 0.14);
+    this.moonRadiusInv.value = 1 / this.moonRadius.value;
+    this.skyTravel.value += delta * speed;
 
     this.updateHills(delta, speed);
     this.updateMovingPoints(this.villages, delta, speed, night * this.params.villageDensity);
-    this.updateMovingPoints(this.stars, delta, speed * 0.12, night * this.params.starIntensity);
-    this.updateMoonAndSun(cycle, moonNight);
 
     const dayColor = new THREE.Color(0x2f6172);
     const duskColor = new THREE.Color(0x4d3158);
@@ -143,14 +156,7 @@ export class ScenerySystem {
   }
 
   private createSky(): void {
-    const material = new THREE.MeshBasicNodeMaterial();
-    const v = uv().y;
-    const horizon = smoothstep(0.02, 0.86, v);
-    const daySky = mix(color(0xffbd83), color(0x6fcaff), horizon);
-    const duskSky = mix(color(0x2b1f5e), color(0xff8d64), smoothstep(0.02, 0.68, v));
-    const nightSky = mix(color(0x06101f), color(0x153f62), horizon);
-    material.colorNode = mix(mix(daySky, duskSky, this.skySunset), nightSky, this.skyNight);
-    material.depthWrite = false;
+    const material = this.createWindowSkyMaterial();
 
     for (const side of [-1, 1]) {
       const sky = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 2.05), material);
@@ -159,6 +165,154 @@ export class ScenerySystem {
       sky.renderOrder = -30;
       this.root.add(sky);
     }
+  }
+
+  private createWindowSkyMaterial(): THREE.MeshBasicNodeMaterial {
+    const material = new THREE.MeshBasicNodeMaterial();
+    material.colorNode = Fn(() => {
+      const u = uv();
+      const y = u.y.mul(1.08).sub(0.18);
+      const horizon = smoothstep(0.0, 0.72, y);
+
+      const daySky = mix(color(0xf2a268), color(0x74c7ff), horizon);
+      const duskSky = mix(color(0xff8d64), color(0x241b56), smoothstep(0.02, 0.82, y));
+      const nightSky = mix(color(0x071018), color(0x173c61), horizon);
+      const sky = mix(mix(daySky, duskSky, this.skySunset), nightSky, this.skyNight).toVar('windowSky');
+
+      const belowMask = float(1).sub(smoothstep(0.19, 0.31, u.y));
+      const ground = mix(color(0x57321f), color(0x050706), this.skyNight);
+      sky.assign(mix(sky, ground, belowMask.mul(0.5)));
+
+      const aspect = float(3.12);
+      const sunDx = u.x.sub(this.sunPosX).mul(aspect);
+      const sunDy = u.y.sub(this.sunPosY);
+      const sunDist = sunDx.mul(sunDx).add(sunDy.mul(sunDy)).sqrt();
+      const sunDisc = float(1).sub(smoothstep(0.034, 0.052, sunDist)).mul(this.sunVisibility);
+      const sunHalo = float(1).sub(sunDist.mul(2.0)).max(0).pow(3.0).mul(this.sunVisibility);
+      sky.addAssign(color(0xfff2bc).mul(sunDisc.mul(1.85)));
+      sky.addAssign(color(0xff8d4f).mul(sunHalo.mul(0.72)));
+
+      const moonDx = u.x.sub(this.moonPosX).mul(aspect);
+      const moonDy = u.y.sub(this.moonPosY);
+      const moonDist = moonDx.mul(moonDx).add(moonDy.mul(moonDy)).sqrt();
+      const moonHalo = float(1).sub(moonDist.mul(3.6)).max(0).pow(2.4).mul(this.moonVisibility);
+      sky.addAssign(color(0xbfd8ff).mul(moonHalo.mul(0.18)));
+
+      const moonDisc = float(1).sub(smoothstep(this.moonRadius.mul(0.92), this.moonRadius, moonDist));
+      const moonPx = moonDx.mul(this.moonRadiusInv);
+      const moonPy = moonDy.mul(this.moonRadiusInv);
+      const terminator = this.moonCos.mul(float(1).sub(moonPy.mul(moonPy)).max(0).sqrt());
+      const lit = smoothstep(terminator.sub(0.035), terminator.add(0.035), moonPx.mul(this.moonSign));
+      sky.assign(mix(sky, color(0xfff4cf), moonDisc.mul(lit).mul(this.moonVisibility)));
+
+      const starMask = smoothstep(0.30, 0.50, u.y);
+
+      // Star layer 1 — sparse, brighter, larger
+      const starX = u.x.add(this.skyTravel.mul(0.004)).mul(140.0);
+      const starY = u.y.mul(58.0);
+      const cellX = floor(starX);
+      const cellY = floor(starY);
+      const fracX = fract(starX);
+      const fracY = fract(starY);
+      const starHashBase = cellX.mul(12.9898).add(cellY.mul(78.233));
+      const starHash = fract(starHashBase.sin().mul(43758.5453));
+      const starBright = fract(starHashBase.mul(1.91).sin().mul(23421.631));
+      const starDistX = fracX.sub(0.5);
+      const starDistY = fracY.sub(0.5);
+      const starDist = starDistX.mul(starDistX).add(starDistY.mul(starDistY)).sqrt();
+      const starThreshold = float(1.004).sub(this.starStrength.mul(0.18));
+      const starOn = smoothstep(starThreshold, starThreshold.add(0.004), starHash);
+      const starCircle = float(1).sub(smoothstep(0.045, 0.16, starDist));
+      const twinkle = starHash.mul(160.0).add(time.mul(0.65)).sin().mul(0.22).add(0.78);
+      sky.addAssign(
+        mix(color(0xe8efff), color(0xffdfa4), starBright.mul(0.45))
+          .mul(starOn)
+          .mul(starCircle)
+          .mul(twinkle)
+          .mul(starMask)
+          .mul(this.starStrength)
+          .mul(1.15)
+      );
+
+      // Star layer 2 — denser, dimmer, smaller (adds depth and richness)
+      const starX2 = u.x.add(this.skyTravel.mul(0.006)).mul(280.0);
+      const starY2 = u.y.mul(112.0);
+      const cellX2 = floor(starX2);
+      const cellY2 = floor(starY2);
+      const fracX2 = fract(starX2);
+      const fracY2 = fract(starY2);
+      const starHashBase2 = cellX2.mul(45.678).add(cellY2.mul(98.765));
+      const starHash2 = fract(starHashBase2.sin().mul(17853.321));
+      const starBright2 = fract(starHashBase2.mul(2.71).sin().mul(31247.159));
+      const starDistX2 = fracX2.sub(0.5);
+      const starDistY2 = fracY2.sub(0.5);
+      const starDist2 = starDistX2.mul(starDistX2).add(starDistY2.mul(starDistY2)).sqrt();
+      const starThreshold2 = float(1.005).sub(this.starStrength.mul(0.14));
+      const starOn2 = smoothstep(starThreshold2, starThreshold2.add(0.005), starHash2);
+      const starCircle2 = float(1).sub(smoothstep(0.07, 0.18, starDist2));
+      const twinkle2 = starHash2.mul(120.0).add(time.mul(0.42)).sin().mul(0.18).add(0.82);
+      sky.addAssign(
+        mix(color(0xb8c8ff), color(0xffe2b0), starBright2.mul(0.4))
+          .mul(starOn2)
+          .mul(starCircle2)
+          .mul(twinkle2)
+          .mul(starMask)
+          .mul(this.starStrength)
+          .mul(0.55)
+      );
+
+      // ── Aurora borealis — domain-warped curtains with vertical ray detail ──
+      const aT = time.mul(0.42);
+      const apx = u.x.mul(5.2).add(this.skyTravel.mul(0.032));
+      const apy = u.y.mul(2.8);
+
+      // Domain warping for organic, flowing curtain shapes
+      const warpA = apx.mul(0.7).add(apy.mul(0.5)).add(aT.mul(0.13)).sin().mul(1.4);
+      const warpB = apy.mul(0.8).sub(apx.mul(0.6)).sub(aT.mul(0.11)).sin().mul(1.1);
+      const awx = apx.add(warpA);
+      const awy = apy.add(warpB);
+
+      // Three curtain layers at increasing frequencies
+      const c1 = awx.mul(1.0).add(awy.mul(0.7)).add(aT.mul(0.19)).sin();
+      const c2 = awx.mul(2.3).sub(awy.mul(1.5)).sub(aT.mul(0.15)).sin();
+      const c3 = awx.mul(4.7).add(awy.mul(3.1)).add(aT.mul(0.23)).sin();
+      const curtain = c1.mul(0.45).add(c2.mul(0.30)).add(c3.mul(0.18));
+
+      // Soft exponential brightness mapping
+      const auroraBright = curtain.mul(0.5).add(0.55).max(0).pow(2.0);
+
+      // Vertical profile — wider band with soft edges to fill more of the sky
+      const auroraRise = smoothstep(0.30, 0.46, u.y);
+      const auroraFall = float(1).sub(smoothstep(0.86, 1.0, u.y));
+      const auroraVert = auroraRise.mul(auroraFall);
+
+      // Vertical ray detail — high-freq stripes within curtains
+      const auroraRays = awx.mul(11.0).add(awy.mul(7.5)).add(aT.mul(1.4)).sin().mul(0.10).add(0.90);
+
+      // Gentle temporal pulse
+      const auroraPulse = aT.mul(0.5).add(apx.mul(0.3)).sin().mul(0.08).add(0.92);
+
+      // Three-stop color gradient: green base → teal mid → vivid purple top
+      const auroraHFrac = smoothstep(0.30, 0.92, u.y);
+      const auroraLow = mix(color(0x14ff5c), color(0x18c4c0), smoothstep(0.0, 0.4, auroraHFrac));
+      const auroraColor = mix(auroraLow, color(0x9a32e0), smoothstep(0.4, 1.0, auroraHFrac));
+
+      sky.addAssign(
+        auroraColor
+          .mul(auroraBright)
+          .mul(auroraVert)
+          .mul(auroraRays)
+          .mul(auroraPulse)
+          .mul(this.auroraStrength)
+          .mul(0.7)
+      );
+
+      return sky;
+    })();
+    material.depthWrite = false;
+    material.fog = false;
+
+    return material;
   }
 
   private createHills(): void {
@@ -170,26 +324,23 @@ export class ScenerySystem {
 
     for (const side of [-1, 1]) {
       for (let layer = 0; layer < layers.length; layer += 1) {
-        for (let copy = 0; copy < 2; copy += 1) {
-          const settings = layers[layer];
-          const material = new THREE.MeshBasicNodeMaterial();
-          const shade = smoothstep(0.05, 1.5, uv().y);
-          material.colorNode = mix(color(settings.color), color(0x8bb77b), shade.mul(float(0.18)));
-          material.depthWrite = true;
+        const settings = layers[layer];
+        const material = new THREE.MeshBasicNodeMaterial();
+        const shade = smoothstep(0.05, 1.5, uv().y);
+        material.colorNode = mix(color(settings.color), color(0x8bb77b), shade.mul(float(0.18)));
+        material.depthWrite = true;
 
-          const hill = this.createHillMesh({
-            side,
-            x: settings.x,
-            z: copy === 0 ? 0 : -6.2,
-            baseY: settings.baseY,
-            amplitude: settings.amplitude,
-            speed: settings.speed,
-            seed: 100 + side * 20 + layer * 9 + copy,
-            material,
-          });
-          this.hills.push(hill);
-          this.root.add(hill.mesh);
-        }
+        const hill = this.createHillMesh({
+          side,
+          x: settings.x,
+          baseY: settings.baseY,
+          amplitude: settings.amplitude,
+          speed: settings.speed,
+          seed: 100 + side * 20 + layer * 9,
+          material,
+        });
+        this.hills.push(hill);
+        this.root.add(hill.mesh);
       }
     }
   }
@@ -197,15 +348,14 @@ export class ScenerySystem {
   private createHillMesh(options: {
     side: number;
     x: number;
-    z: number;
     baseY: number;
     amplitude: number;
     speed: number;
     seed: number;
     material: THREE.Material;
   }): HillMesh {
-    const width = 6.2;
-    const segments = 42;
+    const width = 7.6;
+    const segments = 96;
     const positions = new Float32Array((segments + 1) * 2 * 3);
     const uvs = new Float32Array((segments + 1) * 2 * 2);
     const indices: number[] = [];
@@ -240,9 +390,9 @@ export class ScenerySystem {
 
     const mesh = new THREE.Mesh(geometry, options.material);
     mesh.rotation.y = Math.PI / 2;
-    mesh.position.set(options.side * options.x, 0, options.z);
+    mesh.position.set(options.side * options.x, 0, 0);
     mesh.renderOrder = -20;
-    return { mesh, geometry, seed: options.seed, baseY: options.baseY, amplitude: options.amplitude, width, speed: options.speed };
+    return { mesh, geometry, seed: options.seed, baseY: options.baseY, amplitude: options.amplitude, speed: options.speed, scrollOffset: 0 };
   }
 
   private createVillages(): void {
@@ -276,108 +426,9 @@ export class ScenerySystem {
     }
   }
 
-  private createStars(): void {
-    for (const side of [-1, 1]) {
-      const width = 6.2;
-      const count = 140;
-      const positions = new Float32Array(count * 3);
-      for (let i = 0; i < count; i += 1) {
-        positions[i * 3] = -width / 2 + hash(i + side * 31) * width;
-        positions[i * 3 + 1] = 1.15 + hash(i + 7) * 0.82;
-        positions[i * 3 + 2] = 0;
-      }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-      const material = new THREE.PointsMaterial({
-        color: 0xdff7ff,
-        size: 0.012,
-        transparent: true,
-        opacity: 0,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-      });
-      const points = new THREE.Points(geometry, material);
-      points.rotation.y = Math.PI / 2;
-      points.position.set(side * 2.49, 0, 0);
-      points.renderOrder = -25;
-      this.stars.push({ points, width, speed: 0.06, material });
-      this.root.add(points);
-    }
-  }
-
-  private createMoonAndSun(): void {
-    const moonMaterial = this.createMoonMaterial();
-    const sunMaterial = this.createSunMaterial();
-    const auroraMaterial = this.createAuroraMaterial();
-
-    for (const side of [-1, 1]) {
-      const aurora = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 1.25), auroraMaterial);
-      aurora.rotation.y = Math.PI / 2;
-      aurora.position.set(side * 2.45, 1.48, 0);
-      aurora.renderOrder = -24;
-      this.root.add(aurora);
-
-      const moon = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), moonMaterial);
-      moon.rotation.y = Math.PI / 2;
-      moon.position.set(side * 2.42, 1.72, -0.9);
-      moon.renderOrder = -15;
-      this.moonPlanes.push(moon);
-      this.root.add(moon);
-
-      const sun = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), sunMaterial);
-      sun.rotation.y = Math.PI / 2;
-      sun.position.set(side * 2.41, 1.28, 1.3);
-      sun.renderOrder = -16;
-      this.sunPlanes.push(sun);
-      this.root.add(sun);
-    }
-  }
-
-  private createAuroraMaterial(): THREE.MeshBasicNodeMaterial {
-    const material = new THREE.MeshBasicNodeMaterial();
-    const u = uv();
-    const waveA = u.x.mul(9.0).add(time.mul(0.16)).sin().mul(0.5).add(0.5);
-    const waveB = u.x.mul(17.0).sub(time.mul(0.11)).sin().mul(0.5).add(0.5);
-    const curtain = smoothstep(0.38, 0.76, u.y.add(waveA.mul(0.18))).mul(float(1).sub(smoothstep(0.82, 1.02, u.y.add(waveB.mul(0.08)))));
-    material.colorNode = mix(color(0x32ffca), color(0x9877ff), waveB);
-    material.opacityNode = curtain.mul(this.auroraStrength).mul(0.52);
-    material.transparent = true;
-    material.depthWrite = false;
-    material.blending = THREE.AdditiveBlending;
-    return material;
-  }
-
-  private createMoonMaterial(): THREE.MeshBasicNodeMaterial {
-    const material = new THREE.MeshBasicNodeMaterial();
-    const p = uv().mul(2).sub(1);
-    const radius = p.length();
-    const disc = float(1).sub(smoothstep(0.94, 1.0, radius));
-    const terminator = this.moonCos.mul(float(1).sub(p.y.mul(p.y)).max(0).sqrt());
-    const lit = smoothstep(terminator.sub(0.035), terminator.add(0.035), p.x.mul(this.moonSign));
-    material.colorNode = mix(color(0x223244), color(0xfff4cf), lit);
-    material.opacityNode = disc.mul(this.moonVisibility);
-    material.transparent = true;
-    material.depthWrite = false;
-    return material;
-  }
-
-  private createSunMaterial(): THREE.MeshBasicNodeMaterial {
-    const material = new THREE.MeshBasicNodeMaterial();
-    const p = uv().mul(2).sub(1);
-    const radius = p.length();
-    const disc = float(1).sub(smoothstep(0.84, 1.0, radius));
-    material.colorNode = mix(color(0xfff4b8), color(0xff7a45), smoothstep(0.0, 0.95, radius));
-    material.opacityNode = disc.mul(this.sunVisibility);
-    material.transparent = true;
-    material.depthWrite = false;
-    material.blending = THREE.AdditiveBlending;
-    return material;
-  }
-
   private updateHills(delta: number, speed: number): void {
     for (const hill of this.hills) {
-      hill.mesh.position.z += delta * speed * hill.speed;
-      if (hill.mesh.position.z > hill.width / 2) hill.mesh.position.z -= hill.width;
+      hill.scrollOffset += delta * speed * hill.speed;
       this.updateHillShape(hill);
     }
   }
@@ -386,7 +437,7 @@ export class ScenerySystem {
     const positions = hill.geometry.getAttribute('position') as THREE.BufferAttribute;
     for (let i = 0; i < positions.count / 2; i += 1) {
       const localX = positions.getX(i * 2 + 1);
-      positions.setY(i * 2 + 1, this.hillHeight(localX, hill.baseY, hill.amplitude * this.params.hillAmplitude * 4.2, hill.seed));
+      positions.setY(i * 2 + 1, this.hillHeight(localX - hill.scrollOffset, hill.baseY, hill.amplitude * this.params.hillAmplitude * 4.2, hill.seed));
     }
     positions.needsUpdate = true;
   }
@@ -399,32 +450,13 @@ export class ScenerySystem {
     }
   }
 
-  private updateMoonAndSun(cycle: number, moonNight: number): void {
-    const moonScale = this.params.moonSize;
-    const sunScale = 0.42;
-    const sunArc = Math.sin(cycle * fullTurn);
-    const moonArc = Math.sin((cycle + 0.5) * fullTurn);
-
-    for (const moon of this.moonPlanes) {
-      moon.visible = moonNight > 0.01;
-      moon.scale.setScalar(moonScale);
-      moon.position.y = 1.35 + clamp(moonArc, 0, 1) * 0.55;
-      moon.position.z = 1.65 - cycle * 3.2;
-    }
-
-    for (const sun of this.sunPlanes) {
-      sun.scale.setScalar(sunScale);
-      sun.position.y = 1.05 + clamp(sunArc, 0, 1) * 0.72;
-      sun.position.z = -1.65 + cycle * 3.2;
-    }
-  }
-
   private hillHeight(x: number, baseY: number, amplitude: number, seed: number): number {
+    const ridges = Math.sin(x * 1.2 + seed * 0.31) + Math.sin(x * 2.7 + seed * 0.17) * 0.45;
+    const rollingNoise = smoothNoise1D(x * 1.9, seed) * 0.42 + smoothNoise1D(x * 3.8, seed + 41) * 0.18;
     return (
       baseY +
-      Math.sin(x * 1.2 + seed * 0.31) * amplitude +
-      Math.sin(x * 2.7 + seed * 0.17) * amplitude * 0.45 +
-      (hash(Math.floor((x + 9) * 4) + seed) - 0.5) * amplitude * 0.32
+      ridges * amplitude +
+      rollingNoise * amplitude
     );
   }
 }
@@ -452,4 +484,13 @@ function getMoonPhase(date: Date): { phase: number; name: string } {
 function smoothstepScalar(edge0: number, edge1: number, value: number): number {
   const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+function smoothNoise1D(value: number, seed: number): number {
+  const cell = Math.floor(value);
+  const fraction = value - cell;
+  const t = fraction * fraction * (3 - 2 * fraction);
+  const a = hash(cell + seed * 17.13) - 0.5;
+  const b = hash(cell + 1 + seed * 17.13) - 0.5;
+  return a + (b - a) * t;
 }
