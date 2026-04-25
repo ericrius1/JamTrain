@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { Discard, Fn, cameraPosition, positionWorld, uniform, wgslFn } from 'three/tsl';
 import { Pane } from 'tweakpane';
+import { PlasmaOrbCubes } from './plasmaOrbCubes';
 
 export type PlasmaOrbAttractor = {
   position: THREE.Vector3;
@@ -221,6 +222,7 @@ export class PlasmaOrb {
   private radius: number;
   private energyBoost = 1;
   private pane?: Pane;
+  private cubes?: PlasmaOrbCubes;
   private smoothedEnergy = 0;
   private targetEnergy = 0;
   private targetAttractors: PlasmaOrbAttractor[] = [];
@@ -275,6 +277,17 @@ export class PlasmaOrb {
       this.pane.expanded = false;
       this.registerTweaks();
     }
+
+    this.cubes = new PlasmaOrbCubes(scene, {
+      position: options.position,
+      extent: this.radius * 2.0,
+      paneDock: options.paneDock,
+    });
+    this.cubes.setTints(this.uCool.value, this.uHot.value);
+  }
+
+  setFingertips(fingertips: THREE.Vector3[]): void {
+    this.cubes?.setFingertips(fingertips);
   }
 
   private registerTweaks(): void {
@@ -443,10 +456,17 @@ export class PlasmaOrb {
     this.uTime.value = elapsed;
     this.uEnergy.value = this.smoothedEnergy;
     this.uCenter.value.copy(this.mesh.position);
+
+    if (this.cubes) {
+      this.cubes.setEnergy(this.smoothedEnergy);
+      this.cubes.setTints(this.uCool.value, this.uHot.value);
+      this.cubes.update();
+    }
   }
 
   dispose(): void {
     this.pane?.dispose();
+    this.cubes?.dispose();
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.mesh.removeFromParent();

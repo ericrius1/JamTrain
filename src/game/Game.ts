@@ -247,7 +247,14 @@ export class Game {
   }
 
   setMusicVolume(value: number): void {
-    this.audio.setMasterGain(value);
+    // Slider 0–1 → actual gain via power curve. Top of slider lands at half
+    // the old maximum (so music can no longer drown the voice channel) and
+    // mid-slider lands ~10× quieter than the old equivalent — which puts
+    // most of the slider's resolution in the soft, sit-under-speech range.
+    const MAX_MUSIC_GAIN = 0.5;
+    const CURVE_EXP = 3.32; // 0.5^3.32 ≈ 0.1, so slider 0.5 → 0.05 gain
+    const v = value <= 0 ? 0 : Math.min(1, value);
+    this.audio.setMasterGain(MAX_MUSIC_GAIN * Math.pow(v, CURVE_EXP));
   }
 
   getMusicVolume(): number {
@@ -695,9 +702,21 @@ export class Game {
     material.opacity = 0.18 + energy * 0.48;
     if (this.plasmaOrb) {
       this.plasmaOrb.setAttractors(this.computeOrbAttractors());
+      this.plasmaOrb.setFingertips(this.collectFingertips());
       this.plasmaOrb.setEnergy(energy);
     }
     return links;
+  }
+
+  private collectFingertips(): THREE.Vector3[] {
+    const tips: THREE.Vector3[] = [];
+    for (const handedness of handednesses) {
+      for (const finger of fingerNames) {
+        tips.push(this.localRig.getFingertipWorld(handedness, finger));
+        tips.push(this.remoteRig.getFingertipWorld(handedness, finger));
+      }
+    }
+    return tips;
   }
 
   private computeOrbAttractors(): PlasmaOrbAttractor[] {
