@@ -52,14 +52,14 @@ export class Game {
 
   constructor(
     private canvas: HTMLCanvasElement,
-    roomId: string,
+    urlRoom: string,
     private ui: GameUi
   ) {
-    this.roomId = roomId;
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
     this.handTracker = new HandTracker(ui.inputStatus);
     this.audio = new AudioEngine(ui.musicStatus);
-    this.multiplayer = new MultiplayerClient(roomId, 'Player');
+    this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
+    this.roomId = this.multiplayer.getRoom();
     this.multiplayer.onStateChange(state => {
       ui.connectionStatus.textContent = state;
     });
@@ -110,7 +110,22 @@ export class Game {
 
   setRoom(roomId: string): void {
     this.roomId = roomId;
-    this.multiplayer.setRoom(roomId);
+    this.multiplayer.requestRoom(roomId);
+  }
+
+  getRoom(): string {
+    return this.roomId;
+  }
+
+  onAssignedRoom(listener: (roomId: string) => void): void {
+    this.multiplayer.onAssignedRoom(roomId => {
+      this.roomId = roomId;
+      listener(roomId);
+    });
+  }
+
+  onPlayerJoined(listener: (player: { id: string; displayName: string }) => void): void {
+    this.multiplayer.onPlayerJoined(listener);
   }
 
   setCameraMode(mode: CameraMode): void {

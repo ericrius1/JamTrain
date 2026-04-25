@@ -131,35 +131,22 @@ export const request_seat = spacetimedb.reducer(
 
 export const update_pose = spacetimedb.reducer(
   { roomId: t.string(), poseJson: t.string() },
-  (ctx, { roomId, poseJson }) => {
-    if (roomId.trim().length === 0) throw new SenderError('roomId required');
+  (ctx, { poseJson }) => {
     if (poseJson.length > 24000) throw new SenderError('pose payload too large');
 
+    // The server owns the player's room assignment. The roomId argument is
+    // ignored — clients only get to update poses for the room they were
+    // actually placed into via request_seat. Stale poses (sent before the
+    // first request_seat completes) are silently dropped.
     const playerRow = ctx.db.player.identity.find(ctx.sender);
-    if (!playerRow) {
-      ctx.db.player.insert({
-        identity: ctx.sender,
-        roomId,
-        displayName: 'Player',
-        seatIndex: nextSeatIndex(ctx, roomId),
-        online: true,
-        connectedAt: ctx.timestamp,
-        updatedAt: ctx.timestamp,
-      });
-    } else {
-      ctx.db.player.identity.update({
-        ...playerRow,
-        roomId,
-        online: true,
-        updatedAt: ctx.timestamp,
-      });
-    }
+    if (!playerRow) return;
 
+    const room = playerRow.roomId;
     const existingPose = ctx.db.handState.identity.find(ctx.sender);
     if (existingPose) {
       ctx.db.handState.identity.update({
         ...existingPose,
-        roomId,
+        roomId: room,
         poseJson,
         updatedAt: ctx.timestamp,
       });
@@ -168,7 +155,7 @@ export const update_pose = spacetimedb.reducer(
 
     ctx.db.handState.insert({
       identity: ctx.sender,
-      roomId,
+      roomId: room,
       poseJson,
       updatedAt: ctx.timestamp,
     });

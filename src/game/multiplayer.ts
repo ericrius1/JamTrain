@@ -1,14 +1,15 @@
 import { DbConnection, tables, type ErrorContext } from '../module_bindings';
-import type { HandState } from '../module_bindings/types';
+import type { HandState, Player } from '../module_bindings/types';
 import { parsePose, serializePose } from './pose';
+import { pickRandomRoomName, sanitizeRoomName } from './roomNames';
 import type { ConnectionState, PlayerPose } from './types';
 
-type Listener = (state: ConnectionState) => void;
+type StateListener = (state: ConnectionState) => void;
+type RoomListener = (roomId: string) => void;
+type PlayerEventListener = (player: { id: string; displayName: string }) => void;
 
 const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
-
-const safeRoom = (roomId: string): string => roomId.trim().replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 48) || 'cabin-01';
 
 export class MultiplayerClient {
   localId = `local-${crypto.randomUUID()}`;
@@ -17,20 +18,43 @@ export class MultiplayerClient {
   private remotePose?: PlayerPose;
   private lastSendAt = 0;
   private channel?: BroadcastChannel;
-  private listeners = new Set<Listener>();
-  private tokenKey = 'jam-train-spacetime-token';
+  private stateListeners = new Set<StateListener>();
+  private roomListeners = new Set<RoomListener>();
+  private joinListeners = new Set<PlayerEventListener>();
+  private knownPlayers = new Set<string>();
+  private subscriptionApplied = false;
+  private roomId: string;
+  private displayName: string;
+  // Empty string when the user landed without a URL room — signals the
+  // server to auto-pair instead of creating a fresh empty room with our
+  // randomly-picked display name.
+  private bootPreferredRoom: string;
 
-  constructor(
-    private roomId: string,
-    private displayName: string
-  ) {
-    this.roomId = safeRoom(roomId);
+  constructor(urlRoom: string, displayName: string) {
+    const sanitized = sanitizeRoomName(urlRoom);
+    this.bootPreferredRoom = sanitized;
+    this.roomId = sanitized || pickRandomRoomName();
+    this.displayName = displayName;
     this.openBroadcastChannel();
   }
 
-  onStateChange(listener: Listener): void {
-    this.listeners.add(listener);
+  onStateChange(listener: StateListener): void {
+    this.stateListeners.add(listener);
     listener(this.connectionState);
+  }
+
+  onAssignedRoom(listener: RoomListener): void {
+    // Fires only when the server confirms an assignment — not for the
+    // cosmetic random name we used before connecting.
+    this.roomListeners.add(listener);
+  }
+
+  onPlayerJoined(listener: PlayerEventListener): void {
+    this.joinListeners.add(listener);
+  }
+
+  getRoom(): string {
+    return this.roomId;
   }
 
   connect(): void {
@@ -40,13 +64,16 @@ export class MultiplayerClient {
       this.connection = DbConnection.builder()
         .withUri(SPACETIME_URI)
         .withDatabaseName(SPACETIME_DATABASE)
-        .withToken(localStorage.getItem(this.tokenKey) || undefined)
+        // No token persistence: every connection (every tab, every reload)
+        // gets a brand-new SpacetimeDB identity. Two tabs sharing localStorage
+        // would otherwise collapse onto a single identity and never see each
+        // other as separate players.
         .withLightMode(true)
-        .onConnect((conn, identity, token) => {
+        .onConnect((conn, identity, _token) => {
           this.localId = identity.toHexString();
-          localStorage.setItem(this.tokenKey, token);
+          console.info('[jam-train] spacetime identity', this.localId);
           this.registerSpacetimeHandlers(conn);
-          void conn.reducers.joinRoom({ roomId: this.roomId, displayName: this.displayName });
+          this.requestSeat(this.bootPreferredRoom);
           this.setState('spacetime');
         })
         .onConnectError((_ctx: ErrorContext, error: Error) => {
@@ -63,14 +90,16 @@ export class MultiplayerClient {
     }
   }
 
-  setRoom(roomId: string): void {
-    const nextRoom = safeRoom(roomId);
-    if (nextRoom === this.roomId) return;
-    this.roomId = nextRoom;
-    this.remotePose = undefined;
-    this.openBroadcastChannel();
+  /** Request a seat in `preferredRoom` (or auto-pair if empty). */
+  requestRoom(preferredRoom: string): void {
+    const sanitized = sanitizeRoomName(preferredRoom);
+    if (sanitized && sanitized !== this.roomId) {
+      this.remotePose = undefined;
+    }
     if (this.connection?.isActive) {
-      void this.connection.reducers.joinRoom({ roomId: this.roomId, displayName: this.displayName });
+      this.requestSeat(sanitized);
+    } else if (sanitized) {
+      this.setRoomId(sanitized);
     }
   }
 
@@ -116,6 +145,17 @@ export class MultiplayerClient {
     }
   }
 
+  private requestSeat(preferredRoom: string): void {
+    if (!this.connection?.isActive) return;
+    void this.connection.reducers
+      .requestSeat({
+        preferredRoom: sanitizeRoomName(preferredRoom),
+        fallbackName: pickRandomRoomName(this.roomId),
+        displayName: this.displayName,
+      })
+      .catch(error => console.warn('SpacetimeDB request_seat failed', error));
+  }
+
   private registerSpacetimeHandlers(conn: DbConnection): void {
     conn.db.handState.onInsert((_ctx, row) => this.acceptHandState(row));
     conn.db.handState.onUpdate((_ctx, _oldRow, row) => this.acceptHandState(row));
@@ -123,15 +163,67 @@ export class MultiplayerClient {
       const identity = row.identity.toHexString();
       if (this.remotePose?.id === identity) this.remotePose = undefined;
     });
+    conn.db.player.onInsert((_ctx, row) => {
+      this.acceptOwnPlayer(row);
+      this.maybeAnnouncePlayer(row);
+    });
+    conn.db.player.onUpdate((_ctx, _oldRow, row) => {
+      this.acceptOwnPlayer(row);
+      this.maybeAnnouncePlayer(row);
+    });
+    conn.db.player.onDelete((_ctx, row) => {
+      this.knownPlayers.delete(row.identity.toHexString());
+    });
     conn
       .subscriptionBuilder()
       .onApplied(() => {
+        for (const row of conn.db.player.iter()) {
+          this.knownPlayers.add(row.identity.toHexString());
+          this.acceptOwnPlayer(row);
+        }
         for (const row of conn.db.handState.iter()) this.acceptHandState(row);
+        this.subscriptionApplied = true;
       })
       .onError(ctx => {
         console.warn('SpacetimeDB subscription failed', ctx.event);
       })
       .subscribe([tables.handState, tables.player]);
+  }
+
+  private maybeAnnouncePlayer(row: Player): void {
+    const id = row.identity.toHexString();
+    if (id === this.localId) return;
+
+    const inOurRoom = row.roomId === this.roomId;
+    const wasInOurRoom = this.knownPlayers.has(id);
+
+    if (inOurRoom && !wasInOurRoom) {
+      this.knownPlayers.add(id);
+      // Players already present at subscription time are silently absorbed
+      // — they were in the cabin before we boarded.
+      if (!this.subscriptionApplied) return;
+      for (const listener of this.joinListeners) {
+        listener({ id, displayName: row.displayName });
+      }
+    } else if (!inOurRoom && wasInOurRoom) {
+      this.knownPlayers.delete(id);
+    }
+  }
+
+  private rebuildKnownPlayers(): void {
+    this.knownPlayers.clear();
+    if (!this.connection) return;
+    for (const row of this.connection.db.player.iter()) {
+      const id = row.identity.toHexString();
+      if (id !== this.localId && row.roomId === this.roomId) {
+        this.knownPlayers.add(id);
+      }
+    }
+  }
+
+  private acceptOwnPlayer(row: Player): void {
+    if (row.identity.toHexString() !== this.localId) return;
+    this.setRoomId(row.roomId);
   }
 
   private acceptHandState(row: HandState): void {
@@ -147,6 +239,18 @@ export class MultiplayerClient {
       seatIndex: 1,
       updatedAt: Date.now(),
     };
+  }
+
+  private setRoomId(nextRoom: string): void {
+    const sanitized = sanitizeRoomName(nextRoom);
+    if (!sanitized || sanitized === this.roomId) return;
+    this.roomId = sanitized;
+    this.remotePose = undefined;
+    this.openBroadcastChannel();
+    // After moving rooms, recompute who's already here so we don't toast
+    // them as if they just boarded.
+    this.rebuildKnownPlayers();
+    for (const listener of this.roomListeners) listener(this.roomId);
   }
 
   private openBroadcastChannel(): void {
@@ -170,6 +274,6 @@ export class MultiplayerClient {
 
   private setState(state: ConnectionState): void {
     this.connectionState = state;
-    for (const listener of this.listeners) listener(state);
+    for (const listener of this.stateListeners) listener(state);
   }
 }

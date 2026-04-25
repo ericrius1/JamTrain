@@ -4,6 +4,8 @@ import { PlayerPlaque } from './components/PlayerPlaque';
 import { EngineRoomDrawer, type CameraMode } from './components/EngineRoomDrawer';
 import { createCornerFiligree } from './components/CornerFiligree';
 import { BeginGate } from './components/BeginGate';
+import { SharePopover } from './components/SharePopover';
+import { AnnouncementToast } from './components/AnnouncementToast';
 
 export type HudCallbacks = {
   onBegin: (conductorName: string) => Promise<void> | void;
@@ -22,6 +24,9 @@ export class Hud {
   private playerRight: PlayerPlaque;
   private drawer: EngineRoomDrawer;
   private beginGate?: BeginGate;
+  private sharePopover: SharePopover;
+  private shareButton: HTMLButtonElement;
+  private announcement: AnnouncementToast;
   private resizeHandler: () => void;
 
   constructor(opts: { room: string; callbacks: HudCallbacks }) {
@@ -53,6 +58,23 @@ export class Hud {
       onRoomChange: opts.callbacks.onRoomChange,
     });
     this.uiEl.appendChild(this.title.el);
+
+    this.sharePopover = new SharePopover(opts.room, {
+      onRoomChange: room => opts.callbacks.onRoomChange(room),
+    });
+    this.uiEl.appendChild(this.sharePopover.el);
+
+    this.shareButton = document.createElement('button');
+    this.shareButton.className = 'btn share-button';
+    this.shareButton.textContent = 'Share';
+    this.shareButton.addEventListener('click', e => {
+      e.stopPropagation();
+      this.sharePopover.toggle();
+    });
+    this.uiEl.appendChild(this.shareButton);
+
+    this.announcement = new AnnouncementToast();
+    this.uiEl.appendChild(this.announcement.el);
 
     this.playerLeft = new PlayerPlaque({
       side: 'left',
@@ -102,6 +124,11 @@ export class Hud {
   setRoom(room: string): void {
     this.title.setRoom(room);
     this.drawer.setRow('Net', `spacetime · ${room}`);
+    this.sharePopover.setRoom(room);
+  }
+
+  announce(text: string): void {
+    this.announcement.show(text);
   }
 
   setConnection(state: string): void {
@@ -124,6 +151,8 @@ export class Hud {
 
   dispose(): void {
     window.removeEventListener('resize', this.resizeHandler);
+    this.sharePopover.dispose();
+    this.announcement.dispose();
   }
 
   private fitStage(): void {
