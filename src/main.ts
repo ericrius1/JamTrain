@@ -138,6 +138,20 @@ game.onRemoteStream(stream => {
   hud.setRemoteStream(stream);
 });
 
+// Mic + camera toggles on the local panel. Both tracks start disabled (the
+// HandTracker acquires permission at Begin and immediately calls
+// track.enabled = false), and the icons reflect the live track state.
+hud.onMicToggle(() => {
+  const next = !game.getMicEnabled();
+  game.setMicEnabled(next);
+  hud.setMicEnabled(next);
+});
+hud.onCameraToggle(() => {
+  const next = !game.getCameraEnabled();
+  game.setCameraEnabled(next);
+  hud.setCameraEnabled(next);
+});
+
 void game.start();
 
 const marquee = '🚂 Jam Train ';
