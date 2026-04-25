@@ -10,7 +10,7 @@ import { SharePopover } from './components/SharePopover';
 import { AnnouncementToast } from './components/AnnouncementToast';
 import { MixerPanel } from './components/MixerPanel';
 
-export const DEFAULT_MUSIC_VOLUME = 0.35;
+export const DEFAULT_MUSIC_VOLUME = 0.5;
 export const DEFAULT_VOICE_VOLUME = 1.0;
 
 export type HudCallbacks = {

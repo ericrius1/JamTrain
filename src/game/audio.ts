@@ -46,6 +46,8 @@ export class AudioEngine {
   private bedBBanks: any[][] = [[], []];
   private droneABanks: any[] = [];
   private droneBBanks: any[] = [];
+  private subABanks: any[] = [];
+  private subBBanks: any[] = [];
   private shimmerBanks: any[] = [];
   private bankIndex = 0;
 
@@ -80,7 +82,7 @@ export class AudioEngine {
     releaseSeconds: 5.5,
     filterMaxHz: 3000,
     reverbWetRange: 0.18,
-    shimmerMaxDb: -10,
+    shimmerMaxDb: -18,
     muteHandModulation: false,
   };
 
@@ -116,6 +118,14 @@ export class AudioEngine {
       envelope: { attack: this.params.attackSeconds, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds },
       volume: -14,
     };
+    // Per-voice attenuation: top of each chord (voices[2]) sits well below the
+    // lower two so the music doesn't fight speech-band frequencies.
+    const padVoiceVolumesDb = [-12, -14, -22];
+    const subOptions = {
+      oscillator: { type: 'fattriangle', count: 3, spread: 14 } as any,
+      envelope: { attack: this.params.attackSeconds, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds },
+      volume: -16,
+    };
     const droneOptions = {
       oscillator: { type: 'sine' } as any,
       envelope: { attack: this.params.attackSeconds * 1.5, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds * 1.3 },
@@ -128,10 +138,16 @@ export class AudioEngine {
     };
 
     for (let bank = 0; bank < 2; bank++) {
-      this.bedABanks[bank] = [0, 1, 2].map(() => new Tone.Synth(padOptions).connect(this.bedAGain));
-      this.bedBBanks[bank] = [0, 1, 2].map(() => new Tone.Synth(padOptions).connect(this.bedBGain));
+      this.bedABanks[bank] = padVoiceVolumesDb.map(v =>
+        new Tone.Synth({ ...padOptions, volume: v }).connect(this.bedAGain)
+      );
+      this.bedBBanks[bank] = padVoiceVolumesDb.map(v =>
+        new Tone.Synth({ ...padOptions, volume: v }).connect(this.bedBGain)
+      );
       this.droneABanks[bank] = new Tone.Synth(droneOptions).connect(this.bedAGain);
       this.droneBBanks[bank] = new Tone.Synth(droneOptions).connect(this.bedBGain);
+      this.subABanks[bank] = new Tone.Synth(subOptions).connect(this.bedAGain);
+      this.subBBanks[bank] = new Tone.Synth(subOptions).connect(this.bedBGain);
       this.shimmerBanks[bank] = new Tone.Synth(shimmerOptions).connect(this.shimmerGain);
     }
 
@@ -141,6 +157,8 @@ export class AudioEngine {
     initial.b.voices.forEach((note, i) => this.bedBBanks[b][i].triggerAttack(note));
     this.droneABanks[b].triggerAttack(initial.a.drone);
     this.droneBBanks[b].triggerAttack(initial.b.drone);
+    this.subABanks[b].triggerAttack(transposeOctaveDown(initial.a.voices[0]));
+    this.subBBanks[b].triggerAttack(transposeOctaveDown(initial.b.voices[0]));
     this.shimmerBanks[b].triggerAttack(this.shimmerNote());
 
     this.attachPane();
@@ -248,6 +266,8 @@ export class AudioEngine {
       ...this.bedBBanks.flat(),
       ...this.droneABanks,
       ...this.droneBBanks,
+      ...this.subABanks,
+      ...this.subBBanks,
       ...this.shimmerBanks,
     ];
     for (const v of all) v?.dispose?.();
@@ -274,12 +294,16 @@ export class AudioEngine {
     this.bedBBanks[oldBank].forEach(v => v.triggerRelease());
     this.droneABanks[oldBank]?.triggerRelease();
     this.droneBBanks[oldBank]?.triggerRelease();
+    this.subABanks[oldBank]?.triggerRelease();
+    this.subBBanks[oldBank]?.triggerRelease();
     this.shimmerBanks[oldBank]?.triggerRelease();
 
     a.voices.forEach((note, i) => this.bedABanks[newBank][i].triggerAttack(note));
     b.voices.forEach((note, i) => this.bedBBanks[newBank][i].triggerAttack(note));
     this.droneABanks[newBank]?.triggerAttack(a.drone);
     this.droneBBanks[newBank]?.triggerAttack(b.drone);
+    this.subABanks[newBank]?.triggerAttack(transposeOctaveDown(a.voices[0]));
+    this.subBBanks[newBank]?.triggerAttack(transposeOctaveDown(b.voices[0]));
     this.shimmerBanks[newBank]?.triggerAttack(this.shimmerNote());
 
     this.bankIndex = newBank;
@@ -296,6 +320,10 @@ export class AudioEngine {
     for (const v of this.droneABanks.concat(this.droneBBanks)) {
       v.envelope.attack = a * 1.5;
       v.envelope.release = r * 1.3;
+    }
+    for (const v of this.subABanks.concat(this.subBBanks)) {
+      v.envelope.attack = a;
+      v.envelope.release = r;
     }
     for (const v of this.shimmerBanks) {
       v.envelope.attack = a * 1.8;
@@ -393,6 +421,13 @@ function transposeOctaveUp(note: string): string {
   if (!match) return note;
   const [, name, octave] = match;
   return `${name}${Number(octave) + 1}`;
+}
+
+function transposeOctaveDown(note: string): string {
+  const match = note.match(/^([A-G]#?)(-?\d+)$/);
+  if (!match) return note;
+  const [, name, octave] = match;
+  return `${name}${Number(octave) - 1}`;
 }
 
 function makeImpulseResponse(ctx: AudioContext, duration: number, decay: number): AudioBuffer {
