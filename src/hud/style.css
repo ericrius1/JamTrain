@@ -512,14 +512,12 @@
 }
 #stats-panel.hidden { display: none; }
 
-/* Camera debug — bottom-center of stage, mirrors the source feed with a
-   landmark overlay so we can see which hands are actually being tracked. */
-.camera-debug {
+/* Peer video panels — bottom corners, under each seat's plaque. Local panel
+   keeps the hand-landmark overlay; remote panel just plays the partner feed. */
+.video-panel {
   position: absolute;
   bottom: 24px;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 360px;
+  width: 320px;
   aspect-ratio: 16 / 9;
   z-index: 10;
   border: 1px solid rgba(239, 224, 191, 0.35);
@@ -529,18 +527,25 @@
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   pointer-events: none;
 }
-.camera-debug video,
-.camera-debug canvas {
+.video-panel.left  { left: 24px; }
+.video-panel.right { right: 24px; }
+.video-panel video,
+.video-panel canvas {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   display: block;
 }
-.camera-debug video {
-  object-fit: cover;
+.video-panel video { object-fit: cover; }
+/* Mirror the local feed (and its landmark overlay) so the user sees a
+   webcam-style image. Remote feed isn't mirrored — partner sees themselves
+   mirrored on their side, we see them un-mirrored. */
+.video-panel.mode-local video,
+.video-panel.mode-local canvas {
+  transform: scaleX(-1);
 }
-.camera-debug-label {
+.video-panel-label {
   position: absolute;
   left: 8px;
   bottom: 6px;
@@ -552,7 +557,6 @@
   border-radius: 3px;
   letter-spacing: 0.04em;
 }
-.camera-debug.hidden { display: none; }
 
 /* Share button + popover ------------------------------------------------- */
 .share-button {
