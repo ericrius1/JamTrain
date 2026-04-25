@@ -37,6 +37,12 @@ const keypointNames: Record<FingerName, [string, string, string]> = {
   pinky: ['pinky_finger_pip', 'pinky_finger_dip', 'pinky_finger_tip'],
 };
 
+// Apparent wrist→middle_mcp distance (image-space, normalized) at "neutral" depth.
+// Smaller observed sizes push the hand back in z; larger sizes push it forward.
+const REFERENCE_PALM_SIZE = 0.09;
+// How aggressively apparent-size delta is converted into world-space z depth.
+const DEPTH_FROM_SIZE = 4.5;
+
 const MAX_TRACKED_HANDS = 2;
 // micro-handpose 0.3.0 only re-runs palm detection when every tracked ROI is
 // lost. If we sit at fewer than MAX_TRACKED_HANDS for this many cycles, force
@@ -302,21 +308,54 @@ export class HandTracker {
     time: number
   ): HandPose {
     const fallback = makeSimulatedHands(time, this.pointer.x, this.pointer.y)[handedness];
-    const wrist = this.readPoint(hand, 'wrist', 0) ?? fallback.wrist;
-    const palmRaw = this.readPoint(hand, 'middle_finger_mcp', 9) ?? fallback.palm;
-    const palm = {
-      x: (wrist.x + palmRaw.x) * 0.5,
-      y: (wrist.y + palmRaw.y) * 0.5,
-      z: (wrist.z + palmRaw.z) * 0.5,
+
+    const readImg = (key: string, index: number): LandmarkLike | undefined =>
+      hand.keypoints?.[key] ?? hand.landmarks?.[index];
+
+    const wristImg = readImg('wrist', 0);
+    const middleImg = readImg('middle_finger_mcp', 9);
+    if (!wristImg || !middleImg) return fallback;
+
+    // Apparent palm size in image space — proxy for hand-to-camera distance.
+    // We rescale all landmark offsets by REFERENCE_PALM_SIZE / palmSize so the
+    // rendered hand stays a constant size, and route the size delta into z so
+    // the hand translates in depth instead of stretching in x/y.
+    const palmDx = middleImg.x - wristImg.x;
+    const palmDy = middleImg.y - wristImg.y;
+    const palmSize = Math.max(Math.hypot(palmDx, palmDy), 1e-4);
+    const sizeScale = clamp(REFERENCE_PALM_SIZE / palmSize, 0.5, 2.0);
+    const depth = clamp((palmSize - REFERENCE_PALM_SIZE) * DEPTH_FROM_SIZE, -0.45, 0.45);
+
+    const wristZ = wristImg.z ?? 0;
+    const transform = (img: LandmarkLike): Vec3Data => {
+      const offX = (img.x - wristImg.x) * sizeScale;
+      const offY = (img.y - wristImg.y) * sizeScale;
+      const offZ = (img.z ?? 0) - wristZ;
+      return vec(
+        (0.5 - wristImg.x - offX) * 1.8,
+        (1 - wristImg.y - offY) * 1.35,
+        depth + clamp(-offZ * 4.5, -0.45, 0.45)
+      );
     };
+
+    const wrist = transform(wristImg);
+    const palmRaw = transform(middleImg);
+    const palm = vec(
+      (wrist.x + palmRaw.x) * 0.5,
+      (wrist.y + palmRaw.y) * 0.5,
+      (wrist.z + palmRaw.z) * 0.5
+    );
 
     const fingers = { ...fallback.fingers };
     for (const name of fingerNames) {
       const [baseIndex, midIndex, tipIndex] = fingerLandmarks[name];
       const [baseKey, midKey, tipKey] = keypointNames[name];
-      const base = this.readPoint(hand, baseKey, baseIndex) ?? fallback.fingers[name].base;
-      const mid = this.readPoint(hand, midKey, midIndex) ?? fallback.fingers[name].mid;
-      const tip = this.readPoint(hand, tipKey, tipIndex) ?? fallback.fingers[name].tip;
+      const baseImg = readImg(baseKey, baseIndex);
+      const midImg = readImg(midKey, midIndex);
+      const tipImg = readImg(tipKey, tipIndex);
+      const base = baseImg ? transform(baseImg) : fallback.fingers[name].base;
+      const mid = midImg ? transform(midImg) : fallback.fingers[name].mid;
+      const tip = tipImg ? transform(tipImg) : fallback.fingers[name].tip;
       const openLength = Math.max(Math.abs(tip.y - base.y), 0.001);
       const curledDepth = Math.abs(tip.z - mid.z) + Math.max(0, mid.y - tip.y);
       fingers[name] = {
@@ -335,21 +374,6 @@ export class HandTracker {
       fingers,
       confidence: clamp(hand.score ?? 0.7, 0, 1),
     };
-  }
-
-  private readPoint(
-    hand: { landmarks?: LandmarkLike[]; keypoints?: Record<string, LandmarkLike> },
-    key: string,
-    index: number
-  ): Vec3Data | undefined {
-    const source = hand.keypoints?.[key] ?? hand.landmarks?.[index];
-    if (!source) return undefined;
-
-    return vec(
-      (0.5 - source.x) * 1.8,
-      (1 - source.y) * 1.35,
-      clamp(-(source.z ?? 0) * 4.5, -0.45, 0.45)
-    );
   }
 
   private maybeResetForLockIn(detectionCount: number, time: number): void {
