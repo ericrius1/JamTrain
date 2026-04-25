@@ -58,6 +58,8 @@ export class VideoPanel {
   private shareButton?: HTMLButtonElement;
   private micButton?: HTMLButtonElement;
   private emptyOverlay?: HTMLDivElement;
+  private toolbar?: HTMLDivElement;
+  private hintEl?: HTMLDivElement;
   private cameraListeners = new Set<() => void>();
   private shareVideoListeners = new Set<() => void>();
   private micListeners = new Set<() => void>();
@@ -96,6 +98,7 @@ export class VideoPanel {
   private buildLocalControls(): void {
     const toolbar = document.createElement('div');
     toolbar.className = 'video-panel-toolbar';
+    this.toolbar = toolbar;
 
     this.cameraButton = makeToolbarButton({
       label: 'Camera',
@@ -115,13 +118,17 @@ export class VideoPanel {
       icon: MIC_SVG,
       onClick: () => { for (const l of this.micListeners) l(); },
     });
+    // Share + Mic appear only after Camera is on (progressive disclosure).
+    this.shareButton.dataset.stage = 'share';
+    this.micButton.dataset.stage = 'share';
 
     toolbar.append(this.cameraButton, this.shareButton, this.micButton);
 
     const hint = document.createElement('div');
     hint.className = 'video-panel-toolbar-hint';
-    hint.textContent = 'Camera tracks your hands. Sharing & mic are optional.';
+    hint.textContent = 'Tap Camera to track your hands · You can play without it.';
     toolbar.appendChild(hint);
+    this.hintEl = hint;
 
     this.wrapper.appendChild(toolbar);
   }
@@ -142,6 +149,12 @@ export class VideoPanel {
   setCameraEnabled(enabled: boolean): void {
     this.cameraButton?.classList.toggle('enabled', enabled);
     this.emptyOverlay?.classList.toggle('hidden', enabled);
+    this.toolbar?.classList.toggle('share-revealed', enabled);
+    if (this.hintEl) {
+      this.hintEl.textContent = enabled
+        ? 'Want your partner to see and hear you? Toggle Share Video / Mic →'
+        : 'Tap Camera to track your hands · You can play without it.';
+    }
   }
 
   setShareVideoEnabled(enabled: boolean): void {

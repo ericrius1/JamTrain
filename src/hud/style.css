@@ -529,7 +529,10 @@
 }
 
 /* Peer video panels — bottom corners, under each seat's plaque. Local panel
-   keeps the hand-landmark overlay; remote panel just plays the partner feed. */
+   keeps the hand-landmark overlay; remote panel just plays the partner feed.
+   Note: overflow stays VISIBLE so the toolbar above the local panel can
+   render outside the panel's frame. We rely on border-radius on the children
+   (video / canvas / empty overlay) for the rounded-corner look instead. */
 .video-panel {
   position: absolute;
   bottom: 24px;
@@ -538,7 +541,6 @@
   z-index: 10;
   border: 1px solid rgba(239, 224, 191, 0.35);
   border-radius: 6px;
-  overflow: hidden;
   background: #000;
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   pointer-events: none;
@@ -552,6 +554,7 @@
   width: 100%;
   height: 100%;
   display: block;
+  border-radius: inherit;
 }
 .video-panel video { object-fit: cover; }
 /* Mirror the local feed (and its landmark overlay) so the user sees a
@@ -644,6 +647,39 @@
   height: 20px;
 }
 .video-panel-toolbar-btn span { white-space: nowrap; }
+/* Share Video + Mic stay hidden until Camera is on (progressive disclosure
+   so the user isn't asked about sharing before they've even enabled their
+   webcam). Smooth scale + fade so the appearance feels intentional. */
+.video-panel-toolbar-btn[data-stage="share"] {
+  opacity: 0;
+  transform: translateY(-4px) scale(0.92);
+  pointer-events: none;
+  width: 0;
+  min-width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  margin-left: -8px; /* collapse the toolbar gap when hidden */
+  border-width: 0;
+  overflow: hidden;
+  transition:
+    opacity 0.22s ease, transform 0.22s ease,
+    width 0.22s ease, min-width 0.22s ease,
+    padding 0.22s ease, margin 0.22s ease, border-width 0.22s ease;
+}
+.video-panel-toolbar.share-revealed .video-panel-toolbar-btn[data-stage="share"] {
+  opacity: 0.85;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+  width: auto;
+  min-width: 76px;
+  padding: 8px 12px 7px;
+  margin-left: 0;
+  border-width: 1px;
+}
+.video-panel-toolbar.share-revealed .video-panel-toolbar-btn[data-stage="share"]:hover,
+.video-panel-toolbar.share-revealed .video-panel-toolbar-btn[data-stage="share"].enabled {
+  opacity: 1;
+}
 
 .video-panel-toolbar-hint {
   width: 100%;
@@ -653,9 +689,13 @@
   color: var(--text-dim);
   letter-spacing: 0.04em;
   text-align: left;
+  transition: color 0.22s ease;
 }
 .video-panel.right .video-panel-toolbar-hint {
   text-align: right;
+}
+.video-panel-toolbar.share-revealed .video-panel-toolbar-hint {
+  color: var(--brass);
 }
 
 /* "Camera off" placeholder shown inside the local panel when there's no
@@ -674,6 +714,7 @@
   background: linear-gradient(180deg, rgba(20, 14, 8, 0.94), rgba(8, 6, 4, 0.97));
   pointer-events: none;
   z-index: 2;
+  border-radius: inherit;
 }
 .video-panel-empty.hidden { display: none; }
 .video-panel-empty .icon {
