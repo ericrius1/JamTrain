@@ -83,6 +83,8 @@ fn plasmaOrb(
   let dtBase = (tMax - tMin) / 48.0;
   var lastDensity = 0.0;
   var everInside = false;
+  var maxStep = 0.0;
+  var depthAccum = 0.0;
 
   for (var i: i32 = 0; i < 48; i = i + 1) {
     let stepDt = dtBase * exp(-2.0 * lastDensity);
@@ -139,26 +141,40 @@ fn plasmaOrb(
     lastDensity = density;
 
     let bright = clamp(density, 0.0, 4.0);
-    col = col * 0.99 + 0.08 * vec3<f32>(bright * bright * bright, bright * bright, bright);
+    maxStep = max(maxStep, bright);
+    depthAccum = depthAccum + bright;
+    col = col * 0.99 + 0.05 * vec3<f32>(bright * bright * bright, bright * bright, bright);
   }
 
   if (!everInside) {
     return vec4<f32>(0.0);
   }
 
-  col = 0.5 * log(1.0 + col);
+  // Soft Reinhard tone curve preserves color, no log blow-out.
+  col = col / (1.0 + col * 0.9);
 
-  // Palette: cool → hot for density, with amber accent gated by energy.
-  let lum = clamp(dot(col, vec3<f32>(0.299, 0.587, 0.114)), 0.0, 2.0);
-  let coolBlend = mix(uCool, uHot, smoothstep(0.0, 0.9, lum));
-  let amberAccent = smoothstep(0.4, 0.95, lum) * uEnergy;
-  let palette = mix(coolBlend, uWarm, amberAccent);
-  let tinted = col * palette * 1.6;
+  let lum = clamp(dot(col, vec3<f32>(0.299, 0.587, 0.114)), 0.0, 1.0);
 
-  // Floor the orb so it always reads as a solid body, even where the
-  // raymarch produced low density (otherwise the back of the sphere
-  // shows through as black).
-  let baseFill = uCool * 0.18;
+  // Cool stays dominant. uHot is a brighter teal-green family (not white),
+  // so even peaks read as mystic green-blue rather than overexposed cream.
+  let coolBlend = mix(uCool, uHot, smoothstep(0.55, 1.0, lum));
+
+  // Amber lives in narrow filaments only: ridges where a single inner-loop
+  // peak dominates the volume average. Without this gate, amber paints the
+  // whole bright interior.
+  let avgStep = depthAccum / 48.0;
+  let filament = clamp((maxStep - avgStep * 4.0 - 0.35) * 1.6, 0.0, 1.0);
+  let amberAccent = filament * smoothstep(0.35, 0.85, lum) * uEnergy;
+  let palette = mix(coolBlend, uWarm, amberAccent * 0.85);
+
+  // Slightly desaturate before the cool tint: keeps the highlights from
+  // pumping pure white through the multiplication.
+  let baseRgb = mix(vec3<f32>(lum), col, 0.6);
+  let tinted = baseRgb * palette * 0.95;
+
+  // Floor: dim cool fill so the back of the volume reads as the orb body
+  // rather than punching through to black.
+  let baseFill = uCool * 0.08;
   let outRgb = max(tinted, baseFill);
   return vec4<f32>(outRgb, 1.0);
 }
@@ -195,9 +211,9 @@ export class PlasmaOrb {
   private uA1 = uniform(new THREE.Vector4());
   private uA2 = uniform(new THREE.Vector4());
   private uA3 = uniform(new THREE.Vector4());
-  private uCool = uniform(colorToVec3(0x2bd6f7));
-  private uWarm = uniform(colorToVec3(0xffae42));
-  private uHot = uniform(colorToVec3(0xfff4d0));
+  private uCool = uniform(colorToVec3(0x14e8c0));
+  private uWarm = uniform(colorToVec3(0xff5a18));
+  private uHot = uniform(colorToVec3(0x7af2d4));
 
   constructor(scene: THREE.Scene, options: PlasmaOrbOptions) {
     this.radius = options.radius ?? 0.42;
