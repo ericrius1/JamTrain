@@ -399,6 +399,7 @@ export class Game {
   private createCabin(): void {
     this.buildCabinGeometry();
     this.scenery.build();
+    this.scenery.setThunderHandler(delay => this.audio.playThunder(delay));
 
     for (const z of [-1.55, 0, 1.55]) {
       const light = new THREE.PointLight(0xffe8ad, 0.95, 4.8);

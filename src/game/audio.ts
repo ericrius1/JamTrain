@@ -200,6 +200,37 @@ export class AudioEngine {
     this.shimmerGain.gain.rampTo(shimmerLinear, PARAM_RAMP);
   }
 
+  // Cozy lo-fi thunder: short low-passed noise burst with a long convolution
+  // reverb tail. Generated procedurally so the project stays asset-free.
+  playThunder(delaySeconds = 1.0): void {
+    if (!this.running || !this.tone) return;
+    try {
+      const ctx = (this.tone.getContext() as unknown as { rawContext: AudioContext }).rawContext;
+      if (!ctx) return;
+      const dur = 2.6;
+      const buffer = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < data.length; i += 1) {
+        const env = Math.pow(1 - i / data.length, 1.4);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+      const src = ctx.createBufferSource();
+      src.buffer = buffer;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 220;
+      lp.Q.value = 0.7;
+      const gain = ctx.createGain();
+      gain.gain.value = 0.10;
+      const convolver = ctx.createConvolver();
+      convolver.buffer = makeImpulseResponse(ctx, 2.4, 1.6);
+      src.connect(lp).connect(convolver).connect(gain).connect(ctx.destination);
+      src.start(ctx.currentTime + delaySeconds);
+    } catch (e) {
+      console.warn('thunder failed', e);
+    }
+  }
+
   dispose(): void {
     if (!this.running) return;
     this.running = false;
@@ -353,4 +384,16 @@ function transposeOctaveUp(note: string): string {
   if (!match) return note;
   const [, name, octave] = match;
   return `${name}${Number(octave) + 1}`;
+}
+
+function makeImpulseResponse(ctx: AudioContext, duration: number, decay: number): AudioBuffer {
+  const len = ctx.sampleRate * duration;
+  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
+  for (let c = 0; c < 2; c += 1) {
+    const data = buf.getChannelData(c);
+    for (let i = 0; i < len; i += 1) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+  }
+  return buf;
 }
