@@ -1,5 +1,6 @@
+import { Identity } from 'spacetimedb';
 import { DbConnection, tables, type ErrorContext } from '../module_bindings';
-import type { HandState, Player } from '../module_bindings/types';
+import type { HandState, Player, WebrtcSignal } from '../module_bindings/types';
 import { parsePose, serializePose } from './pose';
 import { pickRandomRoomName, sanitizeRoomName } from './roomNames';
 import type { ConnectionState, PlayerPose } from './types';
@@ -8,6 +9,9 @@ type StateListener = (state: ConnectionState) => void;
 type RoomListener = (roomId: string) => void;
 type PlayerEventListener = (player: { id: string; displayName: string }) => void;
 type PartnerListener = (name: string | null) => void;
+type SeatListener = (localSeat: number, partnerSeat: number) => void;
+type SignalListener = (signal: { id: bigint; senderId: string; kind: string; payload: string }) => void;
+type PartnerIdentityListener = (identityHex: string | null) => void;
 
 const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
@@ -19,6 +23,10 @@ const POSE_STALE_MS = 8000;
 
 export class MultiplayerClient {
   localId = `local-${crypto.randomUUID()}`;
+  // Defaults to seat 0 until the server confirms an assignment. Partner seat
+  // is always the opposite — we only have two seats per cabin.
+  localSeatIndex = 0;
+  partnerSeatIndex = 1;
   private connection?: DbConnection;
   private connectionState: ConnectionState = 'local';
   private remotePose?: PlayerPose;
@@ -29,11 +37,15 @@ export class MultiplayerClient {
   private joinListeners = new Set<PlayerEventListener>();
   private leaveListeners = new Set<PlayerEventListener>();
   private partnerListeners = new Set<PartnerListener>();
+  private seatListeners = new Set<SeatListener>();
   // Identities of every player we've ever seen in our current room. Survives
   // online/offline toggles — we only forget a player when they actually
   // change rooms or get fully deleted (explicit leave_room).
   private knownPlayers = new Map<string, string>();
   private partnerName: string | null = null;
+  private partnerIdentityHex: string | null = null;
+  private signalListeners = new Set<SignalListener>();
+  private partnerIdentityListeners = new Set<PartnerIdentityListener>();
   private subscriptionApplied = false;
   private roomId: string;
   private displayName: string;
@@ -78,6 +90,49 @@ export class MultiplayerClient {
     // with the current value so the consumer can sync UI on subscribe.
     this.partnerListeners.add(listener);
     listener(this.partnerName);
+  }
+
+  onSeatChange(listener: SeatListener): void {
+    this.seatListeners.add(listener);
+    listener(this.localSeatIndex, this.partnerSeatIndex);
+  }
+
+  onSignal(listener: SignalListener): void {
+    this.signalListeners.add(listener);
+  }
+
+  onPartnerIdentity(listener: PartnerIdentityListener): void {
+    this.partnerIdentityListeners.add(listener);
+    listener(this.partnerIdentityHex);
+  }
+
+  getPartnerIdentity(): string | null {
+    return this.partnerIdentityHex;
+  }
+
+  async sendWebrtcSignal(recipientHex: string, kind: string, payload: string): Promise<void> {
+    if (!this.connection?.isActive) {
+      console.warn('[webrtc] send_signal skipped: spacetime not connected');
+      return;
+    }
+    try {
+      await this.connection.reducers.sendWebrtcSignal({
+        recipientId: Identity.fromString(recipientHex),
+        kind,
+        payload,
+      });
+    } catch (err) {
+      console.warn('[webrtc] send_signal failed', { kind, error: err });
+    }
+  }
+
+  async consumeWebrtcSignal(id: bigint): Promise<void> {
+    if (!this.connection?.isActive) return;
+    try {
+      await this.connection.reducers.consumeWebrtcSignal({ id });
+    } catch (err) {
+      console.warn('[webrtc] consume_signal failed', { id: id.toString(), error: err });
+    }
   }
 
   setDisplayName(displayName: string): void {
@@ -133,6 +188,10 @@ export class MultiplayerClient {
           if (this.partnerName !== null) {
             this.partnerName = null;
             for (const listener of this.partnerListeners) listener(null);
+          }
+          if (this.partnerIdentityHex !== null) {
+            this.partnerIdentityHex = null;
+            for (const listener of this.partnerIdentityListeners) listener(null);
           }
           this.setState('local');
           this.scheduleReconnect();
@@ -252,6 +311,8 @@ export class MultiplayerClient {
         }
       }
     });
+    conn.db.webrtcSignal.onInsert((_ctx, row) => this.acceptSignal(row));
+    conn.db.webrtcSignal.onUpdate((_ctx, _oldRow, row) => this.acceptSignal(row));
     conn
       .subscriptionBuilder()
       .onApplied(() => {
@@ -274,7 +335,7 @@ export class MultiplayerClient {
       .onError(ctx => {
         console.warn('SpacetimeDB subscription failed', ctx.event);
       })
-      .subscribe([tables.handState, tables.player]);
+      .subscribe([tables.handState, tables.player, tables.webrtcSignal]);
   }
 
   private maybeAnnouncePlayer(row: Player): void {
@@ -328,6 +389,7 @@ export class MultiplayerClient {
     // The plaque/right-rig should reflect whether there's actually an
     // ONLINE partner in our cabin. Stale/offline rows don't count.
     let nextName: string | null = null;
+    let nextIdentity: string | null = null;
     if (this.connection) {
       for (const row of this.connection.db.player.iter()) {
         const id = row.identity.toHexString();
@@ -335,18 +397,52 @@ export class MultiplayerClient {
         if (row.roomId !== this.roomId) continue;
         if (!row.online) continue;
         nextName = row.displayName || 'Player';
+        nextIdentity = id;
         break;
       }
     }
+
+    if (nextIdentity !== this.partnerIdentityHex) {
+      this.partnerIdentityHex = nextIdentity;
+      for (const listener of this.partnerIdentityListeners) listener(nextIdentity);
+    }
+
     if (nextName === this.partnerName) return;
     this.partnerName = nextName;
     console.info('[jam-train] partner change ->', nextName);
     for (const listener of this.partnerListeners) listener(nextName);
   }
 
+  private acceptSignal(row: WebrtcSignal): void {
+    const recipientHex = row.recipientId.toHexString();
+    if (recipientHex !== this.localId) return;
+    if (row.roomId !== this.roomId) return;
+    const senderHex = row.senderId.toHexString();
+    console.debug('[webrtc] recv', row.kind, 'from', senderHex.slice(0, 10));
+    for (const listener of this.signalListeners) {
+      listener({
+        id: row.id,
+        senderId: senderHex,
+        kind: row.kind,
+        payload: row.payload,
+      });
+    }
+  }
+
   private acceptOwnPlayer(row: Player): void {
     if (row.identity.toHexString() !== this.localId) return;
     this.setRoomId(row.roomId);
+    this.setLocalSeat(row.seatIndex);
+  }
+
+  private setLocalSeat(seatIndex: number): void {
+    const local = seatIndex === 1 ? 1 : 0;
+    const partner = local === 0 ? 1 : 0;
+    if (local === this.localSeatIndex && partner === this.partnerSeatIndex) return;
+    this.localSeatIndex = local;
+    this.partnerSeatIndex = partner;
+    if (this.remotePose) this.remotePose.seatIndex = partner;
+    for (const listener of this.seatListeners) listener(local, partner);
   }
 
   private acceptHandState(row: HandState): void {
@@ -368,7 +464,7 @@ export class MultiplayerClient {
       ...pose,
       id,
       roomId: row.roomId,
-      seatIndex: 1,
+      seatIndex: this.partnerSeatIndex,
       updatedAt: Date.now(),
     };
     if (!wasPresent) {
@@ -401,7 +497,7 @@ export class MultiplayerClient {
         ...pose,
         id: data.id ?? pose.id,
         roomId: this.roomId,
-        seatIndex: 1,
+        seatIndex: this.partnerSeatIndex,
         updatedAt: data.sentAt ?? Date.now(),
       };
     };
