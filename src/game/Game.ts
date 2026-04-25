@@ -256,8 +256,6 @@ export class Game {
     this.audio.dispose();
     this.cameraPane?.dispose();
     this.shadowsPane?.dispose();
-    this.ssgiPane?.dispose();
-    this.renderPipeline?.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -555,11 +553,7 @@ export class Game {
     this.multiplayer.sendPose(localPose, elapsed);
     if (this.cameraMode === 'game') this.updateCameraDolly(delta);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
-    if (this.ssgiParams.enabled && this.renderPipeline) {
-      this.renderPipeline.render();
-    } else {
-      this.renderer.render(this.scene, this.camera);
-    }
+    this.renderer.render(this.scene, this.camera);
   }
 
   private updateLinks(): LinkSample[] {
