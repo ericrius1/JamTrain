@@ -176,10 +176,10 @@ fn plasmaOrb(
     return vec4<f32>(0.0);
   }
 
-  // Soft Reinhard tone curve. Light shoulder so brighter regions still
-  // separate from mid-density areas; aggressive compression turned the
-  // whole orb flat-white.
-  col = col / (1.0 + col * uToneStrength);
+  // Reinhard tone curve, properly bounded to [0,1). uToneStrength acts
+  // as a pre-exposure: >1 brightens before compression, <1 dims it.
+  let exposed = col * uToneStrength;
+  col = exposed / (1.0 + exposed);
 
   let lum = clamp(dot(col, vec3<f32>(0.299, 0.587, 0.114)), 0.0, 1.0);
 
