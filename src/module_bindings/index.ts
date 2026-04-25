@@ -34,8 +34,10 @@ import {
 } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ConsumeWebrtcSignalReducer from "./consume_webrtc_signal_reducer";
 import LeaveRoomReducer from "./leave_room_reducer";
 import RequestSeatReducer from "./request_seat_reducer";
+import SendWebrtcSignalReducer from "./send_webrtc_signal_reducer";
 import UpdatePoseReducer from "./update_pose_reducer";
 
 // Import all procedure arg schemas
@@ -43,6 +45,7 @@ import UpdatePoseReducer from "./update_pose_reducer";
 // Import all table schema definitions
 import HandStateRow from "./hand_state_table";
 import PlayerRow from "./player_table";
+import WebrtcSignalRow from "./webrtc_signal_table";
 
 /** Type-only namespace exports for generated type groups. */
 
@@ -76,12 +79,28 @@ const tablesSchema = __schema({
       { name: 'player_identity_key', constraint: 'unique', columns: ['identity'] },
     ],
   }, PlayerRow),
+  webrtcSignal: __table({
+    name: 'webrtc_signal',
+    indexes: [
+      { accessor: 'id', name: 'webrtc_signal_id_idx_btree', algorithm: 'btree', columns: [
+        'id',
+      ] },
+      { accessor: 'webrtc_signal_recipient', name: 'webrtc_signal_recipient_id_idx_btree', algorithm: 'btree', columns: [
+        'recipientId',
+      ] },
+    ],
+    constraints: [
+      { name: 'webrtc_signal_id_key', constraint: 'unique', columns: ['id'] },
+    ],
+  }, WebrtcSignalRow),
 });
 
 /** The schema information for all reducers in this module. This is defined the same way as the reducers would have been defined in the server, except the body of the reducer is omitted in code generation. */
 const reducersSchema = __reducers(
+  __reducerSchema("consume_webrtc_signal", ConsumeWebrtcSignalReducer),
   __reducerSchema("leave_room", LeaveRoomReducer),
   __reducerSchema("request_seat", RequestSeatReducer),
+  __reducerSchema("send_webrtc_signal", SendWebrtcSignalReducer),
   __reducerSchema("update_pose", UpdatePoseReducer),
 );
 

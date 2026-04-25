@@ -6,11 +6,15 @@
 import { type Infer as __Infer } from "spacetimedb";
 
 // Import all reducer arg schemas
+import ConsumeWebrtcSignalReducer from "../consume_webrtc_signal_reducer";
 import LeaveRoomReducer from "../leave_room_reducer";
 import RequestSeatReducer from "../request_seat_reducer";
+import SendWebrtcSignalReducer from "../send_webrtc_signal_reducer";
 import UpdatePoseReducer from "../update_pose_reducer";
 
+export type ConsumeWebrtcSignalParams = __Infer<typeof ConsumeWebrtcSignalReducer>;
 export type LeaveRoomParams = __Infer<typeof LeaveRoomReducer>;
 export type RequestSeatParams = __Infer<typeof RequestSeatReducer>;
+export type SendWebrtcSignalParams = __Infer<typeof SendWebrtcSignalReducer>;
 export type UpdatePoseParams = __Infer<typeof UpdatePoseReducer>;
 

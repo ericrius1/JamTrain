@@ -29,3 +29,14 @@ export const Player = __t.object("Player", {
 });
 export type Player = __Infer<typeof Player>;
 
+export const WebrtcSignal = __t.object("WebrtcSignal", {
+  id: __t.u64(),
+  roomId: __t.string(),
+  senderId: __t.identity(),
+  recipientId: __t.identity(),
+  kind: __t.string(),
+  payload: __t.string(),
+  createdAt: __t.timestamp(),
+});
+export type WebrtcSignal = __Infer<typeof WebrtcSignal>;
+
