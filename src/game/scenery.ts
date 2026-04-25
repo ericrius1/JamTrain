@@ -9,6 +9,7 @@ import {
 } from './biomes';
 import { BiomeLayers } from './biomeLayers';
 import { SpriteAtlas } from './spriteAtlas';
+import { WaterStrip } from './waterStrip';
 
 type Atmosphere = {
   background: THREE.Color;
@@ -82,6 +83,7 @@ export class ScenerySystem {
   private scheduler!: BiomeScheduler;
   private atlas!: SpriteAtlas;
   private layers!: BiomeLayers;
+  private water!: WaterStrip;
   private lastCycle = 0;
   private atmosphere = {
     background: new THREE.Color(0x10202d),
@@ -129,6 +131,8 @@ export class ScenerySystem {
     this.atlas = new SpriteAtlas();
     this.layers = new BiomeLayers(this.scene, this.atlas, this.scheduler, this.roomSeed);
     this.layers.build();
+    this.water = new WaterStrip(this.scene);
+    this.water.build();
     this.scene.add(this.root);
   }
 
@@ -183,6 +187,10 @@ export class ScenerySystem {
 
     this.updateBackground(delta, speed, daylight);
     this.layers?.update(delta, speed, { daylight, nightAmount: night });
+    if (this.water) {
+      const fg = this.scheduler.foreground();
+      this.water.update(fg.t < 0.5 ? fg.from : fg.to, delta);
+    }
 
     const dayColor = new THREE.Color(0x2f6172);
     const duskColor = new THREE.Color(0x4d3158);

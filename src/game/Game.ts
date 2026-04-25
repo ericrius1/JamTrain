@@ -570,6 +570,22 @@ export class Game {
     return new RoundedBoxGeometry(width, height, depth, segments, r);
   }
 
+  private applyPlayerBackOffset(): void {
+    this.localRig.setBackOffset(this.playersParams.backOffset);
+    this.remoteRig.setBackOffset(this.playersParams.backOffset);
+  }
+
+  private setupPlayersPane(): void {
+    if (this.playersPane) return;
+    const container = document.createElement('div');
+    this.paneDock.appendChild(container);
+    this.playersPane = new Pane({ title: 'Players', container });
+    this.playersPane.expanded = false;
+    this.playersPane.addBinding(this.playersParams, 'backOffset', {
+      label: 'back offset', min: -0.4, max: 0.8, step: 0.01,
+    }).on('change', () => this.applyPlayerBackOffset());
+  }
+
   private setupCabinPane(): void {
     if (this.cabinPane) return;
     const container = document.createElement('div');
