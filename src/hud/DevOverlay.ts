@@ -7,9 +7,11 @@ export class DevOverlay {
   private visible = false;
   private rafHandle = 0;
   private keyHandler: (e: KeyboardEvent) => void;
+  private onToggle?: (visible: boolean) => void;
 
-  constructor(paneDock: HTMLElement) {
+  constructor(paneDock: HTMLElement, onToggle?: (visible: boolean) => void) {
     this.paneDock = paneDock;
+    this.onToggle = onToggle;
     this.paneDock.classList.add('hidden');
 
     this.stats = new Stats();
@@ -45,6 +47,7 @@ export class DevOverlay {
     } else {
       cancelAnimationFrame(this.rafHandle);
     }
+    this.onToggle?.(this.visible);
   }
 
   isVisible(): boolean {

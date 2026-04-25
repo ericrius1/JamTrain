@@ -48,7 +48,7 @@ export class TitlePlaque {
     const cabinCol = document.createElement('div');
     const cabinLabel = document.createElement('div');
     cabinLabel.className = 'label';
-    cabinLabel.textContent = 'Cabin';
+    cabinLabel.textContent = 'Destination';
     cabinCol.appendChild(cabinLabel);
     this.roomEl = document.createElement('div');
     this.roomEl.className = 'room';

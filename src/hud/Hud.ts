@@ -1,6 +1,5 @@
 import './style.css';
 import { TitlePlaque } from './components/TitlePlaque';
-import { ResonanceGauge, type Scenario } from './components/ResonanceGauge';
 import { PlayerPlaque } from './components/PlayerPlaque';
 import { EngineRoomDrawer, type CameraMode } from './components/EngineRoomDrawer';
 import { createCornerFiligree } from './components/CornerFiligree';
@@ -19,7 +18,6 @@ export class Hud {
   private uiEl: HTMLElement;
   private vignetteEl: HTMLElement;
   private title: TitlePlaque;
-  private gauge: ResonanceGauge;
   private playerLeft: PlayerPlaque;
   private playerRight: PlayerPlaque;
   private drawer: EngineRoomDrawer;
@@ -55,9 +53,6 @@ export class Hud {
       onRoomChange: opts.callbacks.onRoomChange,
     });
     this.uiEl.appendChild(this.title.el);
-
-    this.gauge = new ResonanceGauge();
-    this.uiEl.appendChild(this.gauge.el);
 
     this.playerLeft = new PlayerPlaque({
       side: 'left',
@@ -121,23 +116,6 @@ export class Hud {
 
   setMusicStatus(text: string): void {
     this.drawer.setRow('Audio Out', text);
-  }
-
-  setScenario(scenario: Scenario, peerName?: string, latencyMs?: number): void {
-    this.gauge.setScenario(scenario, peerName, latencyMs);
-    if (scenario === 'paired' && peerName) {
-      this.playerRight.set({
-        name: peerName,
-        voice: 'Warm Pads · Dorian',
-        kind: 'passenger',
-      });
-    } else {
-      this.playerRight.set({
-        name: 'KORO·v3',
-        voice: 'Wire Loom · Lydian',
-        kind: 'automaton',
-      });
-    }
   }
 
   setCameraMode(mode: CameraMode): void {

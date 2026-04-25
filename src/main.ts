@@ -8,7 +8,9 @@ if (!canvas) {
   throw new Error('Jam Train: #scene canvas missing');
 }
 
-const initialRoom = 'cabin-01';
+// Destination is the first path segment of the URL — jamtrain.to/<destination>.
+// Falls back to a default when none is provided.
+const initialRoom = window.location.pathname.split('/').filter(Boolean)[0] ?? 'cabin-01';
 
 // Game still expects HTMLElement sinks for connection / hand / music status.
 // We give it hidden detached spans and observe their text changes to push

@@ -257,7 +257,6 @@
 
 /* Component-specific layouts (set on each component root for absolute positioning) */
 .title-plaque    { position: absolute; top: 24px;  left: 24px;   padding: 20px 24px 16px; min-width: 300px; }
-.resonance-gauge { position: absolute; top: 24px;  right: 24px;  padding: 18px 22px 16px; width: 320px; text-align: right; }
 .player-plaque   { position: absolute; top: 50%;   transform: translateY(-50%); padding: 18px 20px; width: 240px; }
 .player-plaque.left  { left: 24px;  text-align: left; }
 .player-plaque.right { right: 24px; text-align: right; }
@@ -299,48 +298,6 @@
   padding: 1px 4px;
   width: 9ch;
   outline: none;
-}
-
-.gauge-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.gauge-copy { text-align: left; }
-.gauge-copy .stamp { margin-bottom: 4px; }
-.gauge-copy .body {
-  font-family: 'IM Fell English', serif;
-  font-size: 22px;
-  color: var(--parchment);
-  line-height: 1.1;
-}
-.gauge-dial {
-  position: relative;
-  width: 86px;
-  height: 86px;
-  flex-shrink: 0;
-}
-.gauge-dial .needle {
-  transform-origin: 43px 43px;
-  transition: transform 1.6s cubic-bezier(0.5, 1.6, 0.4, 0.9);
-}
-.gauge-dial .label {
-  position: absolute;
-  bottom: -6px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-family: 'IM Fell English SC', serif;
-  font-size: 9px;
-  letter-spacing: 0.2em;
-  color: var(--brass);
-}
-.gauge-latency {
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 9px;
-  margin-top: 10px;
-  color: var(--text-dim);
-  letter-spacing: 0.15em;
-  text-align: right;
 }
 
 .player-plaque .medallion {
@@ -525,10 +482,10 @@
 .corner-filigree.bl { bottom: 8px; left: 8px;   transform: rotate(-90deg); }
 .corner-filigree.br { bottom: 8px; right: 8px;  transform: rotate(180deg); }
 
-/* Tweakpane dock — moved below the resonance gauge */
+/* Tweakpane dock — top-right of stage */
 .tweak-pane-dock {
   position: absolute;
-  top: 220px;
+  top: 24px;
   right: 24px;
   z-index: 10;
   display: grid;
@@ -558,5 +515,4 @@
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   .spin-slow, .pulse, .rec-pulse, .fade-out { animation: none; }
-  .gauge-dial .needle { transition: none; }
 }

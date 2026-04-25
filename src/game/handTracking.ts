@@ -14,6 +14,12 @@ type LandmarkLike = {
   z?: number;
 };
 
+export type RawDetection = {
+  handedness: Handedness;
+  score: number;
+  landmarks: LandmarkLike[];
+};
+
 const fingerLandmarks: Record<FingerName, [number, number, number]> = {
   thumb: [2, 3, 4],
   index: [6, 7, 8],
@@ -36,6 +42,7 @@ export class HandTracker {
   private detecting = false;
   private lastDetectAt = 0;
   private cameraHands?: Record<Handedness, HandPose>;
+  private rawDetections: RawDetection[] = [];
   private pointer = { x: 0, y: 0 };
   private mode: 'simulated' | 'camera' | 'error' = 'simulated';
   private status = 'hands: simulated';
@@ -120,6 +127,14 @@ export class HandTracker {
     return hands;
   }
 
+  getVideo(): HTMLVideoElement | undefined {
+    return this.video;
+  }
+
+  getDetections(): readonly RawDetection[] {
+    return this.rawDetections;
+  }
+
   dispose(): void {
     this.detector?.dispose?.();
     if (this.video?.srcObject instanceof MediaStream) {
@@ -129,6 +144,7 @@ export class HandTracker {
   }
 
   private mapDetections(results: unknown[], time: number): Record<Handedness, HandPose> | undefined {
+    this.rawDetections = [];
     if (results.length === 0) return undefined;
 
     const mapped = {} as Partial<Record<Handedness, HandPose>>;
@@ -140,6 +156,13 @@ export class HandTracker {
         keypoints?: Record<string, LandmarkLike>;
       };
       const handedness = hand.handedness === 'left' || hand.handedness === 'right' ? hand.handedness : this.inferHandedness(hand);
+      if (hand.landmarks?.length) {
+        this.rawDetections.push({
+          handedness,
+          score: clamp(hand.score ?? 0.7, 0, 1),
+          landmarks: hand.landmarks,
+        });
+      }
       mapped[handedness] = this.handFromLandmarks(hand, handedness, time);
     }
 
