@@ -1,7 +1,13 @@
 import * as THREE from 'three/webgpu';
 import { Pane } from 'tweakpane';
 import { Fn, color, float, floor, fract, mix, smoothstep, time, uniform, uv } from 'three/tsl';
-import { clamp, hash } from './math';
+import { clamp } from './math';
+import {
+  BiomeScheduler,
+  silhouetteParams,
+  type BackgroundBiome,
+  type SilhouetteParams,
+} from './biomes';
 
 type Atmosphere = {
   background: THREE.Color;
@@ -9,29 +15,11 @@ type Atmosphere = {
   night: number;
 };
 
-type HillMesh = {
-  mesh: THREE.Mesh;
-  geometry: THREE.BufferGeometry;
-  seed: number;
-  baseY: number;
-  amplitude: number;
-  speed: number;
-  scrollOffset: number;
-};
-
-type MovingPoints = {
-  points: THREE.Points;
-  width: number;
-  speed: number;
-  material: THREE.PointsMaterial;
-};
-
 type SceneryParams = {
   cycleLengthSeconds: number;
   cycleOffset: number;
   trainSpeed: number;
   hillAmplitude: number;
-  villageDensity: number;
   auroraIntensity: number;
   starIntensity: number;
   moonSize: number;
@@ -43,7 +31,21 @@ export type SceneryOptions = {
   sharedEpoch: number;
 };
 
+interface BackgroundPanel {
+  mesh: THREE.Mesh;
+  geometry: THREE.BufferGeometry;
+  side: number;
+  scrollOffset: number;
+  segments: number;
+  width: number;
+  panelHeight: number;
+}
+
 const fullTurn = Math.PI * 2;
+const BG_WIDTH = 7.6;
+const BG_SEGMENTS = 192;
+const BG_PANEL_HEIGHT = 1.0;
+const BG_BASE_Y = 0.12;
 
 export class ScenerySystem {
   readonly params: SceneryParams;
@@ -64,8 +66,20 @@ export class ScenerySystem {
   private moonRadius = uniform(0.085);
   private moonRadiusInv = uniform(11.76);
   private skyTravel = uniform(0);
-  private hills: HillMesh[] = [];
-  private villages: MovingPoints[] = [];
+
+  // Biome background uniforms
+  private bgFromColor = uniform(new THREE.Color(0x3d654a));
+  private bgToColor = uniform(new THREE.Color(0x3d654a));
+  private bgMixT = uniform(0);
+  private bgSnowThreshold = uniform(2);
+  private bgSnowTint = uniform(new THREE.Color(0xf2f5f8));
+  private bgSnowMix = uniform(0);
+  private bgFog = uniform(0.4);
+  private bgShimmer = uniform(0);
+
+  private bgPanels: BackgroundPanel[] = [];
+  private scheduler!: BiomeScheduler;
+  private lastCycle = 0;
   private atmosphere = {
     background: new THREE.Color(0x10202d),
     daylight: 1,
@@ -86,8 +100,7 @@ export class ScenerySystem {
       cycleLengthSeconds: 180,
       cycleOffset: 0.08,
       trainSpeed: 1.1,
-      hillAmplitude: 0.22,
-      villageDensity: 0.58,
+      hillAmplitude: 1.0,
       auroraIntensity: 0.76,
       starIntensity: 0.78,
       moonSize: 0.34,
@@ -96,6 +109,12 @@ export class ScenerySystem {
     this.moonCos.value = Math.cos(moonPhase.phase * fullTurn);
     this.moonSign.value = moonPhase.phase < 0.5 ? 1 : -1;
 
+    this.scheduler = new BiomeScheduler(
+      this.roomSeed,
+      () => (Date.now() - this.epochMs) / 1000,
+      () => this.lastCycle,
+    );
+
     this.pane = new Pane({ title: 'Scenery', container: paneContainer });
     this.setupPane();
   }
@@ -103,13 +122,13 @@ export class ScenerySystem {
   build(): void {
     this.root.name = 'procedural-scenery';
     this.createSky();
-    this.createHills();
-    this.createVillages();
+    this.createBackground();
     this.scene.add(this.root);
   }
 
   setRoomSeed(seed: number): void {
     this.roomSeed = seed;
+    this.scheduler.setSeed(seed);
   }
 
   getRoomSeed(): number {
@@ -120,9 +139,14 @@ export class ScenerySystem {
     return this.epochMs;
   }
 
+  getScheduler(): BiomeScheduler {
+    return this.scheduler;
+  }
+
   update(delta: number, _elapsed: number): Atmosphere {
     const wallElapsed = (Date.now() - this.epochMs) / 1000;
     const cycle = ((wallElapsed / Math.max(this.params.cycleLengthSeconds, 1) + this.params.cycleOffset) % 1 + 1) % 1;
+    this.lastCycle = cycle;
     const sunWave = Math.sin(cycle * fullTurn);
     const daylight = clamp(sunWave * 0.58 + 0.48, 0, 1);
     const night = 1 - daylight;
@@ -150,8 +174,7 @@ export class ScenerySystem {
     this.moonRadiusInv.value = 1 / this.moonRadius.value;
     this.skyTravel.value += delta * speed;
 
-    this.updateHills(delta, speed);
-    this.updateMovingPoints(this.villages, delta, speed, night * this.params.villageDensity);
+    this.updateBackground(delta, speed, daylight);
 
     const dayColor = new THREE.Color(0x2f6172);
     const duskColor = new THREE.Color(0x4d3158);
@@ -170,8 +193,7 @@ export class ScenerySystem {
     this.pane.addBinding(this.params, 'cycleLengthSeconds', { label: 'day/night sec', min: 30, max: 600, step: 1 });
     this.pane.addBinding(this.params, 'cycleOffset', { label: 'cycle offset', min: 0, max: 1, step: 0.001 });
     this.pane.addBinding(this.params, 'trainSpeed', { label: 'train speed', min: 0, max: 3, step: 0.01 });
-    this.pane.addBinding(this.params, 'hillAmplitude', { label: 'hill shape', min: 0.05, max: 0.48, step: 0.01 });
-    this.pane.addBinding(this.params, 'villageDensity', { label: 'village lights', min: 0, max: 1, step: 0.01 });
+    this.pane.addBinding(this.params, 'hillAmplitude', { label: 'hill shape', min: 0.1, max: 2.0, step: 0.01 });
     this.pane.addBinding(this.params, 'auroraIntensity', { label: 'aurora', min: 0, max: 1.8, step: 0.01 });
     this.pane.addBinding(this.params, 'starIntensity', { label: 'stars', min: 0, max: 1, step: 0.01 });
     this.pane.addBinding(this.params, 'moonSize', { label: 'moon size', min: 0.12, max: 0.58, step: 0.01 });
@@ -179,11 +201,7 @@ export class ScenerySystem {
   }
 
   private createSky(): void {
-    // Only the −x window is rendered: the camera always faces that wall in
-    // game mode, and the back of the cab is removed so there's nothing on
-    // the +x side to look through.
     const material = this.createWindowSkyMaterial();
-
     for (const side of [-1]) {
       const sky = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 2.6), material);
       sky.rotation.y = Math.PI / 2;
@@ -191,6 +209,132 @@ export class ScenerySystem {
       sky.renderOrder = -30;
       this.root.add(sky);
     }
+  }
+
+  private createBackground(): void {
+    const material = new THREE.MeshBasicNodeMaterial();
+    material.colorNode = Fn(() => {
+      const u = uv();
+      const baseColor = mix(this.bgFromColor, this.bgToColor, this.bgMixT).toVar('bgBase');
+      // Snow cap blend: vertices above snow threshold get tinted.
+      const snow = smoothstep(this.bgSnowThreshold.sub(0.04), this.bgSnowThreshold.add(0.02), u.y).mul(this.bgSnowMix);
+      baseColor.assign(mix(baseColor, this.bgSnowTint, snow));
+      // Soft fog into the sky horizon at the top of the strip.
+      const fogTint = mix(color(0xa9c4dc), color(0x0a1218), this.skyNight);
+      baseColor.assign(mix(baseColor, fogTint, u.y.mul(this.bgFog).clamp(0, 1)));
+      // Ocean shimmer band (applies at low u.y, dims into nothing higher up).
+      const shimmerBand = float(1).sub(smoothstep(0.0, 0.18, u.y)).mul(this.bgShimmer).mul(0.45);
+      baseColor.addAssign(color(0xb0d8e8).mul(shimmerBand));
+      return baseColor;
+    })();
+    material.depthWrite = true;
+    material.fog = false;
+
+    for (const side of [-1]) {
+      const panel = this.createBackgroundPanel(side, material);
+      this.bgPanels.push(panel);
+      this.root.add(panel.mesh);
+    }
+  }
+
+  private createBackgroundPanel(side: number, material: THREE.Material): BackgroundPanel {
+    const segments = BG_SEGMENTS;
+    const width = BG_WIDTH;
+    const panelHeight = BG_PANEL_HEIGHT;
+    const positions = new Float32Array((segments + 1) * 2 * 3);
+    const uvs = new Float32Array((segments + 1) * 2 * 2);
+    const indices: number[] = [];
+
+    for (let i = 0; i <= segments; i += 1) {
+      const x = -width / 2 + (i / segments) * width;
+      const bottomIndex = i * 2;
+      const topIndex = bottomIndex + 1;
+      positions[bottomIndex * 3] = x;
+      positions[bottomIndex * 3 + 1] = BG_BASE_Y;
+      positions[bottomIndex * 3 + 2] = 0;
+      positions[topIndex * 3] = x;
+      positions[topIndex * 3 + 1] = BG_BASE_Y + panelHeight;
+      positions[topIndex * 3 + 2] = 0;
+      uvs[bottomIndex * 2] = i / segments;
+      uvs[bottomIndex * 2 + 1] = 0;
+      uvs[topIndex * 2] = i / segments;
+      uvs[topIndex * 2 + 1] = 1;
+
+      if (i < segments) {
+        const a = i * 2;
+        const b = a + 1;
+        const c = a + 2;
+        const d = a + 3;
+        indices.push(a, c, b, c, d, b);
+      }
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.rotation.y = Math.PI / 2;
+    mesh.position.set(side * 2.30, 0, 0);
+    mesh.renderOrder = -20;
+
+    return { mesh, geometry, side, scrollOffset: 0, segments, width, panelHeight };
+  }
+
+  private updateBackground(delta: number, speed: number, daylight: number): void {
+    const { from, to, t } = this.scheduler.background();
+    const fromParams = silhouetteParams(from);
+    const toParams = silhouetteParams(to);
+
+    // Lerp colors (respecting day/night within each biome).
+    lerpHexInto(this.bgFromColor.value, from.color.night, from.color.day, daylight);
+    lerpHexInto(this.bgToColor.value, to.color.night, to.color.day, daylight);
+    this.bgMixT.value = t;
+
+    // Snow cap: pick the larger snow contribution between from/to so transitions are smooth.
+    const snowFrom = from.snowCap ? 1 - t : 0;
+    const snowTo = to.snowCap ? t : 0;
+    const snowMix = Math.max(snowFrom, snowTo);
+    this.bgSnowMix.value = snowMix;
+    if (snowMix > 0) {
+      const cap = (to.snowCap ?? from.snowCap)!;
+      this.bgSnowThreshold.value = cap.threshold;
+      this.bgSnowTint.value.setHex(cap.tint);
+    } else {
+      this.bgSnowThreshold.value = 2;
+    }
+
+    // Shimmer & fog crossfade between from/to for visual continuity.
+    const shimmerFrom = from.shimmer?.amount ?? 0;
+    const shimmerTo = to.shimmer?.amount ?? 0;
+    this.bgShimmer.value = shimmerFrom * (1 - t) + shimmerTo * t;
+    this.bgFog.value = from.fogStrength * (1 - t) + to.fogStrength * t;
+
+    for (const panel of this.bgPanels) {
+      panel.scrollOffset += delta * speed * 0.42;
+      this.updatePanelShape(panel, fromParams, toParams, t);
+    }
+  }
+
+  private updatePanelShape(
+    panel: BackgroundPanel,
+    fromParams: SilhouetteParams,
+    toParams: SilhouetteParams,
+    t: number,
+  ): void {
+    const positions = panel.geometry.getAttribute('position') as THREE.BufferAttribute;
+    const ampScale = this.params.hillAmplitude;
+    for (let i = 0; i <= panel.segments; i += 1) {
+      const localX = -panel.width / 2 + (i / panel.segments) * panel.width;
+      const sampledX = localX - panel.scrollOffset;
+      const fromH = silhouetteHeight(sampledX, fromParams) * ampScale;
+      const toH = silhouetteHeight(sampledX, toParams) * ampScale;
+      const h = fromH + (toH - fromH) * t;
+      positions.setY(i * 2 + 1, BG_BASE_Y + Math.max(0.04, h));
+    }
+    positions.needsUpdate = true;
   }
 
   private createWindowSkyMaterial(): THREE.MeshBasicNodeMaterial {
@@ -233,7 +377,6 @@ export class ScenerySystem {
 
       const starMask = smoothstep(0.30, 0.50, u.y);
 
-      // Star layer 1 — sparse, brighter, larger
       const starX = u.x.add(this.skyTravel.mul(0.004)).mul(140.0);
       const starY = u.y.mul(58.0);
       const cellX = floor(starX);
@@ -260,7 +403,6 @@ export class ScenerySystem {
           .mul(1.15)
       );
 
-      // Star layer 2 — denser, dimmer, smaller (adds depth and richness)
       const starX2 = u.x.add(this.skyTravel.mul(0.006)).mul(280.0);
       const starY2 = u.y.mul(112.0);
       const cellX2 = floor(starX2);
@@ -287,38 +429,30 @@ export class ScenerySystem {
           .mul(0.55)
       );
 
-      // ── Aurora borealis — domain-warped curtains with vertical ray detail ──
+      // Aurora curtains (unchanged from prior implementation).
       const aT = time.mul(0.42);
       const apx = u.x.mul(5.2).add(this.skyTravel.mul(0.032));
       const apy = u.y.mul(2.8);
 
-      // Domain warping for organic, flowing curtain shapes
       const warpA = apx.mul(0.7).add(apy.mul(0.5)).add(aT.mul(0.13)).sin().mul(1.4);
       const warpB = apy.mul(0.8).sub(apx.mul(0.6)).sub(aT.mul(0.11)).sin().mul(1.1);
       const awx = apx.add(warpA);
       const awy = apy.add(warpB);
 
-      // Three curtain layers at increasing frequencies
       const c1 = awx.mul(1.0).add(awy.mul(0.7)).add(aT.mul(0.19)).sin();
       const c2 = awx.mul(2.3).sub(awy.mul(1.5)).sub(aT.mul(0.15)).sin();
       const c3 = awx.mul(4.7).add(awy.mul(3.1)).add(aT.mul(0.23)).sin();
       const curtain = c1.mul(0.45).add(c2.mul(0.30)).add(c3.mul(0.18));
 
-      // Soft exponential brightness mapping
       const auroraBright = curtain.mul(0.5).add(0.55).max(0).pow(2.0);
 
-      // Vertical profile — wider band with soft edges to fill more of the sky
       const auroraRise = smoothstep(0.30, 0.46, u.y);
       const auroraFall = float(1).sub(smoothstep(0.86, 1.0, u.y));
       const auroraVert = auroraRise.mul(auroraFall);
 
-      // Vertical ray detail — high-freq stripes within curtains
       const auroraRays = awx.mul(11.0).add(awy.mul(7.5)).add(aT.mul(1.4)).sin().mul(0.10).add(0.90);
-
-      // Gentle temporal pulse
       const auroraPulse = aT.mul(0.5).add(apx.mul(0.3)).sin().mul(0.08).add(0.92);
 
-      // Three-stop color gradient: green base → teal mid → vivid purple top
       const auroraHFrac = smoothstep(0.30, 0.92, u.y);
       const auroraLow = mix(color(0x14ff5c), color(0x18c4c0), smoothstep(0.0, 0.4, auroraHFrac));
       const auroraColor = mix(auroraLow, color(0x9a32e0), smoothstep(0.4, 1.0, auroraHFrac));
@@ -340,151 +474,25 @@ export class ScenerySystem {
 
     return material;
   }
+}
 
-  private createHills(): void {
-    const layers = [
-      { baseY: 0.42, amplitude: 0.16, color: 0x172925, speed: 0.42, x: 2.18 },
-      { baseY: 0.58, amplitude: 0.2, color: 0x254339, speed: 0.62, x: 2.26 },
-      { baseY: 0.75, amplitude: 0.25, color: 0x3d654a, speed: 0.86, x: 2.34 },
-    ];
+function silhouetteHeight(x: number, p: SilhouetteParams): number {
+  const xs = p.mesa > 0.5 ? Math.floor(x * 0.8 + 0.5) / 0.8 : x;
+  const primary = Math.sin(xs * p.freq) * p.amp;
+  const secondary = Math.sin(xs * p.freq2 + 1.2) * p.amp2;
+  // For mountain-style biomes, fold to give peakier ridges.
+  const folded = p.amp > 0.2 ? Math.abs(primary) : primary;
+  return p.base + folded + secondary;
+}
 
-    for (const side of [-1]) {
-      for (let layer = 0; layer < layers.length; layer += 1) {
-        const settings = layers[layer];
-        const material = new THREE.MeshBasicNodeMaterial();
-        const shade = smoothstep(0.05, 1.5, uv().y);
-        material.colorNode = mix(color(settings.color), color(0x8bb77b), shade.mul(float(0.18)));
-        material.depthWrite = true;
-
-        const hill = this.createHillMesh({
-          side,
-          x: settings.x,
-          baseY: settings.baseY,
-          amplitude: settings.amplitude,
-          speed: settings.speed,
-          seed: 100 + side * 20 + layer * 9,
-          material,
-        });
-        this.hills.push(hill);
-        this.root.add(hill.mesh);
-      }
-    }
-  }
-
-  private createHillMesh(options: {
-    side: number;
-    x: number;
-    baseY: number;
-    amplitude: number;
-    speed: number;
-    seed: number;
-    material: THREE.Material;
-  }): HillMesh {
-    const width = 7.6;
-    const segments = 96;
-    const positions = new Float32Array((segments + 1) * 2 * 3);
-    const uvs = new Float32Array((segments + 1) * 2 * 2);
-    const indices: number[] = [];
-
-    for (let i = 0; i <= segments; i += 1) {
-      const x = -width / 2 + (i / segments) * width;
-      const bottomIndex = i * 2;
-      const topIndex = bottomIndex + 1;
-      positions[bottomIndex * 3] = x;
-      positions[bottomIndex * 3 + 1] = 0.12;
-      positions[topIndex * 3] = x;
-      positions[topIndex * 3 + 1] = this.hillHeight(x, options.baseY, options.amplitude, options.seed);
-      uvs[bottomIndex * 2] = i / segments;
-      uvs[bottomIndex * 2 + 1] = 0;
-      uvs[topIndex * 2] = i / segments;
-      uvs[topIndex * 2 + 1] = 1;
-
-      if (i < segments) {
-        const a = i * 2;
-        const b = a + 1;
-        const c = a + 2;
-        const d = a + 3;
-        indices.push(a, c, b, c, d, b);
-      }
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
-
-    const mesh = new THREE.Mesh(geometry, options.material);
-    mesh.rotation.y = Math.PI / 2;
-    mesh.position.set(options.side * options.x, 0, 0);
-    mesh.renderOrder = -20;
-    return { mesh, geometry, seed: options.seed, baseY: options.baseY, amplitude: options.amplitude, speed: options.speed, scrollOffset: 0 };
-  }
-
-  private createVillages(): void {
-    for (const side of [-1]) {
-      for (let layer = 0; layer < 2; layer += 1) {
-        const width = 6.2;
-        const count = 80;
-        const positions = new Float32Array(count * 3);
-        for (let i = 0; i < count; i += 1) {
-          positions[i * 3] = -width / 2 + hash(i + layer * 13 + side * 17) * width;
-          positions[i * 3 + 1] = 0.55 + hash(i + 90) * 0.48;
-          positions[i * 3 + 2] = 0;
-        }
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        const material = new THREE.PointsMaterial({
-          color: layer === 0 ? 0xffd983 : 0xa9f3ff,
-          size: layer === 0 ? 0.018 : 0.012,
-          transparent: true,
-          opacity: 0,
-          depthWrite: false,
-          blending: THREE.AdditiveBlending,
-        });
-        const points = new THREE.Points(geometry, material);
-        points.rotation.y = Math.PI / 2;
-        points.position.set(side * (2.09 + layer * 0.04), 0, layer === 0 ? 0 : -3.1);
-        points.renderOrder = -10;
-        this.villages.push({ points, width, speed: 0.95 + layer * 0.22, material });
-        this.root.add(points);
-      }
-    }
-  }
-
-  private updateHills(delta: number, speed: number): void {
-    for (const hill of this.hills) {
-      hill.scrollOffset += delta * speed * hill.speed;
-      this.updateHillShape(hill);
-    }
-  }
-
-  private updateHillShape(hill: HillMesh): void {
-    const positions = hill.geometry.getAttribute('position') as THREE.BufferAttribute;
-    for (let i = 0; i < positions.count / 2; i += 1) {
-      const localX = positions.getX(i * 2 + 1);
-      positions.setY(i * 2 + 1, this.hillHeight(localX - hill.scrollOffset, hill.baseY, hill.amplitude * this.params.hillAmplitude * 4.2, hill.seed));
-    }
-    positions.needsUpdate = true;
-  }
-
-  private updateMovingPoints(points: MovingPoints[], delta: number, speed: number, opacity: number): void {
-    for (const item of points) {
-      item.points.position.z += delta * speed * item.speed;
-      if (item.points.position.z > item.width / 2) item.points.position.z -= item.width;
-      item.material.opacity = clamp(opacity, 0, 1);
-    }
-  }
-
-  private hillHeight(x: number, baseY: number, amplitude: number, seed: number): number {
-    const ridges = Math.sin(x * 1.2 + seed * 0.31) + Math.sin(x * 2.7 + seed * 0.17) * 0.45;
-    const rollingNoise = smoothNoise1D(x * 1.9, seed) * 0.42 + smoothNoise1D(x * 3.8, seed + 41) * 0.18;
-    return (
-      baseY +
-      ridges * amplitude +
-      rollingNoise * amplitude
-    );
-  }
+function lerpHexInto(out: THREE.Color, fromHex: number, toHex: number, t: number): void {
+  const fr = ((fromHex >> 16) & 0xff) / 255;
+  const fg = ((fromHex >> 8) & 0xff) / 255;
+  const fb = (fromHex & 0xff) / 255;
+  const tr = ((toHex >> 16) & 0xff) / 255;
+  const tg = ((toHex >> 8) & 0xff) / 255;
+  const tb = (toHex & 0xff) / 255;
+  out.setRGB(fr + (tr - fr) * t, fg + (tg - fg) * t, fb + (tb - fb) * t);
 }
 
 function getMoonPhase(date: Date): { phase: number; name: string } {
@@ -510,13 +518,4 @@ function getMoonPhase(date: Date): { phase: number; name: string } {
 function smoothstepScalar(edge0: number, edge1: number, value: number): number {
   const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
-}
-
-function smoothNoise1D(value: number, seed: number): number {
-  const cell = Math.floor(value);
-  const fraction = value - cell;
-  const t = fraction * fraction * (3 - 2 * fraction);
-  const a = hash(cell + seed * 17.13) - 0.5;
-  const b = hash(cell + 1 + seed * 17.13) - 0.5;
-  return a + (b - a) * t;
 }

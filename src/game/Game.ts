@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { AudioEngine } from './audio';
 import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
@@ -73,6 +74,13 @@ export class Game {
     normalBias: 0.04,
     bias: -0.0002,
     blurSamples: 16,
+  };
+  private cabinPane?: Pane;
+  private cabinGroup?: THREE.Group;
+  private readonly cabinParams = {
+    bevelRadius: 0.04,
+    furnitureBevel: 0.10,
+    bevelSegments: 4,
   };
   readonly paneDock: HTMLElement;
   private roomId: string;
@@ -256,6 +264,7 @@ export class Game {
     this.audio.dispose();
     this.cameraPane?.dispose();
     this.shadowsPane?.dispose();
+    this.cabinPane?.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -372,133 +381,16 @@ export class Game {
   }
 
   private createCabin(): void {
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x273034, roughness: 0.72, metalness: 0.08 });
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x18252a, roughness: 0.6, metalness: 0.18 });
-    const trimMat = new THREE.MeshStandardMaterial({ color: 0x6e9684, roughness: 0.68, metalness: 0.22 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x9c7e4d, roughness: 0.58, metalness: 0.08 });
-    const seatMat = new THREE.MeshStandardMaterial({ color: 0x4c233b, roughness: 0.7, metalness: 0.02 });
-    const glassMat = new THREE.MeshStandardMaterial({
-      color: 0xb5dbe6,
-      transparent: true,
-      opacity: 0.14,
-      roughness: 0.62,
-      metalness: 0,
-      depthWrite: false,
-    });
-
-    const floor = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.08, 4.8), floorMat);
-    floor.position.y = 0.02;
-    floor.receiveShadow = true;
-    this.scene.add(floor);
-
-    const ceilingY = 2.55;
-    const ceiling = new THREE.Mesh(new THREE.BoxGeometry(3.45, 0.08, 4.8), wallMat);
-    ceiling.position.y = ceilingY;
-    ceiling.receiveShadow = true;
-    this.scene.add(ceiling);
-
-    const glassBottom = 0.19;
-    const glassTop = 2.38;
-    const glassHeight = glassTop - glassBottom;
-    const glassY = (glassBottom + glassTop) / 2;
-    const glassZs = [-1.5, 0, 1.5];
-    const paneDepth = 1.32;
-    const glassSpan = glassZs.length * paneDepth;
-    const frameThick = 0.025;
-    const frameOuterSpan = glassSpan + frameThick;
-
-    const ceilingBottom = ceilingY - 0.04;
-    const lowerWallHeight = glassBottom - 0.06;
-    const upperWallHeight = ceilingBottom - glassTop;
-    const endCapHeight = ceilingBottom - 0.06;
-    const endCapDepth = 4.8 / 2 - glassSpan / 2;
-
-    // Only the −x wall is built. The camera always faces this wall in game
-    // mode, so the +x side is dead geometry — removing it lets the dolly
-    // pull the camera back arbitrarily far without clipping a wall.
-    for (const x of [-1.72]) {
-      const lowerWall = new THREE.Mesh(new THREE.BoxGeometry(0.08, lowerWallHeight, 4.8), wallMat);
-      lowerWall.position.set(x, 0.06 + lowerWallHeight / 2, 0);
-      lowerWall.receiveShadow = true;
-      this.scene.add(lowerWall);
-
-      const upperWall = new THREE.Mesh(new THREE.BoxGeometry(0.08, upperWallHeight, 4.8), wallMat);
-      upperWall.position.set(x, glassTop + upperWallHeight / 2, 0);
-      upperWall.receiveShadow = true;
-      this.scene.add(upperWall);
-
-      for (const zSign of [-1, 1]) {
-        const endCap = new THREE.Mesh(new THREE.BoxGeometry(0.08, endCapHeight, endCapDepth), wallMat);
-        endCap.position.set(x, 0.06 + endCapHeight / 2, zSign * (glassSpan / 2 + endCapDepth / 2));
-        endCap.receiveShadow = true;
-        this.scene.add(endCap);
-      }
-
-      const frameX = x * 1.012;
-
-      const topRail = new THREE.Mesh(new THREE.BoxGeometry(frameThick, frameThick, frameOuterSpan), trimMat);
-      topRail.position.set(frameX, glassTop + frameThick / 2, 0);
-      this.scene.add(topRail);
-
-      const bottomRail = new THREE.Mesh(new THREE.BoxGeometry(frameThick, frameThick, frameOuterSpan), trimMat);
-      bottomRail.position.set(frameX, glassBottom - frameThick / 2, 0);
-      this.scene.add(bottomRail);
-
-      for (const z of [-glassSpan / 2 - frameThick / 2, glassSpan / 2 + frameThick / 2]) {
-        const endPost = new THREE.Mesh(new THREE.BoxGeometry(frameThick, glassHeight, frameThick), trimMat);
-        endPost.position.set(frameX, glassY, z);
-        this.scene.add(endPost);
-      }
-
-      for (const z of glassZs) {
-        const windowPane = new THREE.Mesh(new THREE.BoxGeometry(0.035, glassHeight, paneDepth), glassMat);
-        windowPane.position.set(x * 1.005, glassY, z);
-        windowPane.renderOrder = 2;
-        this.scene.add(windowPane);
-      }
-    }
-
+    this.buildCabinGeometry();
     this.scenery.build();
-
-    for (const z of [1.12, -1.12]) {
-      const bench = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.24, 0.52), seatMat);
-      bench.position.set(0, 0.36, z);
-      bench.castShadow = true;
-      bench.receiveShadow = true;
-      this.scene.add(bench);
-
-      const back = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.74, 0.18), seatMat);
-      back.position.set(0, 0.78, z + (z > 0 ? 0.32 : -0.32));
-      back.rotation.x = z > 0 ? -0.1 : 0.1;
-      back.castShadow = true;
-      back.receiveShadow = true;
-      this.scene.add(back);
-    }
-
-    const table = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.06, 0.64), woodMat);
-    table.position.set(0, 0.72, 0);
-    table.castShadow = true;
-    table.receiveShadow = true;
-    this.scene.add(table);
-
-    const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), woodMat);
-    tableLeg.position.set(0, 0.36, 0);
-    tableLeg.castShadow = true;
-    tableLeg.receiveShadow = true;
-    this.scene.add(tableLeg);
 
     for (const z of [-1.55, 0, 1.55]) {
       const light = new THREE.PointLight(0xffe8ad, 0.95, 4.8);
       light.position.set(0, 2.42, z);
       this.scene.add(light);
-
-      const fixture = new THREE.Mesh(
-        new THREE.BoxGeometry(0.68, 0.03, 0.12),
-        new THREE.MeshBasicMaterial({ color: 0xffe8ad })
-      );
-      fixture.position.copy(light.position);
-      this.scene.add(fixture);
     }
+
+    this.setupCabinPane();
 
     this.ambientLight = new THREE.AmbientLight(0x9fb9c1, 0.92);
     this.scene.add(this.ambientLight);
@@ -522,6 +414,177 @@ export class Game {
     this.keyLight.shadow.normalBias = this.shadowParams.normalBias;
     this.keyLight.shadow.blurSamples = this.shadowParams.blurSamples;
     this.scene.add(this.keyLight);
+  }
+
+  private buildCabinGeometry(): void {
+    if (this.cabinGroup) {
+      this.cabinGroup.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (m.isMesh) m.geometry.dispose();
+      });
+      this.scene.remove(this.cabinGroup);
+    }
+    const group = new THREE.Group();
+    group.name = 'cabin-shell';
+
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x273034, roughness: 0.72, metalness: 0.08 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x18252a, roughness: 0.6, metalness: 0.18 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x6e9684, roughness: 0.68, metalness: 0.22 });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x9c7e4d, roughness: 0.58, metalness: 0.08 });
+    const seatMat = new THREE.MeshStandardMaterial({ color: 0x4c233b, roughness: 0.7, metalness: 0.02 });
+    const glassMat = new THREE.MeshStandardMaterial({
+      color: 0xb5dbe6,
+      transparent: true,
+      opacity: 0.14,
+      roughness: 0.62,
+      metalness: 0,
+      depthWrite: false,
+    });
+
+    const wallR = this.cabinParams.bevelRadius;
+    const seatR = this.cabinParams.furnitureBevel;
+
+    const floor = new THREE.Mesh(this.roundedBox(3.4, 0.08, 4.8, wallR), floorMat);
+    floor.position.y = 0.02;
+    floor.receiveShadow = true;
+    group.add(floor);
+
+    const ceilingY = 2.55;
+    const ceiling = new THREE.Mesh(this.roundedBox(3.45, 0.08, 4.8, wallR), wallMat);
+    ceiling.position.y = ceilingY;
+    ceiling.receiveShadow = true;
+    group.add(ceiling);
+
+    const glassBottom = 0.19;
+    const glassTop = 2.38;
+    const glassHeight = glassTop - glassBottom;
+    const glassY = (glassBottom + glassTop) / 2;
+    const glassZs = [-1.5, 0, 1.5];
+    const paneDepth = 1.32;
+    const glassSpan = glassZs.length * paneDepth;
+    const frameThick = 0.025;
+    const frameOuterSpan = glassSpan + frameThick;
+
+    const ceilingBottom = ceilingY - 0.04;
+    const lowerWallHeight = glassBottom - 0.06;
+    const upperWallHeight = ceilingBottom - glassTop;
+    const endCapHeight = ceilingBottom - 0.06;
+    const endCapDepth = 4.8 / 2 - glassSpan / 2;
+
+    for (const x of [-1.72]) {
+      const lowerWall = new THREE.Mesh(this.roundedBox(0.08, lowerWallHeight, 4.8, wallR), wallMat);
+      lowerWall.position.set(x, 0.06 + lowerWallHeight / 2, 0);
+      lowerWall.receiveShadow = true;
+      group.add(lowerWall);
+
+      const upperWall = new THREE.Mesh(this.roundedBox(0.08, upperWallHeight, 4.8, wallR), wallMat);
+      upperWall.position.set(x, glassTop + upperWallHeight / 2, 0);
+      upperWall.receiveShadow = true;
+      group.add(upperWall);
+
+      for (const zSign of [-1, 1]) {
+        const endCap = new THREE.Mesh(this.roundedBox(0.08, endCapHeight, endCapDepth, wallR), wallMat);
+        endCap.position.set(x, 0.06 + endCapHeight / 2, zSign * (glassSpan / 2 + endCapDepth / 2));
+        endCap.receiveShadow = true;
+        group.add(endCap);
+      }
+
+      const frameX = x * 1.012;
+
+      const topRail = new THREE.Mesh(this.roundedBox(frameThick, frameThick, frameOuterSpan, wallR), trimMat);
+      topRail.position.set(frameX, glassTop + frameThick / 2, 0);
+      group.add(topRail);
+
+      const bottomRail = new THREE.Mesh(this.roundedBox(frameThick, frameThick, frameOuterSpan, wallR), trimMat);
+      bottomRail.position.set(frameX, glassBottom - frameThick / 2, 0);
+      group.add(bottomRail);
+
+      for (const z of [-glassSpan / 2 - frameThick / 2, glassSpan / 2 + frameThick / 2]) {
+        const endPost = new THREE.Mesh(this.roundedBox(frameThick, glassHeight, frameThick, wallR), trimMat);
+        endPost.position.set(frameX, glassY, z);
+        group.add(endPost);
+      }
+
+      for (const z of glassZs) {
+        const windowPane = new THREE.Mesh(new THREE.BoxGeometry(0.035, glassHeight, paneDepth), glassMat);
+        windowPane.position.set(x * 1.005, glassY, z);
+        windowPane.renderOrder = 2;
+        group.add(windowPane);
+      }
+    }
+
+    for (const z of [1.12, -1.12]) {
+      const bench = new THREE.Mesh(this.roundedBox(1.35, 0.24, 0.52, seatR), seatMat);
+      bench.position.set(0, 0.36, z);
+      bench.castShadow = true;
+      bench.receiveShadow = true;
+      group.add(bench);
+
+      const back = new THREE.Mesh(this.roundedBox(1.35, 0.74, 0.18, seatR), seatMat);
+      back.position.set(0, 0.78, z + (z > 0 ? 0.32 : -0.32));
+      back.rotation.x = z > 0 ? -0.1 : 0.1;
+      back.castShadow = true;
+      back.receiveShadow = true;
+      group.add(back);
+    }
+
+    const table = new THREE.Mesh(this.roundedBox(1.15, 0.06, 0.64, seatR), woodMat);
+    table.position.set(0, 0.72, 0);
+    table.castShadow = true;
+    table.receiveShadow = true;
+    group.add(table);
+
+    const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), woodMat);
+    tableLeg.position.set(0, 0.36, 0);
+    tableLeg.castShadow = true;
+    tableLeg.receiveShadow = true;
+    group.add(tableLeg);
+
+    const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xffe8ad });
+    for (const z of [-1.55, 0, 1.55]) {
+      const fixture = new THREE.Mesh(this.roundedBox(0.68, 0.03, 0.12, wallR), fixtureMat);
+      fixture.position.set(0, 2.42, z);
+      group.add(fixture);
+    }
+
+    this.cabinGroup = group;
+    this.scene.add(group);
+  }
+
+  private roundedBox(width: number, height: number, depth: number, radius: number): THREE.BufferGeometry {
+    const segments = Math.max(1, Math.floor(this.cabinParams.bevelSegments));
+    const r = Math.max(0.0001, Math.min(radius, width * 0.499, height * 0.499, depth * 0.499));
+    return new RoundedBoxGeometry(width, height, depth, segments, r);
+  }
+
+  private setupCabinPane(): void {
+    if (this.cabinPane) return;
+    const container = document.createElement('div');
+    this.paneDock.appendChild(container);
+    this.cabinPane = new Pane({ title: 'Cabin', container });
+    this.cabinPane.expanded = false;
+    const rebuild = () => this.buildCabinGeometry();
+    this.cabinPane.addBinding(this.cabinParams, 'bevelRadius', {
+      label: 'bevel radius', min: 0, max: 0.12, step: 0.005,
+    }).on('change', rebuild);
+    this.cabinPane.addBinding(this.cabinParams, 'furnitureBevel', {
+      label: 'furniture bevel', min: 0, max: 0.18, step: 0.005,
+    }).on('change', rebuild);
+    this.cabinPane.addBinding(this.cabinParams, 'bevelSegments', {
+      label: 'bevel smoothness', min: 1, max: 8, step: 1,
+    }).on('change', rebuild);
+  }
+
+  getSceneVertexCount(): number {
+    let total = 0;
+    this.scene.traverse(obj => {
+      const geometry = (obj as THREE.Mesh | THREE.Points | THREE.LineSegments).geometry as THREE.BufferGeometry | undefined;
+      if (geometry && geometry.isBufferGeometry) {
+        const pos = geometry.getAttribute('position');
+        if (pos) total += pos.count;
+      }
+    });
+    return total;
   }
 
   private update(): void {
