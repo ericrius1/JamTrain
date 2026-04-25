@@ -50,7 +50,7 @@ interface BackgroundPanel {
 const fullTurn = Math.PI * 2;
 const BG_WIDTH = 7.6;
 const BG_SEGMENTS = 192;
-const BG_PANEL_HEIGHT = 1.0;
+const BG_PANEL_HEIGHT = 1.6;
 const BG_BASE_Y = 0.12;
 
 export class ScenerySystem {

@@ -216,11 +216,11 @@ export interface SilhouetteParams {
 
 export function silhouetteParams(b: BackgroundBiome): SilhouetteParams {
   switch (b.id) {
-    case 'distantHills':  return { amp: 0.08, freq: 1.2, base: 0.42, amp2: 0.04, freq2: 2.7, mesa: 0 };
-    case 'snowMountains': return { amp: 0.30, freq: 0.8, base: 0.55, amp2: 0.10, freq2: 1.9, mesa: 0 };
-    case 'oceanHorizon':  return { amp: 0.0,  freq: 1.0, base: 0.30, amp2: 0.0,  freq2: 1.0, mesa: 0 };
-    case 'mesa':          return { amp: 0.20, freq: 0.8, base: 0.40, amp2: 0.0,  freq2: 1.0, mesa: 1 };
-    case 'fogForest':     return { amp: 0.06, freq: 2.4, base: 0.48, amp2: 0.03, freq2: 5.1, mesa: 0 };
+    case 'distantHills':  return { amp: 0.28, freq: 1.0, base: 0.50, amp2: 0.10, freq2: 2.5, mesa: 0 };
+    case 'snowMountains': return { amp: 0.55, freq: 0.7, base: 0.60, amp2: 0.20, freq2: 1.7, mesa: 0 };
+    case 'oceanHorizon':  return { amp: 0.02, freq: 1.0, base: 0.42, amp2: 0.0,  freq2: 1.0, mesa: 0 };
+    case 'mesa':          return { amp: 0.35, freq: 0.7, base: 0.50, amp2: 0.0,  freq2: 1.0, mesa: 1 };
+    case 'fogForest':     return { amp: 0.20, freq: 2.0, base: 0.55, amp2: 0.08, freq2: 4.5, mesa: 0 };
   }
 }
 
