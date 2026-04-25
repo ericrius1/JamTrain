@@ -228,6 +228,22 @@ export class Game {
     this.remoteStreamListeners.add(listener);
   }
 
+  setMicEnabled(enabled: boolean): void {
+    this.handTracker.setAudioEnabled(enabled);
+  }
+
+  setCameraEnabled(enabled: boolean): void {
+    this.handTracker.setVideoEnabled(enabled);
+  }
+
+  getMicEnabled(): boolean {
+    return this.handTracker.getAudioEnabled();
+  }
+
+  getCameraEnabled(): boolean {
+    return this.handTracker.getVideoEnabled();
+  }
+
   setDisplayName(name: string): void {
     this.multiplayer.setDisplayName(name);
   }

@@ -158,6 +158,22 @@ export class Hud {
     this.remotePanel.setStream(stream);
   }
 
+  setMicEnabled(enabled: boolean): void {
+    this.localPanel.setMicEnabled(enabled);
+  }
+
+  setCameraEnabled(enabled: boolean): void {
+    this.localPanel.setCameraEnabled(enabled);
+  }
+
+  onMicToggle(listener: () => void): void {
+    this.localPanel.onMicClick(listener);
+  }
+
+  onCameraToggle(listener: () => void): void {
+    this.localPanel.onCameraClick(listener);
+  }
+
   setRoom(room: string): void {
     this.currentRoom = room;
     this.title.setRoom(room);
