@@ -17,7 +17,7 @@ const MAX_ATTRACTORS = 4;
 const MAX_RAYMARCH_STEPS = 96;
 const MAX_INNER_ITERS = 16;
 
-const plasmaWGSL = /* wgsl */ `
+const pseudoNoiseFn = wgslFn(/* wgsl */ `
 fn pseudoNoise(s: vec3<f32>) -> f32 {
   return (
     sin(s.x + cos(s.y * 1.3)) +
@@ -25,7 +25,9 @@ fn pseudoNoise(s: vec3<f32>) -> f32 {
     sin(s.z * 1.2 + cos(s.x * 1.05))
   ) * (1.0 / 3.0);
 }
+`);
 
+const fbmNoiseFn = wgslFn(/* wgsl */ `
 fn fbmNoise(seed: vec3<f32>) -> f32 {
   // Three octaves: doubling-ish frequencies with decreasing amplitude.
   let n1 = pseudoNoise(seed);
@@ -33,7 +35,10 @@ fn fbmNoise(seed: vec3<f32>) -> f32 {
   let n3 = pseudoNoise(seed * 4.71 + vec3<f32>(13.7, 19.3, 11.1));
   return (n1 + n2 * 0.5 + n3 * 0.25) * (1.0 / 1.75);
 }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+`, [pseudoNoiseFn] as any);
 
+const plasmaWGSL = /* wgsl */ `
 fn plasmaOrb(
   ro: vec3<f32>,
   rd: vec3<f32>,
@@ -198,12 +203,13 @@ fn plasmaOrb(
   // punching through to black where intensity is near zero.
   let baseFill = uCool * 0.05;
   let outRgb = palette * intensity * uBrightness + baseFill;
-  let final = clamp(outRgb, vec3<f32>(0.0), vec3<f32>(1.0));
-  return vec4<f32>(final, 1.0);
+  let outFinal = clamp(outRgb, vec3<f32>(0.0), vec3<f32>(1.0));
+  return vec4<f32>(outFinal, 1.0);
 }
 `;
 
-const plasmaFn = wgslFn(plasmaWGSL);
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const plasmaFn = wgslFn(plasmaWGSL, [fbmNoiseFn] as any);
 
 function colorToVec3(hex: number): THREE.Vector3 {
   const c = new THREE.Color(hex);
