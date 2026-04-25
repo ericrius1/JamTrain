@@ -15,50 +15,68 @@ const COLORS: Record<Handedness, { stroke: string; fill: string; label: string }
   right: { stroke: '#ff7ad6', fill: '#ffd2ec', label: 'R' },
 };
 
-export class CameraDebug {
+type VideoPanelMode = 'local' | 'remote';
+type VideoPanelSide = 'left' | 'right';
+
+export class VideoPanel {
   private wrapper: HTMLDivElement;
   private video: HTMLVideoElement;
-  private canvas: HTMLCanvasElement;
-  private ctx: CanvasRenderingContext2D;
+  private canvas?: HTMLCanvasElement;
+  private ctx?: CanvasRenderingContext2D;
   private label: HTMLDivElement;
   private rafHandle = 0;
-  private visible = false;
   private streamBound = false;
+  private handTracker?: HandTracker;
+  private mode: VideoPanelMode;
 
-  constructor(parent: HTMLElement, private handTracker: HandTracker) {
+  constructor(parent: HTMLElement, opts: { side: VideoPanelSide; mode: VideoPanelMode }) {
+    this.mode = opts.mode;
+
     this.wrapper = document.createElement('div');
-    this.wrapper.className = 'camera-debug hidden';
+    this.wrapper.className = `video-panel ${opts.side} mode-${opts.mode}`;
 
     this.video = document.createElement('video');
-    this.video.muted = true;
+    this.video.muted = opts.mode === 'local';
     this.video.playsInline = true;
     this.video.autoplay = true;
     this.wrapper.appendChild(this.video);
 
-    this.canvas = document.createElement('canvas');
-    this.wrapper.appendChild(this.canvas);
+    if (opts.mode === 'local') {
+      this.canvas = document.createElement('canvas');
+      this.wrapper.appendChild(this.canvas);
+      const ctx = this.canvas.getContext('2d');
+      if (!ctx) throw new Error('VideoPanel: 2d context unavailable');
+      this.ctx = ctx;
+    }
 
     this.label = document.createElement('div');
-    this.label.className = 'camera-debug-label';
-    this.label.textContent = 'camera · waiting';
+    this.label.className = 'video-panel-label';
+    this.label.textContent = opts.mode === 'local' ? 'you · waiting' : 'partner · waiting';
     this.wrapper.appendChild(this.label);
-
-    const ctx = this.canvas.getContext('2d');
-    if (!ctx) throw new Error('CameraDebug: 2d context unavailable');
-    this.ctx = ctx;
 
     parent.appendChild(this.wrapper);
   }
 
-  setVisible(visible: boolean): void {
-    this.visible = visible;
-    this.wrapper.classList.toggle('hidden', !visible);
-    if (visible) {
-      this.bindStream();
-      this.tick();
+  setHandTracker(tracker: HandTracker): void {
+    if (this.mode !== 'local') return;
+    this.handTracker = tracker;
+    this.tickLocal();
+  }
+
+  setStream(stream: MediaStream | null): void {
+    if (this.mode !== 'remote') return;
+    this.video.srcObject = stream;
+    if (stream) {
+      void this.video.play().catch(err => console.warn('[webrtc] remote video play failed', err));
+      this.label.textContent = 'partner · live';
     } else {
-      cancelAnimationFrame(this.rafHandle);
+      this.label.textContent = 'partner · waiting';
     }
+  }
+
+  setSide(side: VideoPanelSide): void {
+    this.wrapper.classList.remove('left', 'right');
+    this.wrapper.classList.add(side);
   }
 
   dispose(): void {
@@ -67,27 +85,29 @@ export class CameraDebug {
     this.wrapper.remove();
   }
 
-  private bindStream(): void {
+  private tickLocal = (): void => {
+    if (this.mode !== 'local') return;
+    this.bindLocalStream();
+    this.draw();
+    this.rafHandle = requestAnimationFrame(this.tickLocal);
+  };
+
+  private bindLocalStream(): void {
     if (this.streamBound) return;
-    const source = this.handTracker.getVideo();
+    const source = this.handTracker?.getVideo();
     if (!source?.srcObject) return;
     this.video.srcObject = source.srcObject;
     void this.video.play().catch(() => {});
     this.streamBound = true;
   }
 
-  private tick = (): void => {
-    if (!this.visible) return;
-    this.bindStream();
-    this.draw();
-    this.rafHandle = requestAnimationFrame(this.tick);
-  };
-
   private draw(): void {
+    if (!this.ctx || !this.canvas || !this.handTracker) return;
+
     const w = this.video.videoWidth;
     const h = this.video.videoHeight;
     if (!w || !h) {
-      this.label.textContent = 'camera · no signal';
+      this.label.textContent = 'you · no signal';
       return;
     }
 
@@ -101,7 +121,7 @@ export class CameraDebug {
 
     const detections = this.handTracker.getDetections();
     if (detections.length === 0) {
-      this.label.textContent = 'camera · 0 hands';
+      this.label.textContent = 'you · 0 hands';
       return;
     }
 
@@ -146,6 +166,6 @@ export class CameraDebug {
       (acc, d) => ((acc[d.handedness] = (acc[d.handedness] ?? 0) + 1), acc),
       {} as Record<Handedness, number>
     );
-    this.label.textContent = `camera · ${detections.length} hand${detections.length === 1 ? '' : 's'} · L:${counts.left ?? 0} R:${counts.right ?? 0}`;
+    this.label.textContent = `you · L:${counts.left ?? 0} R:${counts.right ?? 0}`;
   }
 }
