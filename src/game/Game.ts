@@ -38,9 +38,9 @@ export class Game {
   private readonly _backDir = new THREE.Vector3();
   private readonly cameraDolly = {
     fovWide: 62,
-    fovNarrow: 64,
-    dollyBackMeters: 0.85,
-    riseMeters: 0.08,
+    fovNarrow: 66,
+    dollyBackMeters: 1.6,
+    riseMeters: 0.12,
     narrowAspect: 0.55,
     smoothingSeconds: 0.45,
   };
@@ -187,6 +187,10 @@ export class Game {
     this.multiplayer.setDisplayName(name);
   }
 
+  getCameraMode(): CameraMode {
+    return this.cameraMode;
+  }
+
   setCameraMode(mode: CameraMode): void {
     this.cameraMode = mode;
     if (this.orbitControls) {
@@ -290,7 +294,7 @@ export class Game {
       label: 'fov narrow', min: 30, max: 100, step: 1,
     });
     this.cameraPane.addBinding(this.cameraDolly, 'dollyBackMeters', {
-      label: 'dolly back m', min: 0, max: 3, step: 0.05,
+      label: 'dolly back m', min: 0, max: 5, step: 0.05,
     });
     this.cameraPane.addBinding(this.cameraDolly, 'riseMeters', {
       label: 'rise m', min: 0, max: 1, step: 0.01,
@@ -323,12 +327,13 @@ export class Game {
     floor.receiveShadow = true;
     this.scene.add(floor);
 
+    const ceilingY = 2.55;
     const ceiling = new THREE.Mesh(new THREE.BoxGeometry(3.45, 0.08, 4.8), wallMat);
-    ceiling.position.y = 2.24;
+    ceiling.position.y = ceilingY;
     this.scene.add(ceiling);
 
     const glassBottom = 0.19;
-    const glassTop = 1.95;
+    const glassTop = 2.38;
     const glassHeight = glassTop - glassBottom;
     const glassY = (glassBottom + glassTop) / 2;
     const glassZs = [-1.5, 0, 1.5];
@@ -337,13 +342,16 @@ export class Game {
     const frameThick = 0.025;
     const frameOuterSpan = glassSpan + frameThick;
 
-    const ceilingBottom = 2.24 - 0.04;
+    const ceilingBottom = ceilingY - 0.04;
     const lowerWallHeight = glassBottom - 0.06;
     const upperWallHeight = ceilingBottom - glassTop;
     const endCapHeight = ceilingBottom - 0.06;
     const endCapDepth = 4.8 / 2 - glassSpan / 2;
 
-    for (const x of [-1.72, 1.72]) {
+    // Only the −x wall is built. The camera always faces this wall in game
+    // mode, so the +x side is dead geometry — removing it lets the dolly
+    // pull the camera back arbitrarily far without clipping a wall.
+    for (const x of [-1.72]) {
       const lowerWall = new THREE.Mesh(new THREE.BoxGeometry(0.08, lowerWallHeight, 4.8), wallMat);
       lowerWall.position.set(x, 0.06 + lowerWallHeight / 2, 0);
       lowerWall.receiveShadow = true;
@@ -410,7 +418,7 @@ export class Game {
 
     for (const z of [-1.55, 0, 1.55]) {
       const light = new THREE.PointLight(0xffe8ad, 0.95, 4.8);
-      light.position.set(0, 2.08, z);
+      light.position.set(0, 2.42, z);
       this.scene.add(light);
 
       const fixture = new THREE.Mesh(

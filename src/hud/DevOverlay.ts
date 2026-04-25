@@ -8,10 +8,16 @@ export class DevOverlay {
   private rafHandle = 0;
   private keyHandler: (e: KeyboardEvent) => void;
   private onToggle?: (visible: boolean) => void;
+  private onCameraCycle?: () => void;
 
-  constructor(paneDock: HTMLElement, onToggle?: (visible: boolean) => void) {
+  constructor(
+    paneDock: HTMLElement,
+    onToggle?: (visible: boolean) => void,
+    onCameraCycle?: () => void,
+  ) {
     this.paneDock = paneDock;
     this.onToggle = onToggle;
+    this.onCameraCycle = onCameraCycle;
     this.paneDock.classList.add('hidden');
 
     this.stats = new Stats();
@@ -25,15 +31,21 @@ export class DevOverlay {
     document.body.appendChild(this.statsContainer);
 
     this.keyHandler = (e: KeyboardEvent) => {
-      if (e.key !== '/') return;
       const target = e.target as Element | null;
       if (target && (
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
         (target instanceof HTMLElement && target.isContentEditable)
       )) return;
-      e.preventDefault();
-      this.toggle();
+      if (e.key === '/') {
+        e.preventDefault();
+        this.toggle();
+        return;
+      }
+      if (this.visible && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        this.onCameraCycle?.();
+      }
     };
     window.addEventListener('keydown', this.keyHandler);
   }

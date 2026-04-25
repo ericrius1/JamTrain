@@ -156,12 +156,15 @@ export class ScenerySystem {
   }
 
   private createSky(): void {
+    // Only the −x window is rendered: the camera always faces that wall in
+    // game mode, and the back of the cab is removed so there's nothing on
+    // the +x side to look through.
     const material = this.createWindowSkyMaterial();
 
-    for (const side of [-1, 1]) {
-      const sky = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 2.05), material);
+    for (const side of [-1]) {
+      const sky = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 2.6), material);
       sky.rotation.y = Math.PI / 2;
-      sky.position.set(side * 2.56, 1.48, 0);
+      sky.position.set(side * 2.56, 1.6, 0);
       sky.renderOrder = -30;
       this.root.add(sky);
     }
@@ -322,7 +325,7 @@ export class ScenerySystem {
       { baseY: 0.75, amplitude: 0.25, color: 0x3d654a, speed: 0.86, x: 2.34 },
     ];
 
-    for (const side of [-1, 1]) {
+    for (const side of [-1]) {
       for (let layer = 0; layer < layers.length; layer += 1) {
         const settings = layers[layer];
         const material = new THREE.MeshBasicNodeMaterial();
@@ -396,7 +399,7 @@ export class ScenerySystem {
   }
 
   private createVillages(): void {
-    for (const side of [-1, 1]) {
+    for (const side of [-1]) {
       for (let layer = 0; layer < 2; layer += 1) {
         const width = 6.2;
         const count = 80;

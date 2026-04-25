@@ -119,7 +119,15 @@ observe(connectionSink, text => hud.setConnection(text));
 observe(inputSink,      text => hud.setInputStatus(text));
 observe(musicSink,      text => hud.setMusicStatus(text));
 
-const dev = new DevOverlay(game.paneDock);
+const dev = new DevOverlay(
+  game.paneDock,
+  visible => {
+    if (!visible) game.setCameraMode('game');
+  },
+  () => {
+    game.setCameraMode(game.getCameraMode() === 'game' ? 'orbit' : 'game');
+  },
+);
 
 // Hand the local stream + remote stream into the HUD's video panels. The
 // local panel binds to the HandTracker's video element (so it can also draw
