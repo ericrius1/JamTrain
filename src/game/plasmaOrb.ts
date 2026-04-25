@@ -14,7 +14,7 @@ export type PlasmaOrbOptions = {
 };
 
 const MAX_ATTRACTORS = 4;
-const MAX_RAYMARCH_STEPS = 96;
+const MAX_RAYMARCH_STEPS = 11;
 const MAX_INNER_ITERS = 16;
 
 const pseudoNoiseFn = wgslFn(/* wgsl */ `

@@ -484,16 +484,18 @@
 .corner-filigree.bl { bottom: 8px; left: 8px;   transform: rotate(-90deg); }
 .corner-filigree.br { bottom: 8px; right: 8px;  transform: rotate(180deg); }
 
-/* Tweakpane dock — top-right of stage */
+/* Tweakpane dock — top-right of viewport. Mounted on #stage-wrap (not
+   #stage) so the controls keep their native size on narrow viewports
+   instead of shrinking with the letterboxed scene. */
 .tweak-pane-dock {
-  position: absolute;
+  position: fixed;
   top: 24px;
   right: 24px;
   z-index: 10;
   display: grid;
   gap: 8px;
-  width: min(280px, 320px);
-  max-height: calc(1014px - 240px);
+  width: 280px;
+  max-height: calc(100vh - 48px);
   overflow-y: auto;
   pointer-events: auto;
 }

@@ -743,10 +743,11 @@ export class Game {
   private createPaneDock(): HTMLElement {
     const dock = document.createElement('div');
     dock.className = 'tweak-pane-dock';
-    // Mount inside #stage so the dock scales with the letterboxed HUD.
-    // Falls back to body if the stage isn't there yet (e.g. tests).
-    const stage = document.getElementById('stage') ?? document.body;
-    stage.appendChild(dock);
+    // Mount on #stage-wrap (viewport-fixed) rather than #stage so the pane
+    // keeps its native size on narrow viewports instead of shrinking with
+    // the letterboxed scene.
+    const host = document.getElementById('stage-wrap') ?? document.body;
+    host.appendChild(dock);
     return dock;
   }
 }
