@@ -5,9 +5,10 @@ import { clamp } from './math';
 import {
   BiomeScheduler,
   silhouetteParams,
-  type BackgroundBiome,
   type SilhouetteParams,
 } from './biomes';
+import { BiomeLayers } from './biomeLayers';
+import { SpriteAtlas } from './spriteAtlas';
 
 type Atmosphere = {
   background: THREE.Color;
@@ -79,6 +80,8 @@ export class ScenerySystem {
 
   private bgPanels: BackgroundPanel[] = [];
   private scheduler!: BiomeScheduler;
+  private atlas!: SpriteAtlas;
+  private layers!: BiomeLayers;
   private lastCycle = 0;
   private atmosphere = {
     background: new THREE.Color(0x10202d),
@@ -123,12 +126,16 @@ export class ScenerySystem {
     this.root.name = 'procedural-scenery';
     this.createSky();
     this.createBackground();
+    this.atlas = new SpriteAtlas();
+    this.layers = new BiomeLayers(this.scene, this.atlas, this.scheduler, this.roomSeed);
+    this.layers.build();
     this.scene.add(this.root);
   }
 
   setRoomSeed(seed: number): void {
     this.roomSeed = seed;
     this.scheduler.setSeed(seed);
+    this.layers?.setSeed(seed);
   }
 
   getRoomSeed(): number {
@@ -175,6 +182,7 @@ export class ScenerySystem {
     this.skyTravel.value += delta * speed;
 
     this.updateBackground(delta, speed, daylight);
+    this.layers?.update(delta, speed, { daylight, nightAmount: night });
 
     const dayColor = new THREE.Color(0x2f6172);
     const duskColor = new THREE.Color(0x4d3158);

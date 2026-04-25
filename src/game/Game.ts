@@ -82,6 +82,10 @@ export class Game {
     furnitureBevel: 0.10,
     bevelSegments: 4,
   };
+  private playersPane?: Pane;
+  private readonly playersParams = {
+    backOffset: 0.15,
+  };
   readonly paneDock: HTMLElement;
   private roomId: string;
   private roomSeed: number;
@@ -121,9 +125,11 @@ export class Game {
 
     this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
     this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
+    this.applyPlayerBackOffset();
     this.multiplayer.onSeatChange((localSeat, partnerSeat) => {
       this.localRig.setSeatIndex(localSeat);
       this.remoteRig.setSeatIndex(partnerSeat);
+      this.applyPlayerBackOffset();
     });
     this.particles = new LinkParticles(this.scene);
     this.robotMotion = new RobotMotionController(this.paneDock);
@@ -158,6 +164,7 @@ export class Game {
       paneDock: this.paneDock,
     });
     this.setupShadowsPane();
+    this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     this.resize();
@@ -265,6 +272,7 @@ export class Game {
     this.cameraPane?.dispose();
     this.shadowsPane?.dispose();
     this.cabinPane?.dispose();
+    this.playersPane?.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -420,7 +428,12 @@ export class Game {
     if (this.cabinGroup) {
       this.cabinGroup.traverse(o => {
         const m = o as THREE.Mesh;
-        if (m.isMesh) m.geometry.dispose();
+        if (m.isMesh) {
+          m.geometry.dispose();
+          const mat = m.material as THREE.Material | THREE.Material[];
+          if (Array.isArray(mat)) mat.forEach(x => x.dispose());
+          else mat.dispose();
+        }
       });
       this.scene.remove(this.cabinGroup);
     }

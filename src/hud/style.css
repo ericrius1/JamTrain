@@ -511,8 +511,22 @@
   transform: translateX(-50%);
   z-index: 1000;
   pointer-events: auto;
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
 }
 #stats-panel.hidden { display: none; }
+#vertex-readout {
+  font: 10px/1 monospace;
+  color: #cfd8e3;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 0 8px;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
 
 /* Peer video panels — bottom corners, under each seat's plaque. Local panel
    keeps the hand-landmark overlay; remote panel just plays the partner feed. */

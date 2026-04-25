@@ -37,6 +37,13 @@ const keypointNames: Record<FingerName, [string, string, string]> = {
   pinky: ['pinky_finger_pip', 'pinky_finger_dip', 'pinky_finger_tip'],
 };
 
+const MAX_TRACKED_HANDS = 2;
+// micro-handpose 0.3.0 only re-runs palm detection when every tracked ROI is
+// lost. If we sit at fewer than MAX_TRACKED_HANDS for this many cycles, force
+// a reset so a hand that has re-entered the frame can actually be picked up.
+const LOCK_IN_DETECTIONS = 8;
+const RESET_COOLDOWN_S = 1;
+
 export class HandTracker {
   private video?: HTMLVideoElement;
   private detector?: MicroHandpose;
@@ -47,6 +54,9 @@ export class HandTracker {
   private pointer = { x: 0, y: 0 };
   private mode: 'simulated' | 'camera' | 'error' = 'simulated';
   private status = 'hands: simulated';
+  private partialDetectionRun = 0;
+  private lastResetAt = -Infinity;
+  private prevDetectedHandedness = new Set<Handedness>();
   readonly filter = new HandFilter();
 
   constructor(private statusTarget?: HTMLElement) {
@@ -128,6 +138,7 @@ export class HandTracker {
       void this.detector
         .detect(this.video)
         .then(results => {
+          this.maybeResetForLockIn(results.length, time);
           this.cameraHands = this.mapDetections(results, time);
           this.status = this.cameraHands ? 'hands: camera' : 'hands: searching';
           this.publishStatus();
@@ -247,6 +258,14 @@ export class HandTracker {
       assignments.push({ hand, handedness });
     }
 
+    const presentNow = new Set<Handedness>(assignments.map(a => a.handedness));
+    for (const handedness of handednesses) {
+      if (presentNow.has(handedness) && !this.prevDetectedHandedness.has(handedness)) {
+        this.filter.resetHand(handedness);
+      }
+    }
+    this.prevDetectedHandedness = presentNow;
+
     const mapped = {} as Partial<Record<Handedness, HandPose>>;
     for (const { hand, handedness } of assignments) {
       const filteredHand: RawHand = {
@@ -331,6 +350,22 @@ export class HandTracker {
       (1 - source.y) * 1.35,
       clamp(-(source.z ?? 0) * 4.5, -0.45, 0.45)
     );
+  }
+
+  private maybeResetForLockIn(detectionCount: number, time: number): void {
+    if (detectionCount > 0 && detectionCount < MAX_TRACKED_HANDS) {
+      this.partialDetectionRun += 1;
+    } else {
+      this.partialDetectionRun = 0;
+    }
+    if (
+      this.partialDetectionRun >= LOCK_IN_DETECTIONS &&
+      time - this.lastResetAt >= RESET_COOLDOWN_S
+    ) {
+      this.detector?.reset?.();
+      this.partialDetectionRun = 0;
+      this.lastResetAt = time;
+    }
   }
 
   private inferHandedness(hand: { landmarks?: LandmarkLike[] }): Handedness {

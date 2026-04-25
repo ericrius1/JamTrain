@@ -44,6 +44,9 @@ export class PlayerRig {
   private nodeMaterial = new THREE.MeshStandardMaterial({ color: 0x7ef2ff, emissive: 0x0d7888, emissiveIntensity: 1.2, roughness: 0.18 });
   private eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x111820, emissive: 0x9ef5ff, emissiveIntensity: 0.3 });
   private mouthMaterial = new THREE.MeshStandardMaterial({ color: 0x30313a, emissive: 0x30161a, emissiveIntensity: 0.2 });
+  private static readonly BASE_SEAT_DISTANCE = 1.05;
+  private seatIndex: number;
+  private backOffset = 0;
   private seatZ: number;
   private facing: number;
 
@@ -51,7 +54,8 @@ export class PlayerRig {
     private scene: THREE.Scene,
     options: { seatIndex: number; color: number; robot?: boolean }
   ) {
-    this.seatZ = options.seatIndex === 0 ? 1.05 : -1.05;
+    this.seatIndex = options.seatIndex;
+    this.seatZ = this.computeSeatZ();
     this.facing = options.seatIndex === 0 ? -1 : 1;
     this.root.position.set(0, 0, this.seatZ);
     this.root.rotation.y = options.seatIndex === 0 ? 0 : Math.PI;
@@ -83,10 +87,22 @@ export class PlayerRig {
   }
 
   setSeatIndex(seatIndex: number): void {
-    this.seatZ = seatIndex === 0 ? 1.05 : -1.05;
+    this.seatIndex = seatIndex;
+    this.seatZ = this.computeSeatZ();
     this.facing = seatIndex === 0 ? -1 : 1;
     this.root.position.z = this.seatZ;
     this.root.rotation.y = seatIndex === 0 ? 0 : Math.PI;
+  }
+
+  setBackOffset(offset: number): void {
+    this.backOffset = offset;
+    this.seatZ = this.computeSeatZ();
+    this.root.position.z = this.seatZ;
+  }
+
+  private computeSeatZ(): number {
+    const dir = this.seatIndex === 0 ? 1 : -1;
+    return dir * (PlayerRig.BASE_SEAT_DISTANCE + this.backOffset);
   }
 
   update(pose: PlayerPose, delta: number, robotTarget: number): void {

@@ -4,20 +4,25 @@ export class DevOverlay {
   private paneDock: HTMLElement;
   private stats: Stats;
   private statsContainer: HTMLElement;
+  private vertexLabel: HTMLElement;
   private visible = false;
   private rafHandle = 0;
   private keyHandler: (e: KeyboardEvent) => void;
   private onToggle?: (visible: boolean) => void;
   private onCameraCycle?: () => void;
+  private getVertexCount?: () => number;
+  private vertexUpdateAt = 0;
 
   constructor(
     paneDock: HTMLElement,
     onToggle?: (visible: boolean) => void,
     onCameraCycle?: () => void,
+    getVertexCount?: () => number,
   ) {
     this.paneDock = paneDock;
     this.onToggle = onToggle;
     this.onCameraCycle = onCameraCycle;
+    this.getVertexCount = getVertexCount;
     this.paneDock.classList.add('hidden');
 
     this.stats = new Stats();
@@ -28,6 +33,12 @@ export class DevOverlay {
     this.statsContainer.appendChild(this.stats.dom);
     // Stats.js sets `position: fixed` on its dom; override to play with our wrapper
     this.stats.dom.style.position = 'static';
+
+    this.vertexLabel = document.createElement('div');
+    this.vertexLabel.id = 'vertex-readout';
+    this.vertexLabel.textContent = 'verts —';
+    this.statsContainer.appendChild(this.vertexLabel);
+
     document.body.appendChild(this.statsContainer);
 
     this.keyHandler = (e: KeyboardEvent) => {
@@ -74,6 +85,13 @@ export class DevOverlay {
 
   private tick = (): void => {
     this.stats.update();
+    if (this.getVertexCount) {
+      const now = performance.now();
+      if (now - this.vertexUpdateAt > 250) {
+        this.vertexUpdateAt = now;
+        this.vertexLabel.textContent = `verts ${this.getVertexCount().toLocaleString()}`;
+      }
+    }
     this.rafHandle = requestAnimationFrame(this.tick);
   };
 }

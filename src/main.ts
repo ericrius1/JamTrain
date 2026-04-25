@@ -127,6 +127,7 @@ const dev = new DevOverlay(
   () => {
     game.setCameraMode(game.getCameraMode() === 'game' ? 'orbit' : 'game');
   },
+  () => game.getSceneVertexCount(),
 );
 
 // Hand the local stream + remote stream into the HUD's video panels. The
