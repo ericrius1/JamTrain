@@ -94,6 +94,7 @@ export class Game {
     this.plasmaOrb = new PlasmaOrb(this.scene, {
       position: this.sculptureTarget,
       radius: 0.42,
+      paneDock: this.paneDock,
     });
     window.addEventListener('resize', () => this.resize());
     this.resize();

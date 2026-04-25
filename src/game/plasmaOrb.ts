@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { Fn, cameraPosition, positionWorld, uniform, wgslFn } from 'three/tsl';
+import { Pane } from 'tweakpane';
 
 export type PlasmaOrbAttractor = {
   position: THREE.Vector3;
@@ -9,6 +10,7 @@ export type PlasmaOrbAttractor = {
 export type PlasmaOrbOptions = {
   position: THREE.Vector3;
   radius?: number;
+  paneDock?: HTMLElement;
 };
 
 const MAX_ATTRACTORS = 4;
@@ -169,7 +171,9 @@ function colorToVec3(hex: number): THREE.Vector3 {
 
 export class PlasmaOrb {
   readonly mesh: THREE.Mesh;
-  private readonly radius: number;
+  private radius: number;
+  private energyBoost = 1;
+  private pane?: Pane;
   private smoothedEnergy = 0;
   private targetEnergy = 0;
   private targetAttractors: PlasmaOrbAttractor[] = [];
@@ -206,6 +210,50 @@ export class PlasmaOrb {
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
     scene.add(this.mesh);
+
+    if (options.paneDock) {
+      const container = document.createElement('div');
+      options.paneDock.appendChild(container);
+      this.pane = new Pane({ title: 'Plasma Orb', container });
+      this.pane.expanded = false;
+      this.registerTweaks();
+    }
+  }
+
+  private registerTweaks(): void {
+    if (!this.pane) return;
+    const params = {
+      radius: this.radius,
+      noiseAmp: this.uNoiseAmp.value,
+      attractorReach: this.uAttractorReach.value,
+      attractorStrength: this.uAttractorStrength.value,
+      energyBoost: this.energyBoost,
+      coolColor: vec3ToHex(this.uCool.value),
+      warmColor: vec3ToHex(this.uWarm.value),
+    };
+
+    this.pane.addBinding(params, 'radius', { min: 0.2, max: 0.8, step: 0.01 }).on('change', e => {
+      this.radius = e.value;
+      this.uRadius.value = e.value;
+    });
+    this.pane.addBinding(params, 'noiseAmp', { label: 'wobble', min: 0, max: 0.25, step: 0.005 }).on('change', e => {
+      this.uNoiseAmp.value = e.value;
+    });
+    this.pane.addBinding(params, 'attractorReach', { label: 'hand reach', min: 0.2, max: 1.5, step: 0.01 }).on('change', e => {
+      this.uAttractorReach.value = e.value;
+    });
+    this.pane.addBinding(params, 'attractorStrength', { label: 'hand pull', min: 0, max: 0.4, step: 0.005 }).on('change', e => {
+      this.uAttractorStrength.value = e.value;
+    });
+    this.pane.addBinding(params, 'energyBoost', { label: 'energy boost', min: 0, max: 2, step: 0.05 }).on('change', e => {
+      this.energyBoost = e.value;
+    });
+    this.pane.addBinding(params, 'coolColor', { label: 'cool' }).on('change', e => {
+      hexToVec3(e.value, this.uCool.value);
+    });
+    this.pane.addBinding(params, 'warmColor', { label: 'warm' }).on('change', e => {
+      hexToVec3(e.value, this.uWarm.value);
+    });
   }
 
   private buildMaterial(): THREE.MeshBasicNodeMaterial {
@@ -260,7 +308,7 @@ export class PlasmaOrb {
   }
 
   setEnergy(energy: number): void {
-    this.targetEnergy = Math.max(0, Math.min(1, energy));
+    this.targetEnergy = Math.max(0, Math.min(1, energy * this.energyBoost));
   }
 
   update(elapsed: number, delta: number): void {
@@ -288,8 +336,21 @@ export class PlasmaOrb {
   }
 
   dispose(): void {
+    this.pane?.dispose();
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.mesh.removeFromParent();
   }
+}
+
+function vec3ToHex(v: THREE.Vector3): string {
+  const r = Math.round(Math.max(0, Math.min(1, v.x)) * 255);
+  const g = Math.round(Math.max(0, Math.min(1, v.y)) * 255);
+  const b = Math.round(Math.max(0, Math.min(1, v.z)) * 255);
+  return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+}
+
+function hexToVec3(hex: string, target: THREE.Vector3): void {
+  const c = new THREE.Color(hex);
+  target.set(c.r, c.g, c.b);
 }
