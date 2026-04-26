@@ -9,6 +9,8 @@ import { BeginGate } from './components/BeginGate';
 import { SharePopover } from './components/SharePopover';
 import { AnnouncementToast } from './components/AnnouncementToast';
 import { MixerPanel } from './components/MixerPanel';
+import { InstrumentPicker } from './components/InstrumentPicker';
+import { INSTRUMENTS, type InstrumentId } from '../game/instruments';
 
 // Default mix balance. Synth (Music) sits a few dB above the backing so
 // melody pokes through accompaniment; both have plenty of slider headroom
@@ -16,12 +18,6 @@ import { MixerPanel } from './components/MixerPanel';
 export const DEFAULT_BACKING_VOLUME = 0.55;
 export const DEFAULT_MUSIC_VOLUME = 0.55;
 export const DEFAULT_VOICE_VOLUME = 1.0;
-
-// Instrument labels shown on the plaques. Both players are in the same
-// pentatonic scale (handled in handSynth.ts) so the plaque just calls out
-// what each player is voicing.
-const LOCAL_INSTRUMENT = 'Cedar Flute';
-const REMOTE_INSTRUMENT = 'Velvet Keys';
 
 export type HudCallbacks = {
   onBegin: (conductorName: string) => Promise<void> | void;
@@ -41,6 +37,9 @@ export class Hud {
   private localPanel: VideoPanel;
   private remotePanel: VideoPanel;
   private mixerPanel: MixerPanel;
+  private localInstrumentPicker: InstrumentPicker;
+  private partnerInstrumentPicker: InstrumentPicker;
+  private localInstrumentListeners = new Set<(id: InstrumentId) => void>();
   private beginGate?: BeginGate;
   private sharePopover: SharePopover;
   private shareButton: HTMLButtonElement;
@@ -107,7 +106,7 @@ export class Hud {
     this.playerLeft = new PlayerPlaque({
       side: 'left',
       name: 'AVA',
-      voice: LOCAL_INSTRUMENT,
+      voice: INSTRUMENTS['flute'].label,
       kind: 'conductor',
     });
     this.uiEl.appendChild(this.playerLeft.el);
@@ -115,7 +114,7 @@ export class Hud {
     this.playerRight = new PlayerPlaque({
       side: 'right',
       name: 'KORO·v3',
-      voice: REMOTE_INSTRUMENT,
+      voice: INSTRUMENTS['bell'].label,
       kind: 'automaton',
     });
     this.uiEl.appendChild(this.playerRight.el);
@@ -142,6 +141,25 @@ export class Hud {
     });
     this.remotePanel.setRemoteVolume(DEFAULT_VOICE_VOLUME);
     this.uiEl.appendChild(this.mixerPanel.el);
+
+    const localSide = this.localSeat === 0 ? 'left' : 'right';
+    const partnerSide = this.localSeat === 0 ? 'right' : 'left';
+
+    this.localInstrumentPicker = new InstrumentPicker({
+      side: localSide,
+      initial: 'flute',
+    });
+    this.localInstrumentPicker.onSelect(id => {
+      for (const l of this.localInstrumentListeners) l(id);
+    });
+    stageWrap.appendChild(this.localInstrumentPicker.el);
+
+    this.partnerInstrumentPicker = new InstrumentPicker({
+      side: partnerSide,
+      initial: 'bell',
+      readonly: true,
+    });
+    stageWrap.appendChild(this.partnerInstrumentPicker.el);
 
     this.currentRoom = opts.room;
     this.renderNetRow();
@@ -171,6 +189,10 @@ export class Hud {
     this.applyPlaques();
     this.localPanel.setSide(next === 0 ? 'left' : 'right');
     this.remotePanel.setSide(next === 0 ? 'right' : 'left');
+    this.localInstrumentPicker.el.classList.remove('left', 'right');
+    this.partnerInstrumentPicker.el.classList.remove('left', 'right');
+    this.localInstrumentPicker.el.classList.add(next === 0 ? 'left' : 'right');
+    this.partnerInstrumentPicker.el.classList.add(next === 0 ? 'right' : 'left');
   }
 
   setHandTracker(tracker: HandTracker): void {
@@ -250,25 +272,36 @@ export class Hud {
     const localPlaque = this.localSeat === 0 ? this.playerLeft : this.playerRight;
     const partnerPlaque = this.localSeat === 0 ? this.playerRight : this.playerLeft;
 
+    const localLabel = INSTRUMENTS[this.getLocalInstrumentId()].label;
+    const partnerLabel = INSTRUMENTS[this.getPartnerInstrumentId()].label;
+
     localPlaque.set({
       name: this.conductorName,
-      voice: LOCAL_INSTRUMENT,
+      voice: localLabel,
       kind: 'conductor',
     });
 
     if (this.partnerName) {
       partnerPlaque.set({
         name: this.partnerName.toUpperCase(),
-        voice: REMOTE_INSTRUMENT,
+        voice: partnerLabel,
         kind: 'conductor',
       });
     } else {
       partnerPlaque.set({
         name: 'KORO·v3',
-        voice: REMOTE_INSTRUMENT,
+        voice: partnerLabel,
         kind: 'automaton',
       });
     }
+  }
+
+  private getLocalInstrumentId(): InstrumentId {
+    return this.localInstrumentPicker.getSelected();
+  }
+
+  private getPartnerInstrumentId(): InstrumentId {
+    return this.partnerInstrumentPicker.getSelected();
   }
 
   setConnection(state: string): void {
@@ -299,12 +332,28 @@ export class Hud {
     void mode;
   }
 
+  setLocalInstrument(id: InstrumentId): void {
+    this.localInstrumentPicker.setSelected(id, false);
+    this.applyPlaques();
+  }
+
+  setPartnerInstrument(id: InstrumentId): void {
+    this.partnerInstrumentPicker.setSelected(id, false);
+    this.applyPlaques();
+  }
+
+  onLocalInstrumentChange(listener: (id: InstrumentId) => void): void {
+    this.localInstrumentListeners.add(listener);
+  }
+
   dispose(): void {
     window.removeEventListener('resize', this.resizeHandler);
     this.sharePopover.dispose();
     this.announcement.dispose();
     this.localPanel.dispose();
     this.remotePanel.dispose();
+    this.localInstrumentPicker.dispose();
+    this.partnerInstrumentPicker.dispose();
   }
 
   private fitStage(): void {
