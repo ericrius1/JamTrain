@@ -458,6 +458,9 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const v = this.voices[key];
       if (!v) continue;
+      // PluckSynth (sparks) has no .envelope — its decay shape comes from
+      // attackNoise/dampening/resonance, not an ADSR.
+      if (v.profile === 'sparks') continue;
       v.synth.envelope.attack = v.profile === 'bell' ? Math.min(0.05, this.params.attack) : this.params.attack;
       v.synth.envelope.release = this.params.release;
     }

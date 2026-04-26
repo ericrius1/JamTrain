@@ -59,7 +59,10 @@
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
 }
 
-/* Top rail — sparse meta on either side, headphones pill in the middle. */
+/* Top rail — sparse meta on either side, headphones pill dead-centered.
+   The pill is absolutely positioned (independent of meta-left/meta-right
+   widths) so it lands on true screen center to match the conductor field
+   below. The rail itself stays flex-row for the meta strings. */
 .begin-top-rail {
   position: absolute;
   top: 0;
@@ -84,6 +87,10 @@
   color: var(--text-dim);
 }
 .begin-headphones-pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -99,6 +106,7 @@
   font-size: 12px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 .begin-headphones-pill svg {
   width: 18px;
@@ -107,13 +115,14 @@
   flex: 0 0 auto;
 }
 
-/* Title block — anchored along the left edge, vertically near the upper-third
-   so the lion's face stays unoccluded. */
+/* Title block — anchored along the right edge so it sits opposite the lion
+   (the painting is mirrored, putting the lion on the left). Vertically near
+   the upper-third so the silhouette stays unoccluded. */
 .begin-title-block {
   position: absolute;
-  left: 80px;
+  right: 80px;
   top: 320px;
-  text-align: left;
+  text-align: right;
 }
 .begin-eyebrow {
   font-family: 'IM Fell English SC', serif;
@@ -133,22 +142,12 @@
     0 0 50px rgba(246, 179, 51, 0.35);
 }
 
-/* Bottom rail — purely a positioning + animation wrapper. The conductor
-   field is absolutely centered against the stage, and the BEGIN action
-   column floats at the right margin, so the conductor sits dead-center
-   regardless of how wide the action column gets. */
-.begin-bottom-rail {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 60px;
-  height: 0;
-}
+/* Conductor field — rendered as the last child of the title block so it
+   flows directly under "Jam Train" on the right side of the stage. Children
+   center horizontally within the title block so the input sits visually
+   under the middle of "Jam Train" rather than hugging the right edge. */
 .begin-conductor-field {
-  position: absolute;
-  left: 50%;
-  bottom: 0;
-  transform: translateX(-50%);
+  margin-top: 32px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -163,6 +162,7 @@
 .begin-conductor-input-row {
   display: flex;
   gap: 8px;
+  align-items: stretch;
 }
 .begin-conductor-input {
   width: 300px;
@@ -180,10 +180,20 @@
   box-shadow:
     inset 0 2px 4px rgba(0, 0, 0, 0.6),
     0 0 16px rgba(246, 179, 51, 0.18);
+  box-sizing: border-box;
 }
 .begin-conductor-input:focus { border-color: var(--sun); }
 .begin-conductor-input:disabled { opacity: 0.6; }
 .begin-conductor-input::selection { background: rgba(246, 179, 51, 0.3); }
+/* Pre-filled / re-rolled names render as faded suggestions so the user
+   reads them as examples they can replace. The class is dropped on first
+   keystroke (see BeginGate.ts) so the typed value comes back at full
+   contrast. */
+.begin-conductor-input.is-suggestion,
+.begin-conductor-input.is-suggestion:focus {
+  color: rgba(246, 179, 51, 0.4);
+  font-style: italic;
+}
 .begin-reroll {
   width: 46px;
   background: rgba(20, 12, 4, 0.6);
@@ -199,16 +209,8 @@
   border-color: var(--sun);
 }
 
-.begin-action-col {
-  position: absolute;
-  right: 80px;
-  bottom: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
 .begin-start {
+  margin-top: 8px;
   font-family: 'IM Fell English SC', serif;
   letter-spacing: 0.32em;
   font-size: 20px;
@@ -237,14 +239,14 @@
   outline-offset: 3px;
 }
 .begin-awaken {
-  margin: 14px 0 0;
+  margin: 4px 0 0;
   font-family: 'IM Fell English', serif;
   font-style: italic;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.45;
   color: var(--text-dim);
-  max-width: 280px;
-  text-align: right;
+  max-width: 320px;
+  text-align: center;
 }
 .begin-err {
   font-family: 'JetBrains Mono', monospace;
@@ -252,7 +254,7 @@
   letter-spacing: 0.06em;
   color: var(--danger);
   min-height: 14px;
-  text-align: right;
+  text-align: center;
 }
 
 /* Drifting embers — purely decorative golden motes rising from the bottom. */

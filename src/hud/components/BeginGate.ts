@@ -45,7 +45,7 @@ export class BeginGate {
     // Lion painting full-bleed — the world the rest of the UI sits on top of.
     const lion = document.createElement('img');
     lion.className = 'begin-lion';
-    lion.src = '/intro-lion.png';
+    lion.src = '/lion.webp';
     lion.alt = '';
     lion.draggable = false;
     this.stage.appendChild(lion);
@@ -61,18 +61,21 @@ export class BeginGate {
     this.stage.appendChild(this.buildEmbers());
 
     this.stage.appendChild(this.buildTopRail());
-    this.stage.appendChild(this.buildTitleBlock());
 
-    const { row, input, reroll, button, err } = this.buildBottomRail();
+    const titleBlock = this.buildTitleBlock();
+    const { field, input, reroll, button, err } = this.buildConductorField();
+    titleBlock.appendChild(field);
+    this.stage.appendChild(titleBlock);
+
     this.input = input;
     this.rerollBtn = reroll;
     this.btn = button;
     this.errEl = err;
-    this.stage.appendChild(row);
 
     this.btn.addEventListener('click', () => this.submit(opts.onBegin));
     this.rerollBtn.addEventListener('click', () => {
       this.input.value = pickName(this.input.value.trim());
+      this.input.classList.add('is-suggestion');
       this.input.focus();
       this.input.select();
     });
@@ -171,15 +174,16 @@ export class BeginGate {
     return block;
   }
 
-  private buildBottomRail(): {
-    row: HTMLElement;
+  private buildConductorField(): {
+    field: HTMLElement;
     input: HTMLInputElement;
     reroll: HTMLButtonElement;
     button: HTMLButtonElement;
     err: HTMLElement;
   } {
-    const rail = this.div('begin-bottom-rail begin-fade-up begin-delay-2');
-
+    // One right-aligned column rendered just below the "Jam Train" title:
+    // label → input + ↻ → BEGIN → blurb. The whole stack reads as a single
+    // "conductor" control.
     const field = this.div('begin-conductor-field');
     const label = this.div('begin-conductor-label');
     label.textContent = 'CONDUCTOR';
@@ -188,12 +192,16 @@ export class BeginGate {
     const inputRow = this.div('begin-conductor-input-row');
     const input = document.createElement('input');
     input.type = 'text';
-    input.className = 'begin-conductor-input';
+    input.className = 'begin-conductor-input is-suggestion';
     input.spellcheck = false;
     input.autocomplete = 'off';
     input.maxLength = 24;
     input.value = pickName();
     input.setAttribute('aria-label', 'Conductor name');
+    // First keystroke promotes the suggestion to a real value (full color).
+    input.addEventListener('input', () => {
+      input.classList.remove('is-suggestion');
+    });
 
     const reroll = document.createElement('button');
     reroll.type = 'button';
@@ -204,26 +212,19 @@ export class BeginGate {
 
     inputRow.append(input, reroll);
     field.appendChild(inputRow);
-    rail.appendChild(field);
 
-    const beginCol = this.div('begin-action-col');
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'begin-start';
-    button.innerHTML = 'BEGIN <span aria-hidden="true">▸</span>';
-    beginCol.appendChild(button);
+    button.innerHTML = 'ALL ABOARD <span aria-hidden="true">▸</span>';
+    field.appendChild(button);
 
-    const awaken = document.createElement('p');
-    awaken.className = 'begin-awaken';
-    awaken.textContent =
-      'awaken the cabin — your browser will ask for webcam access to track your hands.';
-    beginCol.appendChild(awaken);
+
 
     const err = this.div('begin-err');
-    beginCol.appendChild(err);
-    rail.appendChild(beginCol);
+    field.appendChild(err);
 
-    return { row: rail, input, reroll, button, err };
+    return { field, input, reroll, button, err };
   }
 
   private async submit(onBegin: (name: string) => Promise<void> | void): Promise<void> {
