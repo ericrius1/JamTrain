@@ -1,0 +1,131 @@
+<h2>What does each player's instrument look like between their hands?</h2>
+<p class="subtitle">The "thing" you're shaping — flute (left player) and rhodes (right player) each get one of these. Click any that feel right.</p>
+
+<style>
+  .ifx { width: 100%; height: 170px; display:block; background: radial-gradient(ellipse at center, #0c1729 0%, #050a14 100%); border-radius: 8px; }
+  .card .card-image { padding: 0; overflow: hidden; }
+  .card-body p { font-size: 13px; line-height: 1.5; }
+</style>
+
+<div class="cards" data-multiselect>
+
+  <div class="card" data-choice="orb" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg class="ifx" viewBox="0 0 300 170" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="orbA" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#d8fff8" stop-opacity="1"/>
+            <stop offset="40%" stop-color="#5bd0ca" stop-opacity="0.95"/>
+            <stop offset="100%" stop-color="#146f92" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <!-- left hand -->
+        <ellipse cx="80" cy="105" rx="22" ry="14" fill="#1d2a3a" stroke="#52e2ff" stroke-width="1.5"/>
+        <path d="M 70 95 Q 80 80 95 92" stroke="#52e2ff" stroke-width="1.5" fill="none"/>
+        <!-- orb -->
+        <circle cx="150" cy="85" r="55" fill="url(#orbA)"/>
+        <circle cx="150" cy="85" r="38" fill="none" stroke="#aef0ff" stroke-width="0.8" opacity="0.4"/>
+        <!-- right hand -->
+        <ellipse cx="220" cy="105" rx="22" ry="14" fill="#1d2a3a" stroke="#ff7ad6" stroke-width="1.5"/>
+        <path d="M 230 95 Q 220 80 205 92" stroke="#ff7ad6" stroke-width="1.5" fill="none"/>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>A — Held Plasma Orb</h3>
+      <p>A glowing sphere cradled between palms. Per-player color. Pitch swells size, expression stirs surface texture. Closest to your existing PlasmaOrb but split into two intimate orbs.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="ribbon" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg class="ifx" viewBox="0 0 300 170" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="rib" x1="0%" y1="50%" x2="100%" y2="50%">
+            <stop offset="0%" stop-color="#52e2ff"/>
+            <stop offset="50%" stop-color="#aef0ff"/>
+            <stop offset="100%" stop-color="#ff7ad6"/>
+          </linearGradient>
+        </defs>
+        <!-- left hand -->
+        <ellipse cx="55" cy="85" rx="20" ry="12" fill="#1d2a3a" stroke="#52e2ff" stroke-width="1.5"/>
+        <!-- ribbon (multiple sine strands) -->
+        <path d="M 75 85 Q 110 35, 150 85 T 225 85" stroke="url(#rib)" stroke-width="3" fill="none" opacity="0.95"/>
+        <path d="M 75 85 Q 110 130, 150 85 T 225 85" stroke="url(#rib)" stroke-width="2" fill="none" opacity="0.6"/>
+        <path d="M 75 85 Q 130 60, 150 85 T 225 85" stroke="#aef0ff" stroke-width="1" fill="none" opacity="0.4"/>
+        <!-- right hand -->
+        <ellipse cx="245" cy="85" rx="20" ry="12" fill="#1d2a3a" stroke="#ff7ad6" stroke-width="1.5"/>
+        <!-- glow dots along ribbon -->
+        <circle cx="115" cy="62" r="3" fill="#aef0ff"/>
+        <circle cx="185" cy="108" r="3" fill="#ffd2ec"/>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>B — Stretched Energy Ribbon</h3>
+      <p>A vibrating tether spanning hands like a magic bowstring. Notes ripple along it. Hand distance changes tension; bright pulses travel left↔right on each note attack.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="aura" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg class="ifx" viewBox="0 0 300 170" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <radialGradient id="auraG" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#aef0ff" stop-opacity="0.9"/>
+            <stop offset="100%" stop-color="#52e2ff" stop-opacity="0"/>
+          </radialGradient>
+        </defs>
+        <ellipse cx="80" cy="105" rx="22" ry="14" fill="#1d2a3a" stroke="#52e2ff" stroke-width="1.5"/>
+        <ellipse cx="220" cy="105" rx="22" ry="14" fill="#1d2a3a" stroke="#ff7ad6" stroke-width="1.5"/>
+        <!-- particle cloud -->
+        <ellipse cx="150" cy="85" rx="80" ry="40" fill="url(#auraG)" opacity="0.7"/>
+        <g fill="#aef0ff">
+          <circle cx="120" cy="70" r="2"/><circle cx="140" cy="55" r="1.5"/>
+          <circle cx="170" cy="75" r="2.5"/><circle cx="155" cy="100" r="1.5"/>
+          <circle cx="185" cy="90" r="2"/><circle cx="135" cy="95" r="1.8"/>
+          <circle cx="200" cy="65" r="1.2"/><circle cx="105" cy="85" r="1.5"/>
+          <circle cx="160" cy="40" r="1"/><circle cx="180" cy="115" r="1.2"/>
+        </g>
+        <g fill="#ffd2ec" opacity="0.7">
+          <circle cx="195" cy="50" r="1.8"/><circle cx="115" cy="105" r="1.2"/>
+          <circle cx="145" cy="125" r="1.5"/>
+        </g>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>C — Particle Aura Cloud</h3>
+      <p>A swirling cloud of embers/sparks/fireflies between hands. Soft, atmospheric, no hard surface. Notes spawn pulses; held notes thicken the cloud. Cheaper than ray-marched fields.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="instrument" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <svg class="ifx" viewBox="0 0 300 170" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="55" cy="95" rx="20" ry="12" fill="#1d2a3a" stroke="#52e2ff" stroke-width="1.5"/>
+        <ellipse cx="245" cy="95" rx="20" ry="12" fill="#1d2a3a" stroke="#52e2ff" stroke-width="1.5"/>
+        <!-- flute = horizontal cylinder of light with finger holes -->
+        <rect x="75" y="85" width="150" height="20" rx="10" fill="#1a3a4a" stroke="#52e2ff" stroke-width="1.5"/>
+        <rect x="75" y="85" width="150" height="20" rx="10" fill="url(#fluteGlow)"/>
+        <defs>
+          <linearGradient id="fluteGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#aef0ff" stop-opacity="0.6"/>
+            <stop offset="100%" stop-color="#52e2ff" stop-opacity="0.1"/>
+          </linearGradient>
+        </defs>
+        <!-- finger holes glowing -->
+        <circle cx="105" cy="95" r="3" fill="#aef0ff"/>
+        <circle cx="130" cy="95" r="3" fill="#aef0ff" opacity="0.4"/>
+        <circle cx="155" cy="95" r="3" fill="#d8fff8"/>
+        <circle cx="180" cy="95" r="3" fill="#aef0ff" opacity="0.4"/>
+        <circle cx="205" cy="95" r="3" fill="#aef0ff" opacity="0.4"/>
+        <text x="150" y="145" text-anchor="middle" fill="#7a8fa8" font-size="11" font-family="monospace">flute · cedar light</text>
+      </svg>
+    </div>
+    <div class="card-body">
+      <h3>D — Stylized Instrument Form</h3>
+      <p>Each player holds a luminous version of their actual instrument. Flute = glowing reed bar with lit finger holes. Rhodes = floating keyboard ribbon with keys lighting up. Most literal mapping.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:24px">Pick your favorite — or favorites if you want a hybrid (e.g. orb-with-particle-aura). I'll dig into the chosen direction next.</p>
