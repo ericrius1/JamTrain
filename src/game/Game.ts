@@ -8,7 +8,11 @@ import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
-import { PlasmaOrb, type PlasmaOrbMetaball } from './plasmaOrb';
+import { Bloom } from './visuals/Bloom';
+import { Ribbon } from './visuals/Ribbon';
+import { Sparks } from './visuals/Sparks';
+import { CenterStage } from './CenterStage';
+import { type InstrumentId, type PlayerVisual } from './instruments';
 import { makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
@@ -95,7 +99,10 @@ export class Game {
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
   private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
-  private plasmaOrb?: PlasmaOrb;
+  private centerStage?: CenterStage;
+  private playerVisuals: Record<'local' | 'remote', PlayerVisual | null> = { local: null, remote: null };
+  private playerInstruments: Record<'local' | 'remote', InstrumentId> = { local: 'flute', remote: 'bell' };
+  private sparksToInitialize: Sparks[] = [];
   private musicIntensity = 0;
   private shadowsTweaks?: ReturnType<typeof registerTweaks<typeof SHADOWS_DEFS>>;
   private readonly shadowParams = makeParams(SHADOWS_DEFS);
@@ -197,11 +204,21 @@ export class Game {
     await this.renderer.init();
     this.setupOrbitControls();
     this.particles.initialize(this.renderer);
-    this.plasmaOrb = new PlasmaOrb(this.scene, {
-      position: this.sculptureTarget,
-      radius: 0.42,
-      paneDock: this.paneDock,
-    });
+    this.centerStage = new CenterStage(
+      this.scene,
+      this.sculptureTarget,
+      this.paneDock,
+      sparks => { this.sparksToInitialize.push(sparks); }
+    );
+    this.installPlayerVisual('local', this.playerInstruments.local);
+    this.installPlayerVisual('remote', this.playerInstruments.remote);
+    this.centerStage.setSlotInstrument(0, this.playerInstruments.local);
+    this.centerStage.setSlotInstrument(1, this.playerInstruments.remote);
+
+    // Initialize any Sparks compute kernels that were created during
+    // CenterStage / per-player visual construction.
+    for (const sparks of this.sparksToInitialize) sparks.initialize(this.renderer);
+    this.sparksToInitialize.length = 0;
     this.setupShadowsPane();
     this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
@@ -338,7 +355,9 @@ export class Game {
     this.webrtc.dispose();
     this.robotMotion.dispose();
     this.scenery.dispose();
-    this.plasmaOrb?.dispose();
+    this.centerStage?.dispose();
+    this.playerVisuals.local?.dispose();
+    this.playerVisuals.remote?.dispose();
     this.audio.dispose();
     this.handSynth.dispose();
     this.cameraTweaks?.dispose();
@@ -655,6 +674,33 @@ export class Game {
     });
   }
 
+  private installPlayerVisual(player: 'local' | 'remote', id: InstrumentId): void {
+    const existing = this.playerVisuals[player];
+    if (existing) {
+      existing.dispose();
+      this.playerVisuals[player] = null;
+    }
+    const paneKey = `playerVisual-${player}-${id}`;
+    let visual: PlayerVisual;
+    if (id === 'flute') visual = new Ribbon(this.scene, this.paneDock, paneKey);
+    else if (id === 'bell') visual = new Bloom(this.scene, this.paneDock, paneKey);
+    else {
+      const sparks = new Sparks(this.scene, this.paneDock, paneKey);
+      if (this.renderer) sparks.initialize(this.renderer);
+      else this.sparksToInitialize.push(sparks);
+      visual = sparks;
+    }
+    this.playerVisuals[player] = visual;
+  }
+
+  setPlayerInstrument(player: 'local' | 'remote', id: InstrumentId): void {
+    if (this.playerInstruments[player] === id) return;
+    this.playerInstruments[player] = id;
+    this.installPlayerVisual(player, id);
+    this.handSynth.setInstrument(player, id);
+    this.centerStage?.setSlotInstrument(player === 'local' ? 0 : 1, id);
+  }
+
   private setupCabinPane(): void {
     if (this.cabinTweaks) return;
     const rebuild = () => this.buildCabinGeometry();
@@ -710,7 +756,8 @@ export class Game {
     this.remoteRig.update(remotePose, delta, robotTarget);
 
     const links = this.updateLinks();
-    this.plasmaOrb?.update(elapsed, delta);
+    this.updatePlayerVisuals(delta);
+    this.centerStage?.update(delta, elapsed);
     this.particles.update(this.renderer, links, elapsed);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
@@ -725,28 +772,12 @@ export class Game {
 
   private updateLinks(): LinkSample[] {
     const links: LinkSample[] = [];
-    const metaballs: PlasmaOrbMetaball[] = [];
     let cursor = 0;
 
-    // Confidence threshold separating real camera detections (~0.7+) from
-    // simulated/neutral fallback poses (0.35). Untracked hands shouldn't
-    // feed phantom metaballs into the orb.
-    const TRACK_THRESHOLD = 0.5;
-
     for (const handedness of handednesses) {
-      const localTracked = (this.localPose?.hands[handedness].confidence ?? 0) >= TRACK_THRESHOLD;
-      const remoteTracked = (this.remotePose?.hands[handedness].confidence ?? 0) >= TRACK_THRESHOLD;
       for (const finger of fingerNames) {
         const from = this.localRig.getFingertipWorld(handedness, finger);
         const to = this.remoteRig.getFingertipWorld(handedness, finger);
-        // Every fingertip feeds the same metaball field. Whether it visibly
-        // tendrils into the central orb is governed by distance + the orb's
-        // own influence reach (uOrbReach), not by tracking — default-pose
-        // hands are positioned beyond the orb's reach.
-        metaballs.push(
-          { id: `local:${handedness}:${finger}`, position: from, tracked: localTracked },
-          { id: `remote:${handedness}:${finger}`, position: to, tracked: remoteTracked },
-        );
         const fromData = fromThree(from);
         const toData = fromThree(to);
         const tension = clamp(1.25 - Math.abs(distance(fromData, toData) - 1.1) * 0.42, 0.08, 1);
@@ -765,11 +796,22 @@ export class Game {
     const material = this.linkLines.material as THREE.LineBasicMaterial;
     const energy = links.reduce((sum, link) => sum + link.tension, 0) / Math.max(links.length, 1);
     material.opacity = 0.18 + energy * 0.48;
-    if (this.plasmaOrb) {
-      this.plasmaOrb.setFingertips(metaballs);
-      this.plasmaOrb.setEnergy(energy);
-    }
     return links;
+  }
+
+  private updatePlayerVisuals(delta: number): void {
+    const localLeft = this.localRig.getPalmWorld('left');
+    const localRight = this.localRig.getPalmWorld('right');
+    const remoteLeft = this.remoteRig.getPalmWorld('left');
+    const remoteRight = this.remoteRig.getPalmWorld('right');
+    const localVoice = this.handSynth.getVoiceState('local');
+    const remoteVoice = this.handSynth.getVoiceState('remote');
+
+    this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta);
+    this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta);
+
+    this.centerStage?.setSlotVoice(0, localVoice);
+    this.centerStage?.setSlotVoice(1, remoteVoice);
   }
 
   private updateMusicReactivity(delta: number): void {
@@ -787,7 +829,6 @@ export class Game {
     const alpha = 1 - Math.exp(-delta * 7);
     this.musicIntensity += (targetIntensity - this.musicIntensity) * alpha;
 
-    this.plasmaOrb?.setMusicIntensity(this.musicIntensity);
     this.particles.setMusicIntensity(this.musicIntensity * 0.7);
 
     // Cabin lights: very subtle warm breath. Drum kicks give a tiny bump,
