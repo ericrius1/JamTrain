@@ -1,6 +1,7 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { clamp } from './math';
 import type { HandPose, PlayerPose } from './types';
+import type { InstrumentId } from './instruments';
 
 export const HAND_SYNTH_DEFS = {
   enabled:       { type: 'boolean', default: true,  label: 'enabled' },
@@ -25,6 +26,14 @@ export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
 const SCALE_NOTES_LOCAL: string[] = ['A3', 'C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5', 'E5', 'G5', 'A5'];
 const SCALE_NOTES_REMOTE: string[] = SCALE_NOTES_LOCAL.map(transposeOctaveDown);
 
+function octaveShift(notes: string[], shift: number): string[] {
+  return notes.map(n => {
+    const m = n.match(/^([A-G]#?)(-?\d+)$/);
+    if (!m) return n;
+    return `${m[1]}${Number(m[2]) + shift}`;
+  });
+}
+
 const PRESENCE_THRESHOLD = 0.5;
 const PARAM_RAMP = 0.08;
 const MOUSE_IDLE_TIMEOUT = 1.2;
@@ -39,10 +48,17 @@ const HAND_Y_HIGH = 1.8;
 // near a boundary doesn't flicker between two pitches.
 const NOTE_HYSTERESIS = 0.18;
 
-type Profile = 'flute' | 'rhodes';
+type Profile = InstrumentId;  // 'flute' | 'bell' | 'sparks'
 export const PROFILE_LABELS: Record<Profile, string> = {
   flute: 'Cedar Flute',
-  rhodes: 'Velvet Keys',
+  bell: 'Velvet Bell',
+  sparks: 'Glass Sparks',
+};
+
+const PROFILE_SCALES: Record<Profile, string[]> = {
+  flute: SCALE_NOTES_LOCAL,
+  bell: SCALE_NOTES_REMOTE,             // octave-down for warmth
+  sparks: octaveShift(SCALE_NOTES_LOCAL, +1), // octave-up for crystalline shimmer
 };
 
 type PlayerKey = 'local' | 'remote';
@@ -75,6 +91,7 @@ export class HandSynthEngine {
   private reverbReturn?: any;
 
   private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
+  private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'flute', remote: 'bell' };
 
   private mouseXN = 0.5;
   private mouseYN = 0.5;
@@ -110,8 +127,18 @@ export class HandSynthEngine {
   }
 
   getProfileLabel(player: PlayerKey): string {
-    const profile = player === 'local' ? 'flute' : 'rhodes';
+    const profile = this.voices[player]?.profile ?? this.pendingInstruments[player];
     return PROFILE_LABELS[profile];
+  }
+
+  getInstrument(player: PlayerKey): InstrumentId {
+    return this.voices[player]?.profile ?? this.pendingInstruments[player];
+  }
+
+  getVoiceState(player: PlayerKey): { active: boolean; energy: number; pulse: number } {
+    const v = this.voices[player];
+    if (!v) return { active: false, energy: 0, pulse: 0 };
+    return { active: v.active, energy: v.active ? 1 : 0, pulse: v.pulse };
   }
 
   // Music slider (synth voices). Slider 0..1 → curved dB into volumeDb.
@@ -145,8 +172,8 @@ export class HandSynthEngine {
     this.reverbReturn = new Tone.Gain(0.55).connect(this.master);
     this.reverb.connect(this.reverbReturn);
 
-    this.voices.local = this.createVoice('flute', SCALE_NOTES_LOCAL);
-    this.voices.remote = this.createVoice('rhodes', SCALE_NOTES_REMOTE);
+    this.voices.local = this.createVoice(this.pendingInstruments.local, PROFILE_SCALES[this.pendingInstruments.local]);
+    this.voices.remote = this.createVoice(this.pendingInstruments.remote, PROFILE_SCALES[this.pendingInstruments.remote]);
 
     this.attachPane();
     this.running = true;
@@ -189,6 +216,27 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) this.silenceVoice(key);
   }
 
+  setInstrument(player: PlayerKey, id: InstrumentId): void {
+    if (!this.running || !this.tone) {
+      // Defer until start(); we can read the desired instrument at start time.
+      this.pendingInstruments[player] = id;
+      return;
+    }
+    const current = this.voices[player];
+    if (current?.profile === id) return;
+    // Gracefully release any held note on the outgoing voice before disposing.
+    if (current) {
+      if (current.active) current.synth.triggerRelease();
+      current.synth?.dispose?.();
+      current.vibrato?.dispose?.();
+      current.filter?.dispose?.();
+      current.panner?.dispose?.();
+      current.dryGain?.dispose?.();
+      current.wetSend?.dispose?.();
+    }
+    this.voices[player] = this.createVoice(id, PROFILE_SCALES[id]);
+  }
+
   // 0..1 — fraction of voices currently held. Useful for sustained
   // reactivity (e.g., "are people jamming right now?").
   getActivity(): number {
@@ -226,10 +274,7 @@ export class HandSynthEngine {
 
   private createVoice(profile: Profile, scale: string[]): Voice {
     const Tone = this.tone!;
-    // Pan the two voices apart so flute (local) and rhodes (remote) are
-    // perceptually distinct even when their notes overlap. Reverb stays
-    // mono-shared so the cabin still glues them together.
-    const pan = profile === 'flute' ? -0.35 : 0.35;
+    const pan = profile === 'flute' ? -0.35 : profile === 'bell' ? 0.35 : 0;
     const panner = new Tone.Panner(pan).connect(this.master);
     const dryGain = new Tone.Gain(0).connect(panner);
     const wetSend = new Tone.Gain(0).connect(this.reverb);
@@ -261,10 +306,7 @@ export class HandSynthEngine {
         portamento: 0,
         volume: 0,
       }).connect(vibrato);
-    } else {
-      // Rhodes-ish FM voice: bell-like attack that decays into a warm sine
-      // body. Mixes well under the flute and bass ambience because the body
-      // is a near-pure sine — no cutting harmonics.
+    } else if (profile === 'bell') {
       synth = new Tone.FMSynth({
         harmonicity: 1,
         modulationIndex: 4.5,
@@ -274,6 +316,16 @@ export class HandSynthEngine {
         modulationEnvelope: { attack: 0.002, decay: 0.6, sustain: 0, release: 0.5 },
         portamento: 0,
         volume: this.params.rhodesVolDb,
+      }).connect(filter);
+    } else {
+      // sparks: PluckSynth (Karplus-Strong) into the shared shimmer reverb. The
+      // synth itself is bright and short; sustain is provided by the reverb tail.
+      synth = new Tone.PluckSynth({
+        attackNoise: 1.2,
+        dampening: 4200,
+        resonance: 0.92,
+        release: 1.4,
+        volume: this.params.rhodesVolDb + 2,
       }).connect(filter);
     }
 
@@ -351,15 +403,15 @@ export class HandSynthEngine {
       voice.active = true;
       voice.pulse = 1;
     } else if (idx !== voice.currentNoteIdx) {
-      // Rhodes re-attacks each note (mallet); flute glides between holes via
+      // bell/sparks re-attacks each note (mallet); flute glides between holes via
       // setNote so the breath stays continuous.
-      if (voice.profile === 'rhodes') {
+      if (voice.profile === 'bell' || voice.profile === 'sparks') {
         voice.synth.triggerAttack(note);
       } else {
         voice.synth.setNote(note);
       }
       voice.currentNoteIdx = idx;
-      voice.pulse = Math.max(voice.pulse, voice.profile === 'rhodes' ? 1 : 0.5);
+      voice.pulse = Math.max(voice.pulse, voice.profile !== 'flute' ? 1 : 0.5);
     }
   }
 
@@ -406,7 +458,7 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const v = this.voices[key];
       if (!v) continue;
-      v.synth.envelope.attack = v.profile === 'rhodes' ? Math.min(0.05, this.params.attack) : this.params.attack;
+      v.synth.envelope.attack = v.profile === 'bell' ? Math.min(0.05, this.params.attack) : this.params.attack;
       v.synth.envelope.release = this.params.release;
     }
   }
