@@ -1,9 +1,8 @@
 import { Identity } from 'spacetimedb';
 import { DbConnection, tables, type ErrorContext } from '../module_bindings';
 import type { Player, WebrtcSignal } from '../module_bindings/types';
-import { parsePose, serializePose } from './pose';
 import { pickRandomRoomName, sanitizeRoomName } from './roomNames';
-import type { ConnectionState, PlayerPose } from './types';
+import type { ConnectionState } from './types';
 
 type StateListener = (state: ConnectionState) => void;
 type RoomListener = (roomId: string) => void;
@@ -25,10 +24,6 @@ export class MultiplayerClient {
   partnerSeatIndex = 1;
   private connection?: DbConnection;
   private connectionState: ConnectionState = 'local';
-  private remotePose?: PlayerPose;
-  private lastSendAt = 0;
-  private poseTransport?: (poseJson: string) => void;
-  private channel?: BroadcastChannel;
   private stateListeners = new Set<StateListener>();
   private roomListeners = new Set<RoomListener>();
   private joinListeners = new Set<PlayerEventListener>();
@@ -59,7 +54,6 @@ export class MultiplayerClient {
     this.bootPreferredRoom = sanitized;
     this.roomId = sanitized || pickRandomRoomName();
     this.displayName = displayName;
-    this.openBroadcastChannel();
   }
 
   onStateChange(listener: StateListener): void {
@@ -180,7 +174,6 @@ export class MultiplayerClient {
           console.warn('[jam-train] disconnected', error);
           this.subscriptionApplied = false;
           this.knownPlayers.clear();
-          this.remotePose = undefined;
           // Reset partner-name plaque while we're offline.
           if (this.partnerName !== null) {
             this.partnerName = null;
@@ -203,9 +196,6 @@ export class MultiplayerClient {
   /** Request a seat in `preferredRoom` (or auto-pair if empty). */
   requestRoom(preferredRoom: string): void {
     const sanitized = sanitizeRoomName(preferredRoom);
-    if (sanitized && sanitized !== this.roomId) {
-      this.remotePose = undefined;
-    }
     if (this.connection?.isActive) {
       this.requestSeat(sanitized);
     } else if (sanitized) {
@@ -217,44 +207,6 @@ export class MultiplayerClient {
     this.displayName = displayName;
   }
 
-  setPoseTransport(send: (poseJson: string) => void): void {
-    this.poseTransport = send;
-  }
-
-  sendPose(pose: PlayerPose, time: number): void {
-    if (time - this.lastSendAt < 0.033) return;
-    this.lastSendAt = time;
-    const poseJson = serializePose({ ...pose, id: this.localId, roomId: this.roomId });
-
-    this.channel?.postMessage({
-      type: 'pose',
-      roomId: this.roomId,
-      id: this.localId,
-      poseJson,
-      sentAt: Date.now(),
-    });
-
-    this.poseTransport?.(poseJson);
-  }
-
-  getRemotePose(): PlayerPose | undefined {
-    return this.remotePose;
-  }
-
-  applyRemotePose(poseJson: string): void {
-    const pose = parsePose(poseJson);
-    if (!pose) return;
-    if (pose.id === this.localId) return;
-    // We trust the channel's authenticity (it's a per-peer connection)
-    // but still want the seatIndex to reflect our local view.
-    this.remotePose = {
-      ...pose,
-      roomId: this.roomId,
-      seatIndex: this.partnerSeatIndex,
-      updatedAt: Date.now(),
-    };
-  }
-
   getState(): ConnectionState {
     return this.connectionState;
   }
@@ -262,7 +214,6 @@ export class MultiplayerClient {
   dispose(): void {
     this.disposed = true;
     window.clearTimeout(this.reconnectTimer);
-    this.channel?.close();
     if (this.connection?.isActive) {
       void this.connection.reducers.leaveRoom({}).finally(() => this.connection?.disconnect());
     } else {
@@ -440,7 +391,6 @@ export class MultiplayerClient {
     if (local === this.localSeatIndex && partner === this.partnerSeatIndex) return;
     this.localSeatIndex = local;
     this.partnerSeatIndex = partner;
-    if (this.remotePose) this.remotePose.seatIndex = partner;
     for (const listener of this.seatListeners) listener(local, partner);
   }
 
@@ -448,31 +398,10 @@ export class MultiplayerClient {
     const sanitized = sanitizeRoomName(nextRoom);
     if (!sanitized || sanitized === this.roomId) return;
     this.roomId = sanitized;
-    this.remotePose = undefined;
-    this.openBroadcastChannel();
     // After moving rooms, recompute who's already here so we don't toast
     // them as if they just boarded.
     this.rebuildKnownPlayers();
     for (const listener of this.roomListeners) listener(this.roomId);
-  }
-
-  private openBroadcastChannel(): void {
-    this.channel?.close();
-    if (!('BroadcastChannel' in window)) return;
-    this.channel = new BroadcastChannel(`jam-train-${this.roomId}`);
-    this.channel.onmessage = event => {
-      const data = event.data as { type?: string; roomId?: string; id?: string; poseJson?: string; sentAt?: number };
-      if (data.type !== 'pose' || data.roomId !== this.roomId || data.id === this.localId || !data.poseJson) return;
-      const pose = parsePose(data.poseJson);
-      if (!pose) return;
-      this.remotePose = {
-        ...pose,
-        id: data.id ?? pose.id,
-        roomId: this.roomId,
-        seatIndex: this.partnerSeatIndex,
-        updatedAt: data.sentAt ?? Date.now(),
-      };
-    };
   }
 
   private setState(state: ConnectionState): void {

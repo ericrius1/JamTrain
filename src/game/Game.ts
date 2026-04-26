@@ -10,6 +10,9 @@ import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
 import { PlasmaOrb, type PlasmaOrbMetaball } from './plasmaOrb';
 import { makePlayerPose } from './pose';
+import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
+import { PoseSession } from './pose/PoseSession';
+import { WebRtcPoseTransport } from './pose/WebRtcPoseTransport';
 import { PlayerRig } from './rig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
@@ -78,6 +81,8 @@ export class Game {
   private handSynth: HandSynthEngine;
   private multiplayer: MultiplayerClient;
   private webrtc: WebRTCClient;
+  private poseSession!: PoseSession;
+  private broadcastTransport!: BroadcastChannelPoseTransport;
   private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
   private localRig: PlayerRig;
   private remoteRig: PlayerRig;
@@ -138,8 +143,23 @@ export class Game {
     this.webrtc.onRemoteStream(stream => {
       for (const listener of this.remoteStreamListeners) listener(stream);
     });
-    this.multiplayer.setPoseTransport(json => this.webrtc.sendPose(json));
-    this.webrtc.onRemotePose(json => this.multiplayer.applyRemotePose(json));
+
+    this.broadcastTransport = new BroadcastChannelPoseTransport(this.roomId);
+    const webrtcTransport = new WebRtcPoseTransport(this.webrtc);
+    this.poseSession = new PoseSession(
+      [webrtcTransport, this.broadcastTransport],
+      {
+        localId: this.multiplayer.localId,
+        getRoomId: () => this.multiplayer.getRoom(),
+        getPartnerSeatIndex: () => this.multiplayer.partnerSeatIndex,
+      }
+    );
+
+    this.multiplayer.onAssignedRoom(room => {
+      this.broadcastTransport.setRoomId(room);
+      this.poseSession.clearRemotePose();
+    });
+    this.multiplayer.onPartnerIdentity(() => this.poseSession.clearRemotePose());
 
     this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
     this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
@@ -672,7 +692,7 @@ export class Game {
     const localSeat = this.multiplayer.localSeatIndex;
     const partnerSeat = this.multiplayer.partnerSeatIndex;
     const localPose = makePlayerPose(this.multiplayer.localId, 'Player', this.roomId, localSeat, hands, false);
-    const remoteFromNetwork = this.multiplayer.getRemotePose();
+    const remoteFromNetwork = this.poseSession.getRemotePose();
     const robotHands = this.robotMotion.update(elapsed, delta, localPose);
     const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, true);
     // Presence (player row in our cabin) drives form. Pose freshness only
@@ -696,7 +716,7 @@ export class Game {
     this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
     this.handSynth.update(localPose, remotePose, delta);
     this.updateMusicReactivity(delta);
-    this.multiplayer.sendPose(localPose, elapsed);
+    this.poseSession.sendLocalPose(localPose, elapsed);
     if (this.cameraMode === 'game') this.updateCameraDolly(delta);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
