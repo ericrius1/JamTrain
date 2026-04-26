@@ -12,6 +12,7 @@ export class PlayerPlaque {
   private nameEl: HTMLElement;
   private voiceEl: HTMLElement;
   private pickerSlot: HTMLElement;
+  private creaturePickerSlot: HTMLElement;
   private currentRobot: boolean;
 
   constructor(opts: {
@@ -50,6 +51,10 @@ export class PlayerPlaque {
     this.pickerSlot = document.createElement('div');
     this.pickerSlot.className = 'picker-slot';
     this.el.appendChild(this.pickerSlot);
+
+    this.creaturePickerSlot = document.createElement('div');
+    this.creaturePickerSlot.className = 'creature-picker-slot';
+    this.el.appendChild(this.creaturePickerSlot);
   }
 
   set(opts: { name: string; voice: string; kind: PlayerKind }): void {
@@ -70,6 +75,12 @@ export class PlayerPlaque {
   setPicker(el: HTMLElement | null): void {
     this.pickerSlot.replaceChildren();
     if (el) this.pickerSlot.appendChild(el);
+  }
+
+  // Sibling slot for the CreaturePicker. Same usage as setPicker.
+  setCreaturePicker(el: HTMLElement | null): void {
+    this.creaturePickerSlot.replaceChildren();
+    if (el) this.creaturePickerSlot.appendChild(el);
   }
 }
 

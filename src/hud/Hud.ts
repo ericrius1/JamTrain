@@ -11,6 +11,8 @@ import { AnnouncementToast } from './components/AnnouncementToast';
 import { MixerPanel } from './components/MixerPanel';
 import { InstrumentPicker } from './components/InstrumentPicker';
 import { INSTRUMENTS, type InstrumentId } from '../game/instruments';
+import { CreaturePicker } from './components/CreaturePicker';
+import { type CreatureId } from '../game/creatures';
 
 // Default mix balance. Synth (Music) sits a few dB above the backing so
 // melody pokes through accompaniment; both have plenty of slider headroom
@@ -40,6 +42,8 @@ export class Hud {
   private localInstrumentPicker: InstrumentPicker;
   private localInstrumentListeners = new Set<(id: InstrumentId) => void>();
   private partnerInstrument: InstrumentId = 'bell';
+  private localCreaturePicker: CreaturePicker;
+  private localCreatureListeners = new Set<(id: CreatureId) => void>();
   private beginGate?: BeginGate;
   private sharePopover: SharePopover;
   private shareButton: HTMLButtonElement;
@@ -153,6 +157,14 @@ export class Hud {
     });
     this.localInstrumentPicker.onSelect(id => {
       for (const l of this.localInstrumentListeners) l(id);
+    });
+
+    this.localCreaturePicker = new CreaturePicker({
+      side: 'left',
+      initial: 'lion',
+    });
+    this.localCreaturePicker.onSelect(id => {
+      for (const l of this.localCreatureListeners) l(id);
     });
 
     this.currentRoom = opts.room;
@@ -276,9 +288,11 @@ export class Hud {
       voice: localLabel,
       kind: 'conductor',
     });
-    // Picker follows the local plaque as seats swap; partner plaque stays clean.
+    // Pickers follow the local plaque as seats swap; partner plaque stays clean.
     localPlaque.setPicker(this.localInstrumentPicker.el);
     partnerPlaque.setPicker(null);
+    localPlaque.setCreaturePicker(this.localCreaturePicker.el);
+    partnerPlaque.setCreaturePicker(null);
 
     if (this.partnerName) {
       partnerPlaque.set({
@@ -342,6 +356,14 @@ export class Hud {
     this.localInstrumentListeners.add(listener);
   }
 
+  setLocalCreature(id: CreatureId): void {
+    this.localCreaturePicker.setSelected(id, false);
+  }
+
+  onLocalCreatureChange(listener: (id: CreatureId) => void): void {
+    this.localCreatureListeners.add(listener);
+  }
+
   dispose(): void {
     window.removeEventListener('resize', this.resizeHandler);
     this.sharePopover.dispose();
@@ -349,6 +371,7 @@ export class Hud {
     this.localPanel.dispose();
     this.remotePanel.dispose();
     this.localInstrumentPicker.dispose();
+    this.localCreaturePicker.dispose();
   }
 
   private fitStage(): void {

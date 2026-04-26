@@ -235,9 +235,17 @@ if (hasStored) {
 }
 
 // ─── Creature wiring ──────────────────────────────────────────────────────
+// Local picker change → local rig swap + sync over multiplayer.
+hud.onLocalCreatureChange(id => {
+  game.setPlayerCreature('local', id);
+  void game.multiplayer.setLocalCreature(id);
+  localStorage.setItem(LOCAL_CREATURE_KEY, id);
+});
+
 // Local creature arrives from server (e.g. our row's persisted value):
 game.multiplayer.onLocalCreatureChange(id => {
   if (!isCreatureId(id)) return;
+  hud.setLocalCreature(id);
   game.setPlayerCreature('local', id);
 });
 

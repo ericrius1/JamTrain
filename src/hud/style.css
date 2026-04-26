@@ -1073,3 +1073,71 @@
   background: rgba(200, 154, 75, 0.08);
 }
 .player-plaque .instrument-picker-btn svg { width: 18px; height: 18px; }
+
+/* ── CreaturePicker ───────────────────────────────────────────────────────── */
+.creature-picker {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(8, 16, 28, 0.6);
+  backdrop-filter: blur(6px);
+  position: absolute;
+  bottom: 14px;
+  pointer-events: auto;
+}
+.creature-picker.left  { left: 14px; }
+.creature-picker.right { right: 14px; }
+.creature-picker.readonly { opacity: 0.7; }
+
+.creature-picker-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.creature-picker-btn:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.04);
+}
+.creature-picker-btn:disabled { cursor: default; }
+.creature-picker-btn.active {
+  color: var(--creature-color);
+  border-color: var(--creature-color);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--creature-color) 35%, transparent);
+}
+.creature-picker-btn svg { width: 22px; height: 22px; }
+
+.player-plaque .creature-picker-slot {
+  margin-top: 6px;
+}
+.player-plaque.right .creature-picker-slot {
+  display: flex;
+  justify-content: flex-end;
+}
+.player-plaque .creature-picker {
+  position: static;
+  bottom: auto;
+  left: auto;
+  right: auto;
+  background: rgba(0, 0, 0, 0.32);
+  backdrop-filter: none;
+  padding: 4px 6px;
+  gap: 4px;
+}
+.player-plaque .creature-picker-btn {
+  width: 28px;
+  height: 28px;
+  color: rgba(200, 154, 75, 0.55);
+}
+.player-plaque .creature-picker-btn:hover:not(:disabled) {
+  color: var(--sun);
+  background: rgba(200, 154, 75, 0.08);
+}
+.player-plaque .creature-picker-btn svg { width: 18px; height: 18px; }
