@@ -754,36 +754,58 @@
 }
 
 .video-panel-toolbar-btn {
+  position: relative;
   display: inline-flex;
   flex-direction: column;
   align-items: center;
   gap: 4px;
   padding: 8px 12px 7px;
   min-width: 76px;
-  background: linear-gradient(180deg, #6b4c20 0%, #3a2812 100%);
-  border: 1px solid var(--brass-2);
-  color: var(--text-dim);
+  background: linear-gradient(180deg, #3a2812 0%, #2a1d10 100%);
+  border: 1px solid var(--brass-3);
+  color: var(--danger);
   font-family: 'IM Fell English SC', serif;
   font-size: 10px;
   letter-spacing: 0.22em;
   text-transform: uppercase;
   cursor: pointer;
   border-radius: 3px;
-  opacity: 0.7;
+  opacity: 1;
   transition:
     opacity 0.18s ease, color 0.18s ease, background 0.18s ease,
     border-color 0.18s ease, box-shadow 0.18s ease;
   box-shadow:
-    inset 0 1px 0 rgba(246, 179, 51, 0.20),
     inset 0 -1px 0 rgba(0, 0, 0, 0.55),
     0 2px 4px rgba(0, 0, 0, 0.5);
 }
-.video-panel-toolbar-btn:hover {
+/* Diagonal slash drawn over the icon area when off — universal mute/disabled
+   convention. Uses a thin gradient band so color follows currentColor. The
+   slash is sized to roughly cover the 20px icon. */
+.video-panel-toolbar-btn::after {
+  content: '';
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  margin-left: -13px;
+  background: linear-gradient(
+    135deg,
+    transparent calc(50% - 1.2px),
+    currentColor calc(50% - 1.2px),
+    currentColor calc(50% + 1.2px),
+    transparent calc(50% + 1.2px)
+  );
+  pointer-events: none;
   opacity: 1;
-  color: var(--parchment);
+  transition: opacity 0.18s ease;
+}
+.video-panel-toolbar-btn.enabled::after { opacity: 0; }
+.video-panel-toolbar-btn:hover {
+  background: linear-gradient(180deg, #4a3218 0%, #2f2114 100%);
+  border-color: var(--brass-2);
 }
 .video-panel-toolbar-btn.enabled {
-  opacity: 1;
   color: var(--sun);
   background: linear-gradient(180deg, #8a6328 0%, #4d3618 100%);
   border-color: rgba(246, 179, 51, 0.55);
@@ -822,7 +844,7 @@
     padding 0.22s ease, margin 0.22s ease, border-width 0.22s ease;
 }
 .video-panel-toolbar.share-revealed .video-panel-toolbar-btn[data-stage="share"] {
-  opacity: 0.85;
+  opacity: 1;
   transform: translateY(0) scale(1);
   pointer-events: auto;
   width: auto;
@@ -830,10 +852,6 @@
   padding: 8px 12px 7px;
   margin-left: 0;
   border-width: 1px;
-}
-.video-panel-toolbar.share-revealed .video-panel-toolbar-btn[data-stage="share"]:hover,
-.video-panel-toolbar.share-revealed .video-panel-toolbar-btn[data-stage="share"].enabled {
-  opacity: 1;
 }
 
 .video-panel-toolbar-hint {
