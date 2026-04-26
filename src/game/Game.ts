@@ -208,7 +208,10 @@ export class Game {
       this.scene,
       this.sculptureTarget,
       this.paneDock,
-      sparks => { this.sparksToInitialize.push(sparks); }
+      sparks => {
+        if (this.renderer) sparks.initialize(this.renderer);
+        else this.sparksToInitialize.push(sparks);
+      }
     );
     this.installPlayerVisual('local', this.playerInstruments.local);
     this.installPlayerVisual('remote', this.playerInstruments.remote);
