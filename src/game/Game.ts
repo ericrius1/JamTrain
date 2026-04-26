@@ -334,6 +334,7 @@ export class Game {
     document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     this.handTracker.dispose();
     this.multiplayer.dispose();
+    this.poseSession.dispose();
     this.webrtc.dispose();
     this.robotMotion.dispose();
     this.scenery.dispose();
