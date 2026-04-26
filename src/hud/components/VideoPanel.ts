@@ -67,6 +67,10 @@ export class VideoPanel {
   private emptyOverlay?: HTMLDivElement;
   private toolbar?: HTMLDivElement;
   private hintEl?: HTMLDivElement;
+  private shareWarnOverlay?: HTMLDivElement;
+  private cameraEnabled = false;
+  private shareVideoEnabled = false;
+  private partnerPresent = false;
   private cameraListeners = new Set<() => void>();
   private shareVideoListeners = new Set<() => void>();
   private micListeners = new Set<() => void>();
@@ -92,6 +96,7 @@ export class VideoPanel {
 
       this.buildLocalControls();
       this.buildEmptyOverlay();
+      this.buildShareWarnOverlay();
     }
 
     this.label = document.createElement('div');
@@ -160,7 +165,20 @@ export class VideoPanel {
     this.emptyOverlay = empty;
   }
 
+  private buildShareWarnOverlay(): void {
+    const ribbon = document.createElement('div');
+    ribbon.className = 'video-panel-share-warn hidden';
+    ribbon.innerHTML = `
+      <div class="icon">${PARTNER_BLIND_SVG}</div>
+      <div class="heading">PARTNER CAN'T SEE YOU</div>
+      <div class="subhead">Tap Share Video to share your camera</div>
+    `;
+    this.wrapper.appendChild(ribbon);
+    this.shareWarnOverlay = ribbon;
+  }
+
   setCameraEnabled(enabled: boolean): void {
+    this.cameraEnabled = enabled;
     this.cameraButton?.classList.toggle('enabled', enabled);
     this.emptyOverlay?.classList.toggle('hidden', enabled);
     this.toolbar?.classList.toggle('share-revealed', enabled);
@@ -169,10 +187,26 @@ export class VideoPanel {
         ? 'Want your partner to see and hear you? Toggle Share Video / Mic →'
         : 'Tap Camera to track your hands · You can play without it with mouse/trackpad';
     }
+    this.recomputeShareWarn();
   }
 
   setShareVideoEnabled(enabled: boolean): void {
+    this.shareVideoEnabled = enabled;
     this.shareButton?.classList.toggle('enabled', enabled);
+    this.recomputeShareWarn();
+  }
+
+  setPartnerPresent(present: boolean): void {
+    if (this.mode !== 'local') return;
+    this.partnerPresent = present;
+    this.recomputeShareWarn();
+  }
+
+  private recomputeShareWarn(): void {
+    if (!this.shareWarnOverlay) return;
+    const visible =
+      this.partnerPresent && this.cameraEnabled && !this.shareVideoEnabled;
+    this.shareWarnOverlay.classList.toggle('hidden', !visible);
   }
 
   setMicEnabled(enabled: boolean): void {
