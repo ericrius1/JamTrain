@@ -8,6 +8,8 @@ const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
 ];
 
+const POSE_CHANNEL_LABEL = 'pose';
+
 export class WebRTCClient {
   private pc?: RTCPeerConnection;
   private remoteStream?: MediaStream;
@@ -134,7 +136,7 @@ export class WebRTCClient {
       // never worth waiting for retransmits at 30+ Hz. The next frame is the
       // truth. Channel must be created before createOffer() so its m-line
       // ends up in the SDP.
-      const channel = this.pc.createDataChannel('pose', {
+      const channel = this.pc.createDataChannel(POSE_CHANNEL_LABEL, {
         ordered: false,
         maxRetransmits: 0,
       });
@@ -181,7 +183,7 @@ export class WebRTCClient {
     };
 
     pc.ondatachannel = event => {
-      if (event.channel.label === 'pose') {
+      if (event.channel.label === POSE_CHANNEL_LABEL) {
         console.info('[webrtc] received pose channel');
         this.wirePoseChannel(event.channel);
       }
@@ -217,6 +219,9 @@ export class WebRTCClient {
   }
 
   private wirePoseChannel(channel: RTCDataChannel): void {
+    if (this.poseChannel && this.poseChannel !== channel) {
+      this.detachPoseChannel(this.poseChannel);
+    }
     this.poseChannel = channel;
     channel.onopen = () => console.info('[webrtc] pose channel open');
     channel.onclose = () => console.info('[webrtc] pose channel closed');
@@ -226,6 +231,14 @@ export class WebRTCClient {
       if (typeof data !== 'string') return;
       for (const listener of this.poseListeners) listener(data);
     };
+  }
+
+  private detachPoseChannel(channel: RTCDataChannel): void {
+    channel.onopen = null;
+    channel.onclose = null;
+    channel.onerror = null;
+    channel.onmessage = null;
+    try { channel.close(); } catch { /* ignore */ }
   }
 
   setShareVideo(enabled: boolean): void {
@@ -396,7 +409,7 @@ export class WebRTCClient {
         this.pc.onconnectionstatechange = null;
         this.pc.ondatachannel = null;
         if (this.poseChannel) {
-          try { this.poseChannel.close(); } catch { /* ignore */ }
+          this.detachPoseChannel(this.poseChannel);
           this.poseChannel = undefined;
         }
         this.pc.close();
