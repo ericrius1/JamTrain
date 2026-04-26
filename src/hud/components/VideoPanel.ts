@@ -44,29 +44,6 @@ const EMPTY_CAMERA_SVG = `
   <path d="M15.5 10.5l5.5-3v9l-5.5-3z"/>
 </svg>`;
 
-const CAMERA_OFF_SVG = `
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="2.5" y="6.5" width="13" height="11" rx="1.5"/>
-  <path d="M15.5 10.5l5.5-3v9l-5.5-3z"/>
-  <line x1="3" y1="3" x2="21" y2="21"/>
-</svg>`;
-
-const SHARE_OFF_SVG = `
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>
-  <circle cx="12" cy="12" r="3"/>
-  <line x1="3" y1="3" x2="21" y2="21"/>
-</svg>`;
-
-const MIC_OFF_SVG = `
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <rect x="9" y="3" width="6" height="12" rx="3"/>
-  <path d="M5 11a7 7 0 0 0 14 0"/>
-  <line x1="12" y1="18" x2="12" y2="22"/>
-  <line x1="8.5" y1="22" x2="15.5" y2="22"/>
-  <line x1="3" y1="3" x2="21" y2="21"/>
-</svg>`;
-
 const PARTNER_BLIND_SVG = `
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>
@@ -140,22 +117,19 @@ export class VideoPanel {
     this.cameraButton = makeToolbarButton({
       label: 'Camera',
       title: 'Turn on your camera so the game can track your hands.',
-      iconOn: CAMERA_SVG,
-      iconOff: CAMERA_OFF_SVG,
+      icon: CAMERA_SVG,
       onClick: () => { for (const l of this.cameraListeners) l(); },
     });
     this.shareButton = makeToolbarButton({
       label: 'Share Video',
       title: 'Optional — let your partner see your camera feed.',
-      iconOn: SHARE_SVG,
-      iconOff: SHARE_OFF_SVG,
+      icon: SHARE_SVG,
       onClick: () => { for (const l of this.shareVideoListeners) l(); },
     });
     this.micButton = makeToolbarButton({
       label: 'Mic',
       title: 'Optional — let your partner hear you.',
-      iconOn: MIC_SVG,
-      iconOff: MIC_OFF_SVG,
+      icon: MIC_SVG,
       onClick: () => { for (const l of this.micListeners) l(); },
     });
     // Share + Mic appear only after Camera is on (progressive disclosure).
@@ -348,8 +322,7 @@ export class VideoPanel {
 function makeToolbarButton(opts: {
   label: string;
   title: string;
-  iconOn: string;
-  iconOff: string;
+  icon: string;
   onClick: () => void;
 }): HTMLButtonElement {
   const btn = document.createElement('button');
@@ -357,11 +330,7 @@ function makeToolbarButton(opts: {
   btn.className = 'video-panel-toolbar-btn';
   btn.title = opts.title;
   btn.setAttribute('aria-label', opts.label);
-  btn.innerHTML = `
-    <span class="icon icon-on">${opts.iconOn}</span>
-    <span class="icon icon-off">${opts.iconOff}</span>
-    <span>${opts.label}</span>
-  `;
+  btn.innerHTML = `${opts.icon}<span>${opts.label}</span>`;
   btn.addEventListener('click', opts.onClick);
   return btn;
 }
