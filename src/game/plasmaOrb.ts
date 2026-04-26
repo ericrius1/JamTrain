@@ -20,7 +20,7 @@ const MAX_SURFACE_STEPS = 48;
 const MAX_REFINE_STEPS = 5;
 
 export const PLASMA_DEFS = {
-  radius:          { default: 0.42, min: 0.2,   max: 0.8,  step: 0.01,  label: 'orb radius' },
+  radius:          { default: 0.72, min: 0.2,   max: 0.8,  step: 0.01,  label: 'orb radius' },
   boundRadius:     { default: 1.08, min: 0.7,   max: 1.8,  step: 0.01,  label: 'field bounds' },
   fingerRadius:    { default: 0.030,min: 0.015, max: 0.16, step: 0.001, label: 'tip radius' },
   fingerInfluence: { default: 1.0,  min: 0,     max: 3,    step: 0.01,  label: 'tip influence' },
