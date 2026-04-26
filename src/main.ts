@@ -4,14 +4,14 @@ import { Hud, DEFAULT_BACKING_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME
 import { DevOverlay } from './hud/DevOverlay';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
 
-// Persisted toggle state (camera / share-video / mic). Browser permission
-// itself is sticky on the same origin, so re-enabling on next load just
-// flips track.enabled — no second prompt.
+// Persisted toggle state. Camera and volumes survive across sessions; share-
+// video and mic are intentionally NOT persisted — every new cabin entry is a
+// fresh opt-in to sharing your video/audio with whoever is in the room.
+// Browser permission itself is sticky on the same origin, so re-enabling on
+// next load just flips track.enabled — no second prompt.
 const PREFS_KEY = 'jam-train-av-prefs';
 type AvPrefs = {
   camera: boolean;
-  shareVideo: boolean;
-  mic: boolean;
   backingVolume: number;
   musicVolume: number;
   voiceVolume: number;
@@ -23,8 +23,6 @@ const clampUnit = (n: unknown, fallback: number): number => {
 const loadPrefs = (): AvPrefs => {
   const defaults: AvPrefs = {
     camera: false,
-    shareVideo: false,
-    mic: false,
     backingVolume: DEFAULT_BACKING_VOLUME,
     musicVolume: DEFAULT_MUSIC_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
@@ -35,8 +33,6 @@ const loadPrefs = (): AvPrefs => {
     const parsed = JSON.parse(raw) as Partial<AvPrefs>;
     return {
       camera: !!parsed.camera,
-      shareVideo: !!parsed.shareVideo,
-      mic: !!parsed.mic,
       backingVolume: clampUnit(parsed.backingVolume, DEFAULT_BACKING_VOLUME),
       musicVolume: clampUnit(parsed.musicVolume, DEFAULT_MUSIC_VOLUME),
       voiceVolume: clampUnit(parsed.voiceVolume, DEFAULT_VOICE_VOLUME),
@@ -104,16 +100,15 @@ const hud = new Hud({
       await game.startAudio();
       game.connectMultiplayer();
 
-      // Restore the previous session's toggle preferences. Browser permission
-      // is already granted (no prompt), so this is just flipping the saved
-      // tracks on. shareVideo only makes sense if camera is on too — we save
-      // the user's intent either way and apply it on the WebRTC clone.
+      // Restore camera (browser permission is sticky, so this just flips the
+      // saved track on with no prompt). Share-video and mic always start off
+      // on cabin entry — re-sharing is an explicit per-cabin opt-in.
       game.setCameraEnabled(avPrefs.camera);
-      game.setMicEnabled(avPrefs.mic);
-      game.setShareVideoEnabled(avPrefs.shareVideo);
+      game.setMicEnabled(false);
+      game.setShareVideoEnabled(false);
       hud.setCameraEnabled(avPrefs.camera);
-      hud.setMicEnabled(avPrefs.mic);
-      hud.setShareVideoEnabled(avPrefs.shareVideo);
+      hud.setMicEnabled(false);
+      hud.setShareVideoEnabled(false);
 
       game.setBackingVolume(avPrefs.backingVolume);
       game.setMusicVolume(avPrefs.musicVolume);
@@ -125,6 +120,7 @@ const hud = new Hud({
     onRoomChange: room => {
       game.setRoom(room);
       hud.setRoom(room);
+      resetShareAndMic();
     },
     onRecalibrate: () => {
       // TODO: hand tracker exposes no public recalibrate(); restart camera as
@@ -147,7 +143,22 @@ hud.setCameraMode('game');
 game.onAssignedRoom(room => {
   writeRoomToUrl(room);
   hud.setRoom(room);
+  resetShareAndMic();
 });
+
+// Reset share-video + mic to off whenever we enter a new cabin. Privacy:
+// don't carry an opt-in to share with one room into another. Camera stays
+// as-is so hand tracking isn't interrupted.
+function resetShareAndMic(): void {
+  if (game.getShareVideoEnabled()) {
+    game.setShareVideoEnabled(false);
+    hud.setShareVideoEnabled(false);
+  }
+  if (game.getMicEnabled()) {
+    game.setMicEnabled(false);
+    hud.setMicEnabled(false);
+  }
+}
 
 // Boarding toast — fires only on a *new* arrival in our cabin (post-subscribe).
 // Existing partners that were already in the cabin when we boarded are silent.
@@ -174,6 +185,7 @@ onUrlRoomChange(room => {
   // Browser back/forward → re-issue request_seat for the new path.
   game.setRoom(room);
   hud.setRoom(room);
+  resetShareAndMic();
 });
 
 const observe = (el: HTMLElement, push: (text: string) => void): MutationObserver => {
@@ -220,15 +232,11 @@ hud.onShareVideoToggle(() => {
   const next = !game.getShareVideoEnabled();
   game.setShareVideoEnabled(next);
   hud.setShareVideoEnabled(next);
-  avPrefs.shareVideo = next;
-  savePrefs(avPrefs);
 });
 hud.onMicToggle(() => {
   const next = !game.getMicEnabled();
   game.setMicEnabled(next);
   hud.setMicEnabled(next);
-  avPrefs.mic = next;
-  savePrefs(avPrefs);
 });
 hud.onBackingVolumeChange(value => {
   game.setBackingVolume(value);
