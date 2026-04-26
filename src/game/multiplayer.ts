@@ -27,6 +27,7 @@ export class MultiplayerClient {
   private connectionState: ConnectionState = 'local';
   private remotePose?: PlayerPose;
   private lastSendAt = 0;
+  private poseTransport?: (poseJson: string) => void;
   private channel?: BroadcastChannel;
   private stateListeners = new Set<StateListener>();
   private roomListeners = new Set<RoomListener>();
@@ -216,6 +217,10 @@ export class MultiplayerClient {
     this.displayName = displayName;
   }
 
+  setPoseTransport(send: (poseJson: string) => void): void {
+    this.poseTransport = send;
+  }
+
   sendPose(pose: PlayerPose, time: number): void {
     if (time - this.lastSendAt < 0.055) return;
     this.lastSendAt = time;
@@ -229,6 +234,10 @@ export class MultiplayerClient {
       sentAt: Date.now(),
     });
 
+    // Primary transport: peer-to-peer DataChannel. SpacetimeDB pose mirror
+    // is kept for one more commit (Task 5 deletes it) so we can compare.
+    this.poseTransport?.(poseJson);
+
     if (this.connection?.isActive) {
       void this.connection.reducers.updatePose({ roomId: this.roomId, poseJson }).catch(error => {
         console.warn('SpacetimeDB pose update failed', error);
@@ -238,6 +247,20 @@ export class MultiplayerClient {
 
   getRemotePose(): PlayerPose | undefined {
     return this.remotePose;
+  }
+
+  applyRemotePose(poseJson: string): void {
+    const pose = parsePose(poseJson);
+    if (!pose) return;
+    if (pose.id === this.localId) return;
+    // We trust the channel's authenticity (it's a per-peer connection)
+    // but still want the seatIndex to reflect our local view.
+    this.remotePose = {
+      ...pose,
+      roomId: this.roomId,
+      seatIndex: this.partnerSeatIndex,
+      updatedAt: Date.now(),
+    };
   }
 
   getState(): ConnectionState {

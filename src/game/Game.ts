@@ -140,6 +140,8 @@ export class Game {
     this.webrtc.onRemoteStream(stream => {
       for (const listener of this.remoteStreamListeners) listener(stream);
     });
+    this.multiplayer.setPoseTransport(json => this.webrtc.sendPose(json));
+    this.webrtc.onRemotePose(json => this.multiplayer.applyRemotePose(json));
 
     this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
     this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
