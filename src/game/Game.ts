@@ -105,6 +105,7 @@ export class Game {
   private sharedEpoch: number;
   private localPose?: PlayerPose;
   private remotePose?: PlayerPose;
+  private partnerPresent = false;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -127,6 +128,9 @@ export class Game {
     this.multiplayer.onAssignedRoom(room => {
       this.roomSeed = hashString(room);
       this.scenery.setRoomSeed(this.roomSeed);
+    });
+    this.multiplayer.onPartnerIdentity(identity => {
+      this.partnerPresent = identity !== null;
     });
 
     this.webrtc = new WebRTCClient(
@@ -672,8 +676,13 @@ export class Game {
     const remoteFromNetwork = this.multiplayer.getRemotePose();
     const robotHands = this.robotMotion.update(elapsed, delta, localPose);
     const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, true);
-    const remotePose = remoteFromNetwork ?? robotPose;
-    const robotTarget = remoteFromNetwork ? 0 : 1;
+    // Presence (player row in our cabin) drives form. Pose freshness only
+    // drives hand articulation. If partner is here but no pose has arrived
+    // yet (or it paused — hands out of frame), hold the last-known pose.
+    const remotePose = this.partnerPresent
+      ? (remoteFromNetwork ?? this.remotePose ?? robotPose)
+      : robotPose;
+    const robotTarget = this.partnerPresent ? 0 : 1;
 
     this.localPose = localPose;
     this.remotePose = remotePose;

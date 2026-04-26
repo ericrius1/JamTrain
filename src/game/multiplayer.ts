@@ -16,10 +16,6 @@ type PartnerIdentityListener = (identityHex: string | null) => void;
 const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
 const TOKEN_STORAGE_KEY = 'jam-train-spacetime-token';
-// Tolerate brief reconnect gaps. The server now keeps player rows on
-// disconnect (marking them offline), so within this window the partner's
-// last pose stays visible instead of snapping back to robot.
-const POSE_STALE_MS = 8000;
 
 export class MultiplayerClient {
   localId = `local-${crypto.randomUUID()}`;
@@ -240,9 +236,8 @@ export class MultiplayerClient {
     }
   }
 
-  getRemotePose(now = Date.now()): PlayerPose | undefined {
-    if (!this.remotePose) return undefined;
-    return now - this.remotePose.updatedAt < POSE_STALE_MS ? this.remotePose : undefined;
+  getRemotePose(): PlayerPose | undefined {
+    return this.remotePose;
   }
 
   getState(): ConnectionState {
