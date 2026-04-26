@@ -12,7 +12,7 @@ import { Bloom } from './visuals/Bloom';
 import { Ribbon } from './visuals/Ribbon';
 import { Sparks } from './visuals/Sparks';
 import { CenterStage } from './CenterStage';
-import { type InstrumentId, type PlayerVisual } from './instruments';
+import { isInstrumentId, type InstrumentId, type PlayerVisual } from './instruments';
 import { makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
@@ -83,7 +83,7 @@ export class Game {
   readonly handTracker: HandTracker;
   private audio: AudioEngine;
   private handSynth: HandSynthEngine;
-  private multiplayer: MultiplayerClient;
+  readonly multiplayer: MultiplayerClient;
   private webrtc: WebRTCClient;
   private poseSession!: PoseSession;
   private broadcastTransport!: BroadcastChannelPoseTransport;
@@ -696,7 +696,11 @@ export class Game {
     this.playerVisuals[player] = visual;
   }
 
-  setPlayerInstrument(player: 'local' | 'remote', id: InstrumentId): void {
+  setPlayerInstrument(player: 'local' | 'remote', id: string): void {
+    if (!isInstrumentId(id)) {
+      console.warn('[game] setPlayerInstrument: invalid id', id);
+      return;
+    }
     if (this.playerInstruments[player] === id) return;
     this.playerInstruments[player] = id;
     this.installPlayerVisual(player, id);

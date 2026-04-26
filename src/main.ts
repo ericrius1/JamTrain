@@ -3,6 +3,9 @@ import { Game } from './game/Game';
 import { Hud, DEFAULT_BACKING_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME } from './hud/Hud';
 import { DevOverlay } from './hud/DevOverlay';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
+import { isInstrumentId, type InstrumentId } from './game/instruments';
+
+const LOCAL_INSTRUMENT_KEY = 'jam-train.local-instrument';
 
 // Persisted toggle state. Camera and volumes survive across sessions; share-
 // video and mic are intentionally NOT persisted — every new cabin entry is a
@@ -180,6 +183,54 @@ game.onPartnerChange(name => {
 game.onSeatChange(localSeat => {
   hud.setLocalSeat(localSeat);
 });
+
+// Local picker change → local synth/visual swap + sync over multiplayer.
+hud.onLocalInstrumentChange(id => {
+  game.setPlayerInstrument('local', id);
+  void game.multiplayer.setLocalInstrument(id);
+  localStorage.setItem(LOCAL_INSTRUMENT_KEY, id);
+});
+
+// Local instrument arrives from server (e.g. our row's persisted value):
+game.multiplayer.onLocalInstrumentChange(id => {
+  if (!isInstrumentId(id)) return;
+  hud.setLocalInstrument(id);
+  game.setPlayerInstrument('local', id);
+});
+
+// Partner picker mirror:
+game.multiplayer.onPartnerInstrumentChange(id => {
+  if (!isInstrumentId(id)) return;
+  hud.setPartnerInstrument(id);
+  game.setPlayerInstrument('remote', id);
+});
+
+// Auto-default for second player + persistence:
+const stored = localStorage.getItem(LOCAL_INSTRUMENT_KEY);
+const hasStored = stored !== null && isInstrumentId(stored);
+
+let firstPartnerSeen = false;
+game.multiplayer.onPartnerInstrumentChange(id => {
+  if (firstPartnerSeen) return;
+  if (hasStored) { firstPartnerSeen = true; return; }
+  if (!isInstrumentId(id)) return;
+  // Pick the first instrument that isn't the partner's.
+  const choices: InstrumentId[] = ['flute', 'bell', 'sparks'];
+  const pick = choices.find(c => c !== id) ?? 'flute';
+  firstPartnerSeen = true;
+  hud.setLocalInstrument(pick);
+  game.setPlayerInstrument('local', pick);
+  void game.multiplayer.setLocalInstrument(pick);
+  localStorage.setItem(LOCAL_INSTRUMENT_KEY, pick);
+});
+
+// On boot, if we DO have a stored value, apply it immediately and push to server.
+if (hasStored) {
+  const id = stored as InstrumentId;
+  hud.setLocalInstrument(id);
+  game.setPlayerInstrument('local', id);
+  void game.multiplayer.setLocalInstrument(id);
+}
 
 onUrlRoomChange(room => {
   // Browser back/forward → re-issue request_seat for the new path.
