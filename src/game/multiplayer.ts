@@ -218,6 +218,10 @@ export class MultiplayerClient {
             this.partnerIdentityHex = null;
             for (const listener of this.partnerIdentityListeners) listener(null);
           }
+          if (this.partnerInstrument !== 'flute') {
+            this.partnerInstrument = 'flute';
+            for (const listener of this.partnerInstrumentListeners) listener('flute');
+          }
           this.setState('local');
           this.scheduleReconnect();
         })
