@@ -1,5 +1,11 @@
-import { Pane } from 'tweakpane';
+import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import type { Handedness } from './types';
+
+export const HAND_FILTER_DEFS = {
+  enabled:          { type: 'boolean', default: true,   label: 'kalman on' },
+  processNoise:     { default: 0.005,  min: 0.0001, max: 0.1, step: 0.0001, label: 'process Q' },
+  measurementNoise: { default: 0.06,   min: 0.001,  max: 0.5, step: 0.001,  label: 'measure R' },
+} as const;
 
 const LANDMARK_COUNT = 21;
 
@@ -44,11 +50,7 @@ function makeLandmarkFilters(): LandmarkFilters {
   };
 }
 
-export type HandFilterParams = {
-  enabled: boolean;
-  processNoise: number;
-  measurementNoise: number;
-};
+export type HandFilterParams = ParamsOf<typeof HAND_FILTER_DEFS>;
 
 export type FilterableLandmark = { x: number; y: number; z?: number };
 
@@ -58,11 +60,11 @@ export class HandFilter {
     right: makeLandmarkFilters(),
   };
   private params: HandFilterParams = {
-    enabled: true,
-    processNoise: 0.005,
-    measurementNoise: 0.06,
+    enabled: HAND_FILTER_DEFS.enabled.default,
+    processNoise: HAND_FILTER_DEFS.processNoise.default,
+    measurementNoise: HAND_FILTER_DEFS.measurementNoise.default,
   };
-  private pane?: Pane;
+  private registered?: ReturnType<typeof registerTweaks<typeof HAND_FILTER_DEFS>>;
 
   applyToLandmarks(handedness: Handedness, landmarks: FilterableLandmark[]): FilterableLandmark[] {
     if (!this.params.enabled) return landmarks;
@@ -113,34 +115,18 @@ export class HandFilter {
   }
 
   attachPane(paneDock: HTMLElement): void {
-    if (this.pane) return;
-    const container = document.createElement('div');
-    paneDock.appendChild(container);
-    this.pane = new Pane({ title: 'Hand Smoothing', container });
-    this.pane.expanded = false;
-    this.pane.addBinding(this.params, 'enabled', { label: 'kalman on' });
-    this.pane.addBinding(this.params, 'processNoise', {
-      label: 'process Q',
-      min: 0.0001,
-      max: 0.1,
-      step: 0.0001,
+    if (this.registered) return;
+    this.registered = registerTweaks(paneDock, 'handFilter', HAND_FILTER_DEFS, {
+      title: 'Hand Smoothing',
+      params: this.params,
+      buttons: [
+        { title: 'reset filters', onClick: () => { this.resetHand('left'); this.resetHand('right'); } },
+      ],
     });
-    this.pane.addBinding(this.params, 'measurementNoise', {
-      label: 'measure R',
-      min: 0.001,
-      max: 0.5,
-      step: 0.001,
-    });
-    this.pane
-      .addButton({ title: 'reset filters' })
-      .on('click', () => {
-        this.resetHand('left');
-        this.resetHand('right');
-      });
   }
 
   dispose(): void {
-    this.pane?.dispose();
-    this.pane = undefined;
+    this.registered?.dispose();
+    this.registered = undefined;
   }
 }

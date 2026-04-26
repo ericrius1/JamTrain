@@ -126,8 +126,12 @@ export class Game {
 
     this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
     this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
-    this.localRig.setFingertipNodesVisible(false);
-    this.remoteRig.setFingertipNodesVisible(false);
+    // Per-frame visibility is managed in updateLinks: a fingertip node is
+    // shown as a small standalone glowing ball whenever it is NOT actively
+    // feeding the central orb (untracked, or tracked but out of orb range),
+    // and hidden when it is so the metaball blob can take over.
+    this.localRig.setFingertipNodesVisible(true);
+    this.remoteRig.setFingertipNodesVisible(true);
     this.applyPlayerBackOffset();
     this.multiplayer.onSeatChange((localSeat, partnerSeat) => {
       this.localRig.setSeatIndex(localSeat);
@@ -708,6 +712,13 @@ export class Game {
           { id: `local:${handedness}:${finger}`, position: from, tracked: localTracked },
           { id: `remote:${handedness}:${finger}`, position: to, tracked: remoteTracked },
         );
+
+        // Show the rig's standalone fingertip ball whenever this tip isn't
+        // about to be absorbed into the orb's metaball field.
+        const localActive = localTracked && !!this.plasmaOrb?.inActiveRange(from);
+        const remoteActive = remoteTracked && !!this.plasmaOrb?.inActiveRange(to);
+        this.localRig.setFingertipNodeVisible(handedness, finger, !localActive);
+        this.remoteRig.setFingertipNodeVisible(handedness, finger, !remoteActive);
         const fromData = fromThree(from);
         const toData = fromThree(to);
         const tension = clamp(1.25 - Math.abs(distance(fromData, toData) - 1.1) * 0.42, 0.08, 1);

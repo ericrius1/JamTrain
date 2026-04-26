@@ -1,4 +1,4 @@
-import { Pane } from 'tweakpane';
+import { makeParams, registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { clamp, cloneVec, hash, lerp, lerpVec, vec } from './math';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PlayerPose, type Vec3Data } from './types';
 
@@ -13,41 +13,28 @@ type RobotMotionPhase = {
   index: number;
 };
 
-export type RobotMotionParams = {
-  mode: RobotMotionMode;
-  motionScale: number;
-  idleMotion: number;
-  handLift: number;
-  handDrift: number;
-  fingerActivity: number;
-  playerInfluence: number;
-  stillness: number;
-  sequenceSpeed: number;
-  holdMinSeconds: number;
-  holdMaxSeconds: number;
-  moveMinSeconds: number;
-  moveMaxSeconds: number;
-  handSmooth: number;
-  fingerSmooth: number;
-};
+export const ROBOT_MOTION_DEFS = {
+  mode:            { type: 'select',  default: 'auto', options: { auto: 'auto', still: 'still', solo: 'solo', mirror: 'mirror', complement: 'complement', opposite: 'opposite' }, folder: 'Behavior' },
+  stillness:       { default: 0.34,   min: 0,    max: 0.9,  step: 0.01, folder: 'Behavior', label: 'stillness' },
+  sequenceSpeed:   { default: 1,      min: 0.25, max: 2.5,  step: 0.01, folder: 'Behavior', label: 'sequence speed' },
+  playerInfluence: { default: 0.56,   min: 0,    max: 1,    step: 0.01, folder: 'Behavior', label: 'player follow' },
 
-const defaultRobotMotionParams: RobotMotionParams = {
-  mode: 'auto',
-  motionScale: 0.78,
-  idleMotion: 0.12,
-  handLift: 0.12,
-  handDrift: 0.075,
-  fingerActivity: 0.46,
-  playerInfluence: 0.56,
-  stillness: 0.34,
-  sequenceSpeed: 1,
-  holdMinSeconds: 1.25,
-  holdMaxSeconds: 3.1,
-  moveMinSeconds: 2.4,
-  moveMaxSeconds: 5.2,
-  handSmooth: 0.68,
-  fingerSmooth: 0.76,
-};
+  motionScale:    { default: 0.78,  min: 0, max: 1.6,  step: 0.01,  folder: 'Gesture', label: 'motion scale' },
+  idleMotion:     { default: 0.12,  min: 0, max: 0.5,  step: 0.01,  folder: 'Gesture', label: 'idle motion' },
+  handLift:       { default: 0.12,  min: 0, max: 0.28, step: 0.005, folder: 'Gesture', label: 'hand lift' },
+  handDrift:      { default: 0.075, min: 0, max: 0.2,  step: 0.005, folder: 'Gesture', label: 'hand drift' },
+  fingerActivity: { default: 0.46,  min: 0, max: 1.1,  step: 0.01,  folder: 'Gesture', label: 'fingers' },
+
+  holdMinSeconds: { default: 1.25, min: 0.2, max: 6,  step: 0.05, folder: 'Timing', label: 'hold min' },
+  holdMaxSeconds: { default: 3.1,  min: 0.2, max: 8,  step: 0.05, folder: 'Timing', label: 'hold max' },
+  moveMinSeconds: { default: 2.4,  min: 0.5, max: 8,  step: 0.05, folder: 'Timing', label: 'move min' },
+  moveMaxSeconds: { default: 5.2,  min: 0.5, max: 10, step: 0.05, folder: 'Timing', label: 'move max' },
+
+  handSmooth:   { default: 0.68, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'hand smooth' },
+  fingerSmooth: { default: 0.76, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'finger smooth' },
+} as const;
+
+export type RobotMotionParams = ParamsOf<typeof ROBOT_MOTION_DEFS> & { mode: RobotMotionMode };
 
 const fingerSpread: Record<FingerName, number> = {
   thumb: -0.24,

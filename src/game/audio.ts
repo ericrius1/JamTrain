@@ -1,6 +1,19 @@
-import { Pane } from 'tweakpane';
+import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { clamp, distance } from './math';
 import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Data } from './types';
+
+export const AUDIO_DEFS = {
+  masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master' },
+  chordCycleSeconds:  { default: 35,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
+  attackSeconds:      { default: 1.6,  min: 0.2,  max: 6,    step: 0.1,  label: 'attack sec' },
+  releaseSeconds:     { default: 5.5,  min: 1,    max: 12,   step: 0.1,  label: 'release sec' },
+  filterMaxHz:        { default: 3000, min: 1500, max: 8000, step: 50,   label: 'filter ceil' },
+  reverbWetRange:     { default: 0.18, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
+  shimmerMaxDb:       { default: -18,  min: -30,  max: 0,    step: 0.5,  label: 'shimmer dB' },
+  muteHandModulation: { type: 'boolean', default: false, label: 'mute hands' },
+} as const;
+
+export type AudioParams = ParamsOf<typeof AUDIO_DEFS>;
 
 type ChordVoicing = {
   voices: [string, string, string];
@@ -65,7 +78,7 @@ export class AudioEngine {
 
   private chordIndex = 0;
   private chordPhase = 0;
-  private pane?: Pane;
+  private registered?: ReturnType<typeof registerTweaks<typeof AUDIO_DEFS>>;
 
   // Smoothed input stats — drift slowly so hand-loss does not snap.
   private smoothed = {
@@ -76,15 +89,15 @@ export class AudioEngine {
     presence: 0,
   };
 
-  private params = {
-    masterGain: 0.35,
-    chordCycleSeconds: 35,
-    attackSeconds: 1.6,
-    releaseSeconds: 5.5,
-    filterMaxHz: 3000,
-    reverbWetRange: 0.18,
-    shimmerMaxDb: -18,
-    muteHandModulation: false,
+  private params: AudioParams = {
+    masterGain: AUDIO_DEFS.masterGain.default,
+    chordCycleSeconds: AUDIO_DEFS.chordCycleSeconds.default,
+    attackSeconds: AUDIO_DEFS.attackSeconds.default,
+    releaseSeconds: AUDIO_DEFS.releaseSeconds.default,
+    filterMaxHz: AUDIO_DEFS.filterMaxHz.default,
+    reverbWetRange: AUDIO_DEFS.reverbWetRange.default,
+    shimmerMaxDb: AUDIO_DEFS.shimmerMaxDb.default,
+    muteHandModulation: AUDIO_DEFS.muteHandModulation.default,
   };
 
   constructor(
@@ -238,7 +251,7 @@ export class AudioEngine {
     const CURVE_EXP = 2.5;
     const v = value <= 0 ? 0 : Math.min(1, value);
     this.params.masterGain = MAX_MUSIC_GAIN * Math.pow(v, CURVE_EXP);
-    this.pane?.refresh();
+    this.registered?.pane?.refresh();
   }
 
   getMasterGain(): number {
@@ -299,7 +312,7 @@ export class AudioEngine {
     this.panner?.dispose?.();
     this.compressor?.dispose?.();
     this.master?.dispose?.();
-    this.pane?.dispose();
+    this.registered?.dispose();
     this.publish();
   }
 
@@ -394,24 +407,15 @@ export class AudioEngine {
   }
 
   private attachPane(): void {
-    if (!this.paneDock) return;
-    const container = document.createElement('div');
-    this.paneDock.appendChild(container);
-    this.pane = new Pane({ title: 'Audio', container });
-    this.pane.expanded = false;
-
-    this.pane.addBinding(this.params, 'masterGain', { label: 'master', min: 0, max: 1, step: 0.01 });
-    this.pane.addBinding(this.params, 'chordCycleSeconds', { label: 'chord seconds', min: 8, max: 120, step: 1 });
-    this.pane
-      .addBinding(this.params, 'attackSeconds', { label: 'attack sec', min: 0.2, max: 6, step: 0.1 })
-      .on('change', () => this.applyEnvelopeUpdate());
-    this.pane
-      .addBinding(this.params, 'releaseSeconds', { label: 'release sec', min: 1, max: 12, step: 0.1 })
-      .on('change', () => this.applyEnvelopeUpdate());
-    this.pane.addBinding(this.params, 'filterMaxHz', { label: 'filter ceil', min: 1500, max: 8000, step: 50 });
-    this.pane.addBinding(this.params, 'reverbWetRange', { label: 'verb mod', min: 0, max: 0.6, step: 0.01 });
-    this.pane.addBinding(this.params, 'shimmerMaxDb', { label: 'shimmer dB', min: -30, max: 0, step: 0.5 });
-    this.pane.addBinding(this.params, 'muteHandModulation', { label: 'mute hands' });
+    if (!this.paneDock || this.registered) return;
+    this.registered = registerTweaks(this.paneDock, 'audio', AUDIO_DEFS, {
+      title: 'Audio',
+      params: this.params,
+      onChange: {
+        attackSeconds:  () => this.applyEnvelopeUpdate(),
+        releaseSeconds: () => this.applyEnvelopeUpdate(),
+      },
+    });
   }
 
   private publish(): void {

@@ -546,6 +546,10 @@ export class PlasmaOrb {
     this.targetFingertips = fingertips.slice(0, MAX_FINGER_METABALLS);
   }
 
+  inActiveRange(point: THREE.Vector3): boolean {
+    return point.distanceToSquared(this.mesh.position) <= this.activeTipRange * this.activeTipRange;
+  }
+
   setEnergy(energy: number): void {
     this.targetEnergy = Math.max(0, Math.min(1, energy * this.energyBoost));
   }
