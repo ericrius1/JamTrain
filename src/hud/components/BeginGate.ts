@@ -5,6 +5,8 @@
 // The outer wrap is a fixed black overlay; the inner stage scales to fit the
 // viewport so the painting + rails keep their designed proportions.
 
+import './BeginGate.css';
+
 const CONDUCTOR_NAMES = [
   'Solas', 'Ember', 'Vesper', 'Cinder', 'Halcyon',
   'Marrow', 'Lumen', 'Atlas', 'Foxglove', 'Tannhauser',

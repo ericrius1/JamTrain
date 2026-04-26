@@ -1,0 +1,313 @@
+/* TrainJam intro / "press start" screen — immersive full-bleed.
+   The lion painting fills the 1920×1014 stage and UI lives only on top +
+   bottom rails so the artwork is never covered. The outer wrap is a fixed
+   black frame; the inner stage scales to fit the viewport (letterboxed) so
+   the painting and rails always keep their designed proportions.
+
+   Tokens (--sun, --brass, --leather, --parchment, --text-dim, --danger) are
+   defined in src/hud/style.css. The intro relies on style.css being loaded
+   alongside it so those vars resolve. */
+
+.begin-gate {
+  position: fixed;
+  inset: 0;
+  background: #050607;
+  overflow: hidden;
+  z-index: 100;
+  pointer-events: auto;
+  animation: beginFadeIn 0.6s ease both;
+}
+.begin-stage {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1920px;
+  height: 1014px;
+  transform-origin: center center;
+  transform: translate(-50%, -50%) scale(1);
+  background: #000;
+  overflow: hidden;
+  font-family: 'IM Fell English', Georgia, serif;
+  color: var(--parchment);
+  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.6);
+}
+
+.begin-lion {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  animation: beginParallax 18s ease-in-out infinite alternate;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.begin-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(ellipse 75% 60% at 60% 50%, transparent 50%, rgba(0, 0, 0, 0.55) 100%);
+}
+.begin-top-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 220px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
+}
+
+/* Top rail — sparse meta on either side, headphones pill in the middle. */
+.begin-top-rail {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  padding: 36px 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.begin-meta-left {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 12px;
+  letter-spacing: 0.4em;
+  color: var(--brass);
+}
+.begin-meta-right {
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+}
+.begin-headphones-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 18px;
+  border: 1px solid var(--brass-2);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.45);
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.18),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5);
+  color: var(--parchment);
+  font-family: 'IM Fell English SC', serif;
+  font-size: 12px;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+}
+.begin-headphones-pill svg {
+  width: 18px;
+  height: 15px;
+  color: var(--sun);
+  flex: 0 0 auto;
+}
+
+/* Title block — anchored along the left edge, vertically near the upper-third
+   so the lion's face stays unoccluded. */
+.begin-title-block {
+  position: absolute;
+  left: 80px;
+  top: 320px;
+  text-align: left;
+}
+.begin-eyebrow {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 22px;
+  letter-spacing: 0.55em;
+  color: var(--brass);
+}
+.begin-display {
+  font-family: 'IM Fell English', serif;
+  font-size: 150px;
+  line-height: 0.92;
+  color: var(--sun);
+  letter-spacing: 0.01em;
+  margin-top: 6px;
+  text-shadow:
+    0 2px 0 rgba(0, 0, 0, 0.6),
+    0 0 50px rgba(246, 179, 51, 0.35);
+}
+
+/* Bottom rail — purely a positioning + animation wrapper. The conductor
+   field is absolutely centered against the stage, and the BEGIN action
+   column floats at the right margin, so the conductor sits dead-center
+   regardless of how wide the action column gets. */
+.begin-bottom-rail {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 60px;
+  height: 0;
+}
+.begin-conductor-field {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.begin-conductor-label {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 12px;
+  letter-spacing: 0.42em;
+  color: var(--brass);
+}
+.begin-conductor-input-row {
+  display: flex;
+  gap: 8px;
+}
+.begin-conductor-input {
+  width: 300px;
+  padding: 14px 18px 12px;
+  background: linear-gradient(180deg, rgba(20, 12, 4, 0.92), rgba(8, 5, 2, 0.95));
+  border: 1.5px solid var(--brass);
+  color: var(--sun);
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+  font-size: 26px;
+  text-align: center;
+  border-radius: 2px;
+  outline: none;
+  caret-color: var(--sun);
+  box-shadow:
+    inset 0 2px 4px rgba(0, 0, 0, 0.6),
+    0 0 16px rgba(246, 179, 51, 0.18);
+}
+.begin-conductor-input:focus { border-color: var(--sun); }
+.begin-conductor-input:disabled { opacity: 0.6; }
+.begin-conductor-input::selection { background: rgba(246, 179, 51, 0.3); }
+.begin-reroll {
+  width: 46px;
+  background: rgba(20, 12, 4, 0.6);
+  border: 1px solid var(--brass-2);
+  color: var(--brass);
+  font-size: 18px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: color 0.18s ease, border-color 0.18s ease;
+}
+.begin-reroll:hover {
+  color: var(--sun);
+  border-color: var(--sun);
+}
+
+.begin-action-col {
+  position: absolute;
+  right: 80px;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.begin-start {
+  font-family: 'IM Fell English SC', serif;
+  letter-spacing: 0.32em;
+  font-size: 20px;
+  padding: 20px 56px 18px;
+  color: var(--leather);
+  background: linear-gradient(180deg, #f6c45a 0%, #c8862a 100%);
+  border: 1px solid #6b4720;
+  border-radius: 2px;
+  cursor: pointer;
+  text-transform: uppercase;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 235, 180, 0.7),
+    inset 0 -1px 0 rgba(120, 70, 20, 0.6),
+    0 2px 4px rgba(0, 0, 0, 0.5);
+  transition: background 0.18s ease;
+}
+.begin-start:hover {
+  background: linear-gradient(180deg, #ffd06a 0%, #d8932e 100%);
+}
+.begin-start:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.begin-start:focus-visible {
+  outline: 1px solid var(--sun);
+  outline-offset: 3px;
+}
+.begin-awaken {
+  margin: 14px 0 0;
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+  font-size: 16px;
+  line-height: 1.45;
+  color: var(--text-dim);
+  max-width: 280px;
+  text-align: right;
+}
+.begin-err {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: var(--danger);
+  min-height: 14px;
+  text-align: right;
+}
+
+/* Drifting embers — purely decorative golden motes rising from the bottom. */
+.begin-embers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.begin-ember {
+  position: absolute;
+  bottom: -10px;
+  border-radius: 50%;
+  background: var(--sun);
+  box-shadow: 0 0 8px rgba(246, 179, 51, 0.7);
+  opacity: 0;
+  animation-name: beginEmberRise;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+}
+
+@keyframes beginFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes beginParallax {
+  0%   { transform: scale(1.04) translate(0, 0); }
+  100% { transform: scale(1.06) translate(-12px, -6px); }
+}
+@keyframes beginFadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes beginFadeDown {
+  from { opacity: 0; transform: translateY(-18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes beginEmberRise {
+  0%   { transform: translateY(0)      translateX(0);  opacity: 0; }
+  8%   {                                                opacity: 0.9; }
+  90%  {                                                opacity: 0.5; }
+  100% { transform: translateY(-1100px) translateX(40px); opacity: 0; }
+}
+.begin-fade-up   { animation: beginFadeUp   0.9s ease-out both; }
+.begin-fade-down { animation: beginFadeDown 0.9s ease-out both; }
+.begin-delay-1   { animation-delay: 0.25s; }
+.begin-delay-2   { animation-delay: 0.40s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .begin-fade-up,
+  .begin-fade-down {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .begin-lion { animation: none; }
+  .begin-ember { animation: none; opacity: 0; }
+}

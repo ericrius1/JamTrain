@@ -38,8 +38,8 @@ export class Hud {
   private remotePanel: VideoPanel;
   private mixerPanel: MixerPanel;
   private localInstrumentPicker: InstrumentPicker;
-  private partnerInstrumentPicker: InstrumentPicker;
   private localInstrumentListeners = new Set<(id: InstrumentId) => void>();
+  private partnerInstrument: InstrumentId = 'bell';
   private beginGate?: BeginGate;
   private sharePopover: SharePopover;
   private shareButton: HTMLButtonElement;
@@ -142,24 +142,18 @@ export class Hud {
     this.remotePanel.setRemoteVolume(DEFAULT_VOICE_VOLUME);
     this.uiEl.appendChild(this.mixerPanel.el);
 
-    const localSide = this.localSeat === 0 ? 'left' : 'right';
-    const partnerSide = this.localSeat === 0 ? 'right' : 'left';
-
+    // The picker lives inside the local player's plaque (so it appears as
+    // part of the same brass placard as their name/instrument label). The
+    // partner's plaque just shows the voice label as text — no picker.
+    // applyPlaques() (called below + on every seat/partner change) handles
+    // routing the picker to whichever plaque is currently "local".
     this.localInstrumentPicker = new InstrumentPicker({
-      side: localSide,
+      side: 'left', // placeholder; .player-plaque overrides positioning
       initial: 'flute',
     });
     this.localInstrumentPicker.onSelect(id => {
       for (const l of this.localInstrumentListeners) l(id);
     });
-    stageWrap.appendChild(this.localInstrumentPicker.el);
-
-    this.partnerInstrumentPicker = new InstrumentPicker({
-      side: partnerSide,
-      initial: 'bell',
-      readonly: true,
-    });
-    stageWrap.appendChild(this.partnerInstrumentPicker.el);
 
     this.currentRoom = opts.room;
     this.renderNetRow();
@@ -171,6 +165,9 @@ export class Hud {
       },
     });
     stageWrap.appendChild(this.beginGate.el);
+
+    // Initial plaque render attaches the picker to the local plaque.
+    this.applyPlaques();
 
     this.resizeHandler = () => this.fitStage();
     window.addEventListener('resize', this.resizeHandler);
@@ -192,10 +189,6 @@ export class Hud {
     this.applyPlaques();
     this.localPanel.setSide(next === 0 ? 'left' : 'right');
     this.remotePanel.setSide(next === 0 ? 'right' : 'left');
-    this.localInstrumentPicker.el.classList.remove('left', 'right');
-    this.partnerInstrumentPicker.el.classList.remove('left', 'right');
-    this.localInstrumentPicker.el.classList.add(next === 0 ? 'left' : 'right');
-    this.partnerInstrumentPicker.el.classList.add(next === 0 ? 'right' : 'left');
   }
 
   setHandTracker(tracker: HandTracker): void {
@@ -276,13 +269,16 @@ export class Hud {
     const partnerPlaque = this.localSeat === 0 ? this.playerRight : this.playerLeft;
 
     const localLabel = INSTRUMENTS[this.getLocalInstrumentId()].label;
-    const partnerLabel = INSTRUMENTS[this.getPartnerInstrumentId()].label;
+    const partnerLabel = INSTRUMENTS[this.partnerInstrument].label;
 
     localPlaque.set({
       name: this.conductorName,
       voice: localLabel,
       kind: 'conductor',
     });
+    // Picker follows the local plaque as seats swap; partner plaque stays clean.
+    localPlaque.setPicker(this.localInstrumentPicker.el);
+    partnerPlaque.setPicker(null);
 
     if (this.partnerName) {
       partnerPlaque.set({
@@ -301,10 +297,6 @@ export class Hud {
 
   private getLocalInstrumentId(): InstrumentId {
     return this.localInstrumentPicker.getSelected();
-  }
-
-  private getPartnerInstrumentId(): InstrumentId {
-    return this.partnerInstrumentPicker.getSelected();
   }
 
   setConnection(state: string): void {
@@ -341,7 +333,8 @@ export class Hud {
   }
 
   setPartnerInstrument(id: InstrumentId): void {
-    this.partnerInstrumentPicker.setSelected(id, false);
+    if (this.partnerInstrument === id) return;
+    this.partnerInstrument = id;
     this.applyPlaques();
   }
 
@@ -356,7 +349,6 @@ export class Hud {
     this.localPanel.dispose();
     this.remotePanel.dispose();
     this.localInstrumentPicker.dispose();
-    this.partnerInstrumentPicker.dispose();
   }
 
   private fitStage(): void {

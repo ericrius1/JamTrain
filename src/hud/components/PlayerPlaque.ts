@@ -11,6 +11,7 @@ export class PlayerPlaque {
   private stampEl: HTMLElement;
   private nameEl: HTMLElement;
   private voiceEl: HTMLElement;
+  private pickerSlot: HTMLElement;
   private currentRobot: boolean;
 
   constructor(opts: {
@@ -45,6 +46,10 @@ export class PlayerPlaque {
     this.voiceEl.className = 'voice';
     this.voiceEl.textContent = opts.voice;
     this.el.appendChild(this.voiceEl);
+
+    this.pickerSlot = document.createElement('div');
+    this.pickerSlot.className = 'picker-slot';
+    this.el.appendChild(this.pickerSlot);
   }
 
   set(opts: { name: string; voice: string; kind: PlayerKind }): void {
@@ -56,6 +61,15 @@ export class PlayerPlaque {
       this.currentRobot = robot;
       this.medallionWrap.replaceChildren(createMedallion(robot));
     }
+  }
+
+  // Hosts an arbitrary element (currently the InstrumentPicker chip) inside
+  // the plaque body. Pass null to clear. Used so the local player's plaque
+  // gets the picker and the partner's doesn't — and so it follows the local
+  // plaque as seats swap.
+  setPicker(el: HTMLElement | null): void {
+    this.pickerSlot.replaceChildren();
+    if (el) this.pickerSlot.appendChild(el);
   }
 }
 
