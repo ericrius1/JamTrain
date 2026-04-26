@@ -3,7 +3,9 @@ import { Discard, Fn, cameraPosition, positionWorld, uniform, wgslFn } from 'thr
 import { Pane } from 'tweakpane';
 
 export type PlasmaOrbMetaball = {
+  id: string;
   position: THREE.Vector3;
+  tracked?: boolean;
 };
 
 export type PlasmaOrbOptions = {
@@ -288,6 +290,7 @@ function colorToVec3(hex: number): THREE.Vector3 {
 }
 
 type SmoothedMetaball = {
+  id: string | null;
   position: THREE.Vector3;
   radius: number;
 };
@@ -307,7 +310,7 @@ export class PlasmaOrb {
   private targetFingertips: PlasmaOrbMetaball[] = [];
   private smoothedFingertips: SmoothedMetaball[] = Array.from(
     { length: MAX_FINGER_METABALLS },
-    () => ({ position: new THREE.Vector3(), radius: 0 })
+    () => ({ id: null, position: new THREE.Vector3(), radius: 0 })
   );
 
   private uTime = uniform(0);
@@ -556,32 +559,105 @@ export class PlasmaOrb {
     const effectiveFingerRadius = this.fingerRadius * Math.sqrt(Math.max(this.fingerInfluence, 0));
     const activeLimit = Math.max(0, Math.min(MAX_FINGER_METABALLS, this.activeTipLimit | 0));
     const activeRangeSq = Math.max(0.01, this.activeTipRange * this.activeTipRange);
-    const activeTargets = this.targetFingertips
+    const radiusEpsilon = Math.max(effectiveFingerRadius * 0.04, 0.0005);
+
+    // Only tracked fingertips that are within the orb's pull range qualify.
+    // Everything is sorted by distance so the closest tips win the slot budget.
+    const candidates = this.targetFingertips
+      .filter(target => target.tracked !== false)
       .map(target => ({
         target,
         distanceSq: target.position.distanceToSquared(this.mesh.position),
       }))
-      .filter(entry => entry.distanceSq <= activeRangeSq);
-    if (activeTargets.length > activeLimit) {
-      activeTargets.sort((a, b) => a.distanceSq - b.distanceSq);
-      activeTargets.length = activeLimit;
+      .filter(entry => entry.distanceSq <= activeRangeSq)
+      .sort((a, b) => a.distanceSq - b.distanceSq);
+
+    // Map current id → slot so a fingertip keeps the same smoothed slot
+    // across frames. Without this, sort-order changes would snap a slot's
+    // identity to a different physical fingertip and the lerp would streak
+    // through space.
+    const slotById = new Map<string, number>();
+    for (let i = 0; i < this.smoothedFingertips.length; i += 1) {
+      const id = this.smoothedFingertips[i].id;
+      if (id) slotById.set(id, i);
     }
 
-    this.ballUniforms[0].value.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z, this.radius);
+    const targetForSlot: (PlasmaOrbMetaball | null)[] = new Array(this.smoothedFingertips.length).fill(null);
+    const claimed = new Set<number>();
+    let kept = 0;
 
-    for (let i = 0; i < MAX_FINGER_METABALLS; i += 1) {
-      const target = activeTargets[i]?.target;
-      const slot = this.smoothedFingertips[i];
-      const targetRadius = target ? effectiveFingerRadius : 0;
-      if (target) {
-        if (slot.radius <= 0.0001) slot.position.copy(target.position);
-        else slot.position.lerp(target.position, posAlpha);
+    // Pass 1 — let any candidate that already owns a slot keep it.
+    for (const entry of candidates) {
+      if (kept >= activeLimit) break;
+      const slot = slotById.get(entry.target.id);
+      if (slot != null) {
+        targetForSlot[slot] = entry.target;
+        claimed.add(slot);
+        kept += 1;
       }
-      slot.radius += (targetRadius - slot.radius) * radiusAlpha;
-      this.ballUniforms[i + 1].value.set(slot.position.x, slot.position.y, slot.position.z, slot.radius);
     }
 
-    this.uBallCount.value = 1 + activeTargets.length;
+    // Pass 2 — new fingertips fill genuinely empty slots first, then any
+    // unclaimed (fading) slot if we run out of empty ones.
+    for (const entry of candidates) {
+      if (kept >= activeLimit) break;
+      if (slotById.has(entry.target.id)) continue;
+      let free = -1;
+      for (let i = 0; i < this.smoothedFingertips.length; i += 1) {
+        if (claimed.has(i)) continue;
+        const slot = this.smoothedFingertips[i];
+        if (slot.id == null && slot.radius <= radiusEpsilon) { free = i; break; }
+      }
+      if (free === -1) {
+        for (let i = 0; i < this.smoothedFingertips.length; i += 1) {
+          if (claimed.has(i)) continue;
+          free = i;
+          break;
+        }
+      }
+      if (free === -1) break;
+      const slot = this.smoothedFingertips[free];
+      slot.id = entry.target.id;
+      slot.position.copy(entry.target.position);
+      slot.radius = 0;
+      targetForSlot[free] = entry.target;
+      claimed.add(free);
+      kept += 1;
+    }
+
+    // Smooth each slot toward its target (or fade out if it has none).
+    for (let i = 0; i < this.smoothedFingertips.length; i += 1) {
+      const slot = this.smoothedFingertips[i];
+      const target = targetForSlot[i];
+      if (target) {
+        slot.position.lerp(target.position, posAlpha);
+        slot.radius += (effectiveFingerRadius - slot.radius) * radiusAlpha;
+      } else {
+        slot.radius += (0 - slot.radius) * radiusAlpha;
+        if (slot.radius <= radiusEpsilon) {
+          slot.radius = 0;
+          slot.id = null;
+        }
+      }
+    }
+
+    // Pack contiguously into the shader uniforms. The shader sums field
+    // contributions, so packing order is irrelevant to the look but lets
+    // uBallCount stay tight for ray-march cost.
+    this.ballUniforms[0].value.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z, this.radius);
+    let writeIdx = 1;
+    for (let i = 0; i < this.smoothedFingertips.length; i += 1) {
+      const slot = this.smoothedFingertips[i];
+      if (slot.radius > radiusEpsilon) {
+        this.ballUniforms[writeIdx].value.set(slot.position.x, slot.position.y, slot.position.z, slot.radius);
+        writeIdx += 1;
+      }
+    }
+    for (let j = writeIdx; j < MAX_METABALLS; j += 1) {
+      this.ballUniforms[j].value.set(0, 0, 0, 0);
+    }
+
+    this.uBallCount.value = writeIdx;
     this.uTime.value = elapsed;
     this.uEnergy.value = this.smoothedEnergy;
     this.uCenter.value.copy(this.mesh.position);

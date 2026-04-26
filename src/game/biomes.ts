@@ -77,7 +77,8 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x4a7d4d, night: 0x132018 },
     ridge: { amplitude: 0.18, frequency: 1.3, baseY: 0.42 },
     sprites: [
-      { atlas: 'deciduousRound', density: 0.5, yJitter: 0.02, sizeRange: [0.18, 0.30], layer: 'midground' },
+      { atlas: 'deciduousRound', density: 0.85, yJitter: 0.02, sizeRange: [0.18, 0.30], layer: 'midground' },
+      { atlas: 'deciduousTall', density: 0.40, yJitter: 0.02, sizeRange: [0.20, 0.34], layer: 'foreground' },
     ],
     weatherBias: { rain: 0.4, snow: 0.05 },
     birdBias: 1.0,
@@ -89,8 +90,8 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x1f3a26, night: 0x0a1410 },
     ridge: { amplitude: 0.12, frequency: 1.6, baseY: 0.40 },
     sprites: [
-      { atlas: 'pineTall',  density: 1.6, yJitter: 0.03, sizeRange: [0.30, 0.55], layer: 'foreground' },
-      { atlas: 'pineShort', density: 1.1, yJitter: 0.02, sizeRange: [0.22, 0.36], layer: 'midground' },
+      { atlas: 'pineTall',  density: 2.25, yJitter: 0.03, sizeRange: [0.32, 0.62], layer: 'foreground' },
+      { atlas: 'pineShort', density: 1.65, yJitter: 0.02, sizeRange: [0.22, 0.38], layer: 'midground' },
     ],
     weatherBias: { rain: 0.7, snow: 0.10 },
     birdBias: 1.4,
@@ -102,8 +103,8 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x6da55a, night: 0x16241a },
     ridge: { amplitude: 0.10, frequency: 1.0, baseY: 0.38 },
     sprites: [
-      { atlas: 'deciduousRound', density: 0.3,  yJitter: 0.02, sizeRange: [0.20, 0.34], layer: 'midground' },
-      { atlas: 'cottage',        density: 0.18, yJitter: 0.0,  sizeRange: [0.16, 0.22], layer: 'foreground' },
+      { atlas: 'deciduousRound', density: 0.55, yJitter: 0.02, sizeRange: [0.22, 0.38], layer: 'midground' },
+      { atlas: 'cottage',        density: 0.24, yJitter: 0.0,  sizeRange: [0.22, 0.32], layer: 'foreground' },
     ],
     villageLights: { density: 0.55, clusterTightness: 0.18 },
     weatherBias: { rain: 0.45, snow: 0.05 },
@@ -116,9 +117,9 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x315a4a, night: 0x0d1a18 },
     ridge: { amplitude: 0.06, frequency: 0.8, baseY: 0.34 },
     sprites: [
-      { atlas: 'reeds',     density: 0.9, yJitter: 0.01, sizeRange: [0.10, 0.18], layer: 'foreground' },
-      { atlas: 'cattail',   density: 0.4, yJitter: 0.01, sizeRange: [0.10, 0.16], layer: 'foreground' },
-      { atlas: 'pineShort', density: 0.4, yJitter: 0.02, sizeRange: [0.20, 0.32], layer: 'midground' },
+      { atlas: 'reeds',     density: 1.25, yJitter: 0.01, sizeRange: [0.14, 0.24], layer: 'foreground' },
+      { atlas: 'cattail',   density: 0.70, yJitter: 0.01, sizeRange: [0.14, 0.22], layer: 'foreground' },
+      { atlas: 'pineShort', density: 0.85, yJitter: 0.02, sizeRange: [0.24, 0.40], layer: 'midground' },
     ],
     water: { coverage: 0.7, reflectionTint: 0xb6d6e6 },
     weatherBias: { rain: 0.55, snow: 0.05 },
@@ -131,8 +132,8 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0xc8b88a, night: 0x1f1c14 },
     ridge: { amplitude: 0.05, frequency: 0.6, baseY: 0.32 },
     sprites: [
-      { atlas: 'lighthouse', density: 0.06, yJitter: 0.0,  sizeRange: [0.30, 0.42], layer: 'midground' },
-      { atlas: 'sailboat',   density: 0.10, yJitter: 0.04, sizeRange: [0.10, 0.16], layer: 'midground' },
+      { atlas: 'lighthouse', density: 0.12, yJitter: 0.0,  sizeRange: [0.42, 0.60], layer: 'midground' },
+      { atlas: 'sailboat',   density: 0.22, yJitter: 0.04, sizeRange: [0.16, 0.24], layer: 'midground' },
     ],
     water: { coverage: 1.0, reflectionTint: 0xc8d8e8 },
     weatherBias: { rain: 0.5, snow: 0.0 },
@@ -158,10 +159,10 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x8a7a3a, night: 0x1f1c12 },
     ridge: { amplitude: 0.08, frequency: 0.9, baseY: 0.36 },
     sprites: [
-      { atlas: 'fencePost', density: 1.4,  yJitter: 0.01, sizeRange: [0.10, 0.16], layer: 'foreground' },
-      { atlas: 'haystack',  density: 0.4,  yJitter: 0.01, sizeRange: [0.12, 0.20], layer: 'midground' },
-      { atlas: 'barn',      density: 0.10, yJitter: 0.0,  sizeRange: [0.20, 0.30], layer: 'midground' },
-      { atlas: 'silo',      density: 0.06, yJitter: 0.0,  sizeRange: [0.18, 0.26], layer: 'midground' },
+      { atlas: 'fencePost', density: 1.65, yJitter: 0.01, sizeRange: [0.14, 0.22], layer: 'foreground' },
+      { atlas: 'haystack',  density: 0.55, yJitter: 0.01, sizeRange: [0.18, 0.28], layer: 'midground' },
+      { atlas: 'barn',      density: 0.18, yJitter: 0.0,  sizeRange: [0.34, 0.48], layer: 'midground' },
+      { atlas: 'silo',      density: 0.12, yJitter: 0.0,  sizeRange: [0.28, 0.40], layer: 'midground' },
     ],
     weatherBias: { rain: 0.5, snow: 0.05 },
     birdBias: 1.0,
@@ -266,6 +267,19 @@ export class BiomeScheduler {
 
   setSeed(seed: number): void {
     this.seed = seed;
+    const t = this.getEpochSeconds();
+    this.weather = [];
+    this.magic = [];
+    this.fgRecency.clear();
+    this.bgRecency.clear();
+    this.fgEventIndex = 0;
+    this.bgEventIndex = 0;
+    this.weatherEventIndex = 0;
+    this.magicEventIndex = 0;
+    this.fgWindow = this.makeFgWindow(t, this.pickFg(), this.pickFg());
+    this.bgWindow = this.makeBgWindow(t, this.pickBg(), this.pickBg());
+    this.scheduleNextWeather(t);
+    this.scheduleNextMagic(t);
   }
 
   foreground(): { from: ForegroundBiome; to: ForegroundBiome; t: number } {

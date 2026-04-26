@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { Fn, color, mix, sin, time, uniform, uv } from 'three/tsl';
 import type { ForegroundBiome } from './biomes';
 
-const STRIP_WIDTH = 7.6;
+const STRIP_WIDTH = 12.4;
 const STRIP_HEIGHT = 0.18;
 
 export class WaterStrip {

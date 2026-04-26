@@ -48,8 +48,8 @@ interface BackgroundPanel {
 }
 
 const fullTurn = Math.PI * 2;
-const BG_WIDTH = 7.6;
-const BG_SEGMENTS = 192;
+const BG_WIDTH = 12.4;
+const BG_SEGMENTS = 312;
 const BG_PANEL_HEIGHT = 1.6;
 const BG_BASE_Y = 0.12;
 
@@ -166,6 +166,7 @@ export class ScenerySystem {
     this.roomSeed = seed;
     this.scheduler.setSeed(seed);
     this.layers?.setSeed(seed);
+    this.skyLife?.setSeed(seed);
   }
 
   getRoomSeed(): number {
@@ -304,7 +305,7 @@ export class ScenerySystem {
   private createSky(): void {
     const material = this.createWindowSkyMaterial();
     for (const side of [-1]) {
-      const sky = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 2.6), material);
+      const sky = new THREE.Mesh(new THREE.PlaneGeometry(11.6, 2.6), material);
       sky.rotation.y = Math.PI / 2;
       sky.position.set(side * 2.56, 1.6, 0);
       sky.renderOrder = -30;

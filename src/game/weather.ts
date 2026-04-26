@@ -3,7 +3,7 @@ import { Fn, color, float, fract, sin, smoothstep, texture, time, uniform, uv, v
 import type { BiomeScheduler, ForegroundBiome, BackgroundBiome, LightningEvent } from './biomes';
 import { generateBolt, rasterizeBolt } from './lightning';
 
-const QUAD_WIDTH = 6.4;
+const QUAD_WIDTH = 11.6;
 const QUAD_HEIGHT = 2.6;
 const BOLT_W = 256;
 const BOLT_H = 128;

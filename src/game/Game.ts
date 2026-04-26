@@ -413,9 +413,10 @@ export class Game {
     this.scenery.build();
     this.scenery.setThunderHandler(delay => this.audio.playThunder(delay));
 
-    for (const z of [-1.55, 0, 1.55]) {
-      const light = new THREE.PointLight(0xffe8ad, 0.95, 4.8);
-      light.position.set(0, 2.42, z);
+    for (const z of [-4.65, -3.1, -1.55, 0, 1.55, 3.1, 4.65]) {
+      const isHero = Math.abs(z) < 1.7;
+      const light = new THREE.PointLight(0xffb069, isHero ? 0.55 : 0.32, 3.2, 1.4);
+      light.position.set(0, 2.34, z);
       this.scene.add(light);
     }
 
@@ -432,10 +433,10 @@ export class Game {
     const shadowCam = this.keyLight.shadow.camera as THREE.OrthographicCamera;
     shadowCam.left = -3.4;
     shadowCam.right = 3.4;
-    shadowCam.top = 3.4;
-    shadowCam.bottom = -3.4;
+    shadowCam.top = 6.0;
+    shadowCam.bottom = -6.0;
     shadowCam.near = 0.5;
-    shadowCam.far = 14;
+    shadowCam.far = 16;
     shadowCam.updateProjectionMatrix();
     this.keyLight.shadow.mapSize.set(this.shadowParams.mapSize, this.shadowParams.mapSize);
     this.keyLight.shadow.radius = this.shadowParams.radius;
@@ -461,8 +462,9 @@ export class Game {
     const group = new THREE.Group();
     group.name = 'cabin-shell';
 
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x273034, roughness: 0.72, metalness: 0.08 });
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x18252a, roughness: 0.6, metalness: 0.18 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x231b18, roughness: 0.86, metalness: 0.0 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a2024, roughness: 0.92, metalness: 0.0 });
+    const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x1a1512, roughness: 0.98, metalness: 0.0 });
     const trimMat = new THREE.MeshStandardMaterial({ color: 0x6e9684, roughness: 0.68, metalness: 0.22 });
     const woodMat = new THREE.MeshStandardMaterial({ color: 0x9c7e4d, roughness: 0.58, metalness: 0.08 });
     const seatMat = new THREE.MeshStandardMaterial({ color: 0x4c233b, roughness: 0.7, metalness: 0.02 });
@@ -478,13 +480,16 @@ export class Game {
     const wallR = this.cabinParams.bevelRadius;
     const seatR = this.cabinParams.furnitureBevel;
 
-    const floor = new THREE.Mesh(this.roundedBox(3.4, 0.08, 4.8, wallR), floorMat);
+    const cabinZ = 10.4;
+    const boothCenters = [-3.72, 0, 3.72];
+
+    const floor = new THREE.Mesh(this.roundedBox(3.4, 0.08, cabinZ, wallR), floorMat);
     floor.position.y = 0.02;
     floor.receiveShadow = true;
     group.add(floor);
 
     const ceilingY = 2.55;
-    const ceiling = new THREE.Mesh(this.roundedBox(3.45, 0.08, 4.8, wallR), wallMat);
+    const ceiling = new THREE.Mesh(this.roundedBox(3.45, 0.08, cabinZ, wallR), ceilingMat);
     ceiling.position.y = ceilingY;
     ceiling.receiveShadow = true;
     group.add(ceiling);
@@ -493,8 +498,8 @@ export class Game {
     const glassTop = 2.38;
     const glassHeight = glassTop - glassBottom;
     const glassY = (glassBottom + glassTop) / 2;
-    const glassZs = [-1.5, 0, 1.5];
     const paneDepth = 1.32;
+    const glassZs = [-3.96, -2.64, -1.32, 0, 1.32, 2.64, 3.96];
     const glassSpan = glassZs.length * paneDepth;
     const frameThick = 0.025;
     const frameOuterSpan = glassSpan + frameThick;
@@ -503,15 +508,15 @@ export class Game {
     const lowerWallHeight = glassBottom - 0.06;
     const upperWallHeight = ceilingBottom - glassTop;
     const endCapHeight = ceilingBottom - 0.06;
-    const endCapDepth = 4.8 / 2 - glassSpan / 2;
+    const endCapDepth = cabinZ / 2 - glassSpan / 2;
 
     for (const x of [-1.72]) {
-      const lowerWall = new THREE.Mesh(this.roundedBox(0.08, lowerWallHeight, 4.8, wallR), wallMat);
+      const lowerWall = new THREE.Mesh(this.roundedBox(0.08, lowerWallHeight, cabinZ, wallR), wallMat);
       lowerWall.position.set(x, 0.06 + lowerWallHeight / 2, 0);
       lowerWall.receiveShadow = true;
       group.add(lowerWall);
 
-      const upperWall = new THREE.Mesh(this.roundedBox(0.08, upperWallHeight, 4.8, wallR), wallMat);
+      const upperWall = new THREE.Mesh(this.roundedBox(0.08, upperWallHeight, cabinZ, wallR), wallMat);
       upperWall.position.set(x, glassTop + upperWallHeight / 2, 0);
       upperWall.receiveShadow = true;
       group.add(upperWall);
@@ -539,6 +544,13 @@ export class Game {
         group.add(endPost);
       }
 
+      for (let i = 0; i < glassZs.length - 1; i += 1) {
+        const mullionZ = (glassZs[i] + glassZs[i + 1]) / 2;
+        const mullion = new THREE.Mesh(this.roundedBox(frameThick, glassHeight, frameThick, wallR), trimMat);
+        mullion.position.set(frameX, glassY, mullionZ);
+        group.add(mullion);
+      }
+
       for (const z of glassZs) {
         const windowPane = new THREE.Mesh(new THREE.BoxGeometry(0.035, glassHeight, paneDepth), glassMat);
         windowPane.position.set(x * 1.005, glassY, z);
@@ -547,37 +559,41 @@ export class Game {
       }
     }
 
-    for (const z of [1.12, -1.12]) {
-      const bench = new THREE.Mesh(this.roundedBox(1.35, 0.24, 0.52, seatR), seatMat);
-      bench.position.set(0, 0.36, z);
-      bench.castShadow = true;
-      bench.receiveShadow = true;
-      group.add(bench);
+    for (const cz of boothCenters) {
+      for (const dz of [-1.12, 1.12]) {
+        const z = cz + dz;
+        const bench = new THREE.Mesh(this.roundedBox(1.35, 0.24, 0.52, seatR), seatMat);
+        bench.position.set(0, 0.36, z);
+        bench.castShadow = true;
+        bench.receiveShadow = true;
+        group.add(bench);
 
-      const back = new THREE.Mesh(this.roundedBox(1.35, 0.74, 0.18, seatR), seatMat);
-      back.position.set(0, 0.78, z + (z > 0 ? 0.32 : -0.32));
-      back.rotation.x = z > 0 ? -0.1 : 0.1;
-      back.castShadow = true;
-      back.receiveShadow = true;
-      group.add(back);
+        const back = new THREE.Mesh(this.roundedBox(1.35, 0.74, 0.18, seatR), seatMat);
+        back.position.set(0, 0.78, z + (dz > 0 ? 0.32 : -0.32));
+        back.rotation.x = dz > 0 ? -0.1 : 0.1;
+        back.castShadow = true;
+        back.receiveShadow = true;
+        group.add(back);
+      }
+
+      const table = new THREE.Mesh(this.roundedBox(1.15, 0.06, 0.64, seatR), woodMat);
+      table.position.set(0, 0.72, cz);
+      table.castShadow = true;
+      table.receiveShadow = true;
+      group.add(table);
+
+      const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), woodMat);
+      tableLeg.position.set(0, 0.36, cz);
+      tableLeg.castShadow = true;
+      tableLeg.receiveShadow = true;
+      group.add(tableLeg);
     }
 
-    const table = new THREE.Mesh(this.roundedBox(1.15, 0.06, 0.64, seatR), woodMat);
-    table.position.set(0, 0.72, 0);
-    table.castShadow = true;
-    table.receiveShadow = true;
-    group.add(table);
-
-    const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), woodMat);
-    tableLeg.position.set(0, 0.36, 0);
-    tableLeg.castShadow = true;
-    tableLeg.receiveShadow = true;
-    group.add(tableLeg);
-
-    const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xffe8ad });
-    for (const z of [-1.55, 0, 1.55]) {
-      const fixture = new THREE.Mesh(this.roundedBox(0.68, 0.03, 0.12, wallR), fixtureMat);
-      fixture.position.set(0, 2.42, z);
+    const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xd9a974 });
+    const fixtureZs = [-4.65, -3.1, -1.55, 0, 1.55, 3.1, 4.65];
+    for (const z of fixtureZs) {
+      const fixture = new THREE.Mesh(this.roundedBox(0.5, 0.022, 0.09, wallR), fixtureMat);
+      fixture.position.set(0, 2.43, z);
       group.add(fixture);
     }
 
@@ -677,11 +693,21 @@ export class Game {
     const metaballs: PlasmaOrbMetaball[] = [];
     let cursor = 0;
 
+    // Confidence threshold separating real camera detections (~0.7+) from
+    // simulated/neutral fallback poses (0.35). Untracked hands shouldn't
+    // feed phantom metaballs into the orb.
+    const TRACK_THRESHOLD = 0.5;
+
     for (const handedness of handednesses) {
+      const localTracked = (this.localPose?.hands[handedness].confidence ?? 0) >= TRACK_THRESHOLD;
+      const remoteTracked = (this.remotePose?.hands[handedness].confidence ?? 0) >= TRACK_THRESHOLD;
       for (const finger of fingerNames) {
         const from = this.localRig.getFingertipWorld(handedness, finger);
         const to = this.remoteRig.getFingertipWorld(handedness, finger);
-        metaballs.push({ position: from }, { position: to });
+        metaballs.push(
+          { id: `local:${handedness}:${finger}`, position: from, tracked: localTracked },
+          { id: `remote:${handedness}:${finger}`, position: to, tracked: remoteTracked },
+        );
         const fromData = fromThree(from);
         const toData = fromThree(to);
         const tension = clamp(1.25 - Math.abs(distance(fromData, toData) - 1.1) * 0.42, 0.08, 1);
