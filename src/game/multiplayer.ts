@@ -12,6 +12,7 @@ type SeatListener = (localSeat: number, partnerSeat: number) => void;
 type SignalListener = (signal: { id: bigint; senderId: string; kind: string; payload: string }) => void;
 type PartnerIdentityListener = (identityHex: string | null) => void;
 type InstrumentListener = (instrumentId: string) => void;
+type CreatureListener = (creatureId: string) => void;
 
 const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
@@ -43,6 +44,10 @@ export class MultiplayerClient {
   private partnerInstrument: string = 'flute';
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
+  private localCreature: string = 'lion';
+  private partnerCreature: string = 'lion';
+  private localCreatureListeners = new Set<CreatureListener>();
+  private partnerCreatureListeners = new Set<CreatureListener>();
   private subscriptionApplied = false;
   private roomId: string;
   private displayName: string;
@@ -136,6 +141,36 @@ export class MultiplayerClient {
     }
   }
 
+  onLocalCreatureChange(listener: CreatureListener): void {
+    this.localCreatureListeners.add(listener);
+    listener(this.localCreature);
+  }
+
+  onPartnerCreatureChange(listener: CreatureListener): void {
+    this.partnerCreatureListeners.add(listener);
+    listener(this.partnerCreature);
+  }
+
+  getLocalCreature(): string {
+    return this.localCreature;
+  }
+
+  getPartnerCreature(): string {
+    return this.partnerCreature;
+  }
+
+  async setLocalCreature(creatureId: string): Promise<void> {
+    if (this.localCreature === creatureId) return;
+    this.localCreature = creatureId;
+    for (const listener of this.localCreatureListeners) listener(creatureId);
+    if (!this.connection?.isActive) return;
+    try {
+      await this.connection.reducers.updateCreature({ creature: creatureId });
+    } catch (err) {
+      console.warn('[jam-train] update_creature failed', err);
+    }
+  }
+
   async sendWebrtcSignal(recipientHex: string, kind: string, payload: string): Promise<void> {
     if (!this.connection?.isActive) {
       console.warn('[webrtc] send_signal skipped: spacetime not connected');
@@ -221,6 +256,10 @@ export class MultiplayerClient {
           if (this.partnerInstrument !== 'flute') {
             this.partnerInstrument = 'flute';
             for (const listener of this.partnerInstrumentListeners) listener('flute');
+          }
+          if (this.partnerCreature !== 'lion') {
+            this.partnerCreature = 'lion';
+            for (const listener of this.partnerCreatureListeners) listener('lion');
           }
           this.setState('local');
           this.scheduleReconnect();
@@ -380,6 +419,7 @@ export class MultiplayerClient {
     let nextName: string | null = null;
     let nextIdentity: string | null = null;
     let nextInstrument: string = 'flute';
+    let nextCreature: string = 'lion';
     if (this.connection) {
       for (const row of this.connection.db.player.iter()) {
         const id = row.identity.toHexString();
@@ -389,6 +429,7 @@ export class MultiplayerClient {
         nextName = row.displayName || 'Player';
         nextIdentity = id;
         nextInstrument = row.instrument || 'flute';
+        nextCreature = row.creature || 'lion';
         break;
       }
     }
@@ -401,6 +442,11 @@ export class MultiplayerClient {
     if (nextInstrument !== this.partnerInstrument) {
       this.partnerInstrument = nextInstrument;
       for (const listener of this.partnerInstrumentListeners) listener(nextInstrument);
+    }
+
+    if (nextCreature !== this.partnerCreature) {
+      this.partnerCreature = nextCreature;
+      for (const listener of this.partnerCreatureListeners) listener(nextCreature);
     }
 
     if (nextName === this.partnerName) return;
@@ -432,6 +478,10 @@ export class MultiplayerClient {
     if (row.instrument && row.instrument !== this.localInstrument) {
       this.localInstrument = row.instrument;
       for (const listener of this.localInstrumentListeners) listener(row.instrument);
+    }
+    if (row.creature && row.creature !== this.localCreature) {
+      this.localCreature = row.creature;
+      for (const listener of this.localCreatureListeners) listener(row.creature);
     }
   }
 
