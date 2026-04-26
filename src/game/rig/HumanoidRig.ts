@@ -5,6 +5,10 @@ import { createCreatureLighting, makeAccentMaterial, type CreatureLighting } fro
 import { Skeleton } from './skeleton';
 import { buildHumanHead, type HumanHeadHandles } from './humanHead';
 import { buildHumanBody, type HumanBodyHandles } from './humanBody';
+import { buildLionHead, type LionHeadHandles } from './lionHead';
+import { buildLionMane, type LionManeHandles } from './lionMane';
+import { buildLionTail, type LionTailHandles } from './lionTail';
+import { buildLionBody, type LionBodyHandles } from './lionBody';
 
 export type HumanoidRigOptions = {
   seatIndex: number;
@@ -12,8 +16,8 @@ export type HumanoidRigOptions = {
   creature: CreatureId;
 };
 
-type HeadHandles = HumanHeadHandles; // expanded in Phase 2 to include lion head
-type BodyHandles = HumanBodyHandles; // expanded in Phase 2 to include lion body
+type HeadHandles = HumanHeadHandles | LionHeadHandles;
+type BodyHandles = HumanBodyHandles | LionBodyHandles;
 
 export class HumanoidRig {
   readonly root = new THREE.Group();
@@ -24,7 +28,10 @@ export class HumanoidRig {
   private skeleton!: Skeleton;
   private head!: HeadHandles;
   private body!: BodyHandles;
+  private mane: LionManeHandles | null = null;
+  private tail: LionTailHandles | null = null;
   private accentMaterial!: THREE.MeshBasicNodeMaterial;
+  private elapsed = 0;
 
   constructor(private scene: THREE.Scene, opts: HumanoidRigOptions) {
     this.seatIndex = opts.seatIndex;
@@ -54,7 +61,9 @@ export class HumanoidRig {
 
   update(pose: PlayerPose, delta: number, _robotTarget: number): void {
     void _robotTarget; // robot overlay was dropped — ignored, kept for caller compat.
+    this.elapsed += delta;
     this.skeleton.update(pose, delta);
+    if (this.tail) this.tail.update(this.elapsed);
   }
 
   getPalmWorld(hand: Handedness): THREE.Vector3 {
@@ -83,12 +92,19 @@ export class HumanoidRig {
   }
 
   private buildForCreature(): void {
-    // Phase 1: only human is supported. Lion case added in Task 12.
-    void this.creature;
-
-    this.body = buildHumanBody(this.lighting, this.seatColor);
-    this.head = buildHumanHead(this.lighting);
     this.accentMaterial = makeAccentMaterial();
+
+    if (this.creature === 'lion') {
+      this.body = buildLionBody(this.lighting);
+      this.head = buildLionHead(this.lighting);
+      this.mane = buildLionMane(this.lighting, this.seatColor, this.seatIndex);
+      this.tail = buildLionTail(this.lighting, this.seatColor);
+    } else {
+      this.body = buildHumanBody(this.lighting, this.seatColor);
+      this.head = buildHumanHead(this.lighting);
+      this.mane = null;
+      this.tail = null;
+    }
 
     this.skeleton = new Skeleton(
       {
@@ -100,9 +116,10 @@ export class HumanoidRig {
       this.seatIndex
     );
 
-    // Mount body + head on the skeleton's anchors.
     this.skeleton.bodyAnchor.add(this.body.group);
     this.skeleton.headAnchor.add(this.head.group);
+    if (this.mane) this.skeleton.headAnchor.add(this.mane.group);
+    if (this.tail) this.skeleton.bodyAnchor.add(this.tail.group);
 
     this.root.add(this.skeleton.root);
   }
@@ -123,6 +140,16 @@ export class HumanoidRig {
       for (const g of this.head.geometries) g.dispose();
       for (const m of this.head.materials) m.dispose();
     }
+    if (this.mane) {
+      for (const g of this.mane.geometries) g.dispose();
+      for (const m of this.mane.materials) m.dispose();
+    }
+    if (this.tail) {
+      for (const g of this.tail.geometries) g.dispose();
+      for (const m of this.tail.materials) m.dispose();
+    }
     if (this.accentMaterial) this.accentMaterial.dispose();
+    this.mane = null;
+    this.tail = null;
   }
 }
