@@ -50,7 +50,6 @@ type Atmosphere = {
 
 export type SceneryOptions = {
   roomSeed: number;
-  sharedEpoch: number;
 };
 
 interface BackgroundPanel {
@@ -114,7 +113,6 @@ export class ScenerySystem {
     night: 0,
   };
   private roomSeed: number;
-  private epochMs: number;
 
   constructor(
     private scene: THREE.Scene,
@@ -122,14 +120,13 @@ export class ScenerySystem {
     options: SceneryOptions
   ) {
     this.roomSeed = options.roomSeed;
-    this.epochMs = options.sharedEpoch;
     const moonPhase = getMoonPhase(new Date());
     this.moonCos.value = Math.cos(moonPhase.phase * fullTurn);
     this.moonSign.value = moonPhase.phase < 0.5 ? 1 : -1;
 
     this.scheduler = new BiomeScheduler(
       this.roomSeed,
-      () => (Date.now() - this.epochMs) / 1000,
+      () => Date.now() / 1000,
       () => this.lastCycle,
     );
 
@@ -143,11 +140,11 @@ export class ScenerySystem {
         recencyPenalty:  v => { this.scheduler.overrides.recencyPenaltyStrength = v; },
       },
       buttons: [
-        { folder: 'Weather',  title: 'trigger lightning', onClick: () => this.scheduler.triggerLightningNow((Date.now() - this.epochMs) / 1000) },
+        { folder: 'Weather',  title: 'trigger lightning', onClick: () => this.scheduler.triggerLightningNow(Date.now() / 1000) },
         ...(['shootingStar', 'balloon', 'whale', 'plane'] as const).map(kind => ({
           folder: 'Sky life',
           title: ({ shootingStar: 'shooting star', balloon: 'hot air balloon', whale: 'whale spout', plane: 'distant plane' } as Record<string, string>)[kind],
-          onClick: () => this.scheduler.triggerMagic(kind as MagicEvent['kind'], (Date.now() - this.epochMs) / 1000),
+          onClick: () => this.scheduler.triggerMagic(kind as MagicEvent['kind'], Date.now() / 1000),
         })),
       ],
     });
@@ -172,13 +169,13 @@ export class ScenerySystem {
       this.atlas,
       this.scheduler,
       this.roomSeed,
-      () => (Date.now() - this.epochMs) / 1000,
+      () => Date.now() / 1000,
     );
     this.skyLife.build();
     this.weather = new Weather(
       this.scene,
       this.scheduler,
-      () => (Date.now() - this.epochMs) / 1000,
+      () => Date.now() / 1000,
       delay => this.onThunder?.(delay),
     );
     this.weather.build();
@@ -200,16 +197,12 @@ export class ScenerySystem {
     return this.roomSeed;
   }
 
-  getEpochMs(): number {
-    return this.epochMs;
-  }
-
   getScheduler(): BiomeScheduler {
     return this.scheduler;
   }
 
   update(delta: number, _elapsed: number): Atmosphere {
-    const wallElapsed = (Date.now() - this.epochMs) / 1000;
+    const wallElapsed = Date.now() / 1000;
     const cycle = ((wallElapsed / Math.max(this.params.cycleLengthSeconds, 1) + this.params.cycleOffset) % 1 + 1) % 1;
     this.lastCycle = cycle;
     const sunWave = Math.sin(cycle * fullTurn);

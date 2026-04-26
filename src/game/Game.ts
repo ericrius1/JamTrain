@@ -13,7 +13,7 @@ import { makePlayerPose } from './pose';
 import { PlayerRig } from './rig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
-import { hashString, roomEpoch } from './seedRandom';
+import { hashString } from './seedRandom';
 import { fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
@@ -102,7 +102,6 @@ export class Game {
   readonly paneDock: HTMLElement;
   private roomId: string;
   private roomSeed: number;
-  private sharedEpoch: number;
   private localPose?: PlayerPose;
   private remotePose?: PlayerPose;
   private partnerPresent = false;
@@ -121,7 +120,6 @@ export class Game {
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
-    this.sharedEpoch = roomEpoch();
     this.multiplayer.onStateChange(state => {
       ui.connectionStatus.textContent = state;
     });
@@ -157,7 +155,6 @@ export class Game {
     this.robotMotion = new RobotMotionController(this.paneDock);
     this.scenery = new ScenerySystem(this.scene, this.paneDock, {
       roomSeed: this.roomSeed,
-      sharedEpoch: this.sharedEpoch,
     });
 
     this.linkGeometry.setAttribute('position', new THREE.BufferAttribute(this.linkPositions, 3));

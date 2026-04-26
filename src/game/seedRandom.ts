@@ -26,9 +26,3 @@ export function mulberry32(seed: number): () => number {
 export function streamFor(seed: number, key: number): () => number {
   return mulberry32((seed ^ Math.imul(key + 1, 0x9e3779b1)) >>> 0);
 }
-
-// Round wall-clock time to a coarse anchor so two clients connecting within
-// the same minute land on the same epoch. Good enough for cozy sync.
-export function roomEpoch(now = Date.now()): number {
-  return Math.floor(now / 60_000) * 60_000;
-}
