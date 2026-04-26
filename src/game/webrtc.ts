@@ -2,6 +2,7 @@ import type { MultiplayerClient } from './multiplayer';
 
 type RemoteStreamListener = (stream: MediaStream | null) => void;
 type StreamProvider = () => MediaStream | undefined;
+type RemotePoseListener = (poseJson: string) => void;
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -22,6 +23,8 @@ export class WebRTCClient {
   private videoSenderTrack?: MediaStreamTrack;
   // Pending share state — applied as soon as a video sender track exists.
   private desiredShareVideo = false;
+  private poseChannel?: RTCDataChannel;
+  private poseListeners = new Set<RemotePoseListener>();
 
   constructor(
     private multiplayer: MultiplayerClient,
@@ -45,6 +48,22 @@ export class WebRTCClient {
   onRemoteStream(listener: RemoteStreamListener): void {
     this.remoteListeners.add(listener);
     listener(this.remoteStream ?? null);
+  }
+
+  onRemotePose(listener: RemotePoseListener): void {
+    this.poseListeners.add(listener);
+  }
+
+  sendPose(poseJson: string): void {
+    const ch = this.poseChannel;
+    if (!ch || ch.readyState !== 'open') return;
+    try {
+      ch.send(poseJson);
+    } catch (err) {
+      // Send on a closing channel can throw; not fatal — next negotiation
+      // will rebuild a fresh channel.
+      console.warn('[webrtc] pose send failed', err);
+    }
   }
 
   /** Called by Game once the local MediaStream becomes available. */
@@ -111,6 +130,15 @@ export class WebRTCClient {
     }
 
     if (offerer) {
+      // Unreliable + unordered keeps latency tight — a dropped pose frame is
+      // never worth waiting for retransmits at 30+ Hz. The next frame is the
+      // truth. Channel must be created before createOffer() so its m-line
+      // ends up in the SDP.
+      const channel = this.pc.createDataChannel('pose', {
+        ordered: false,
+        maxRetransmits: 0,
+      });
+      this.wirePoseChannel(channel);
       void this.createAndSendOffer();
     }
   }
@@ -152,6 +180,13 @@ export class WebRTCClient {
       console.info('[webrtc] connectionState', pc.connectionState);
     };
 
+    pc.ondatachannel = event => {
+      if (event.channel.label === 'pose') {
+        console.info('[webrtc] received pose channel');
+        this.wirePoseChannel(event.channel);
+      }
+    };
+
     return pc;
   }
 
@@ -179,6 +214,18 @@ export class WebRTCClient {
       }
     }
     return true;
+  }
+
+  private wirePoseChannel(channel: RTCDataChannel): void {
+    this.poseChannel = channel;
+    channel.onopen = () => console.info('[webrtc] pose channel open');
+    channel.onclose = () => console.info('[webrtc] pose channel closed');
+    channel.onerror = err => console.warn('[webrtc] pose channel error', err);
+    channel.onmessage = event => {
+      const data = event.data;
+      if (typeof data !== 'string') return;
+      for (const listener of this.poseListeners) listener(data);
+    };
   }
 
   setShareVideo(enabled: boolean): void {
@@ -347,6 +394,11 @@ export class WebRTCClient {
         this.pc.onicecandidate = null;
         this.pc.oniceconnectionstatechange = null;
         this.pc.onconnectionstatechange = null;
+        this.pc.ondatachannel = null;
+        if (this.poseChannel) {
+          try { this.poseChannel.close(); } catch { /* ignore */ }
+          this.poseChannel = undefined;
+        }
         this.pc.close();
       } catch (err) {
         console.warn('[webrtc] error during dispose', err);
