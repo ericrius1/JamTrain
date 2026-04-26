@@ -17,7 +17,7 @@ import { makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
 import { WebRtcPoseTransport } from './pose/WebRtcPoseTransport';
-import { PlayerRig } from './rig';
+import { HumanoidRig } from './rig/HumanoidRig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { hashString } from './seedRandom';
@@ -88,8 +88,8 @@ export class Game {
   private poseSession!: PoseSession;
   private broadcastTransport!: BroadcastChannelPoseTransport;
   private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
-  private localRig: PlayerRig;
-  private remoteRig: PlayerRig;
+  private localRig: HumanoidRig;
+  private remoteRig: HumanoidRig;
   private particles: LinkParticles;
   private robotMotion: RobotMotionController;
   private linkPositions = new Float32Array(10 * 2 * 3);
@@ -168,8 +168,8 @@ export class Game {
     });
     this.multiplayer.onPartnerIdentity(() => this.poseSession.clearRemotePose());
 
-    this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
-    this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
+    this.localRig = new HumanoidRig(this.scene, { seatIndex: 0, color: 0x2d7f8c, creature: 'lion' });
+    this.remoteRig = new HumanoidRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, creature: 'lion' });
     this.localRig.setFingertipNodesVisible(false);
     this.remoteRig.setFingertipNodesVisible(false);
     this.applyPlayerBackOffset();
