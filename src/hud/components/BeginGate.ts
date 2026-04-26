@@ -1,166 +1,91 @@
-import { appendRivets } from './Rivets';
+// BeginGate — TrainJam intro / "press start" screen.
+//
+// Immersive full-bleed layout: the lion painting fills the 1920×1014 stage
+// and UI lives only on top + bottom rails so the artwork is never covered.
+// The outer wrap is a fixed black overlay; the inner stage scales to fit the
+// viewport so the painting + rails keep their designed proportions.
 
-const SOLARPUNK_NAMES = [
-  'AVA', 'SOLAS', 'AMARA', 'LUMEN', 'IRIS', 'NOVA', 'ORION', 'HELIO',
-  'AETHER', 'CINDER', 'EMBER', 'CALLA', 'KAIRO', 'VESPER', 'ZENITH',
-  'ASTRA', 'WREN', 'MOSS', 'RHEA', 'OSLA',
+const CONDUCTOR_NAMES = [
+  'Solas', 'Ember', 'Vesper', 'Cinder', 'Halcyon',
+  'Marrow', 'Lumen', 'Atlas', 'Foxglove', 'Tannhauser',
+  'Zenith', 'Ferry', 'Briar', 'Quill', 'Sable',
+  'Ava', 'Amara', 'Iris', 'Nova', 'Orion',
 ];
 
-function pickName(): string {
-  return SOLARPUNK_NAMES[Math.floor(Math.random() * SOLARPUNK_NAMES.length)];
+const STAGE_W = 1920;
+const STAGE_H = 1014;
+
+function pickName(exclude?: string): string {
+  const pool = exclude
+    ? CONDUCTOR_NAMES.filter(n => n !== exclude)
+    : CONDUCTOR_NAMES;
+  return pool[Math.floor(Math.random() * pool.length)] ?? CONDUCTOR_NAMES[0];
 }
 
 export class BeginGate {
   readonly el: HTMLElement;
+  private stage: HTMLElement;
   private input: HTMLInputElement;
   private btn: HTMLButtonElement;
   private rerollBtn: HTMLButtonElement;
   private errEl: HTMLElement;
+  private resizeHandler: () => void;
   private busy = false;
 
   constructor(opts: { onBegin: (name: string) => Promise<void> | void }) {
     this.el = document.createElement('div');
     this.el.className = 'begin-gate';
 
-    // Layered backdrop sits above the 3D canvas so the cabin doesn't bleed
-    // through. Texture + warm vignette match the in-game brass aesthetic.
-    const backdrop = document.createElement('div');
-    backdrop.className = 'begin-backdrop';
-    this.el.appendChild(backdrop);
+    this.stage = document.createElement('div');
+    this.stage.className = 'begin-stage';
+    this.el.appendChild(this.stage);
 
-    const stage = document.createElement('div');
-    stage.className = 'begin-stage';
-    this.el.appendChild(stage);
+    // Lion painting full-bleed — the world the rest of the UI sits on top of.
+    const lion = document.createElement('img');
+    lion.className = 'begin-lion';
+    lion.src = '/intro-lion.png';
+    lion.alt = '';
+    lion.draggable = false;
+    this.stage.appendChild(lion);
 
-    // Hero artwork — solar-steampunk lion DJ. The image is what the
-    // copy refers to ("best experienced with headphones") so it carries
-    // most of the visual weight on this screen.
-    const hero = document.createElement('div');
-    hero.className = 'begin-hero';
-    const heroImg = document.createElement('img');
-    heroImg.src = '/intro-lion.png';
-    heroImg.alt = '';
-    heroImg.draggable = false;
-    hero.appendChild(heroImg);
-    stage.appendChild(hero);
+    // Atmospheric overlays: a soft radial vignette plus a top dark fade keep
+    // the top rail readable without dimming the painting's hero subject. The
+    // bottom is left clean so the lion's foreground silhouette stays bright.
+    this.stage.appendChild(this.div('begin-vignette'));
+    this.stage.appendChild(this.div('begin-top-fade'));
 
-    const plaque = document.createElement('div');
-    plaque.className = 'plaque begin-plaque';
-    appendRivets(plaque);
+    // Drifting embers (decorative). Deterministic positions/timing so the
+    // composition feels designed rather than randomly noisy.
+    this.stage.appendChild(this.buildEmbers());
 
-    const stamp = document.createElement('div');
-    stamp.className = 'stamp';
-    stamp.textContent = '· The ·';
-    plaque.appendChild(stamp);
+    this.stage.appendChild(this.buildTopRail());
+    this.stage.appendChild(this.buildTitleBlock());
 
-    const title = document.createElement('div');
-    title.className = 'title';
-    title.textContent = 'Jam Train';
-    plaque.appendChild(title);
+    const { row, input, reroll, button, err } = this.buildBottomRail();
+    this.input = input;
+    this.rerollBtn = reroll;
+    this.btn = button;
+    this.errEl = err;
+    this.stage.appendChild(row);
 
-    const headphones = document.createElement('div');
-    headphones.className = 'begin-headphones';
-    headphones.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M4 14v-2a8 8 0 0 1 16 0v2" />
-        <path d="M4 14h3v6H5a1 1 0 0 1-1-1z" />
-        <path d="M20 14h-3v6h2a1 1 0 0 0 1-1z" />
-      </svg>
-      <span>Best experienced with headphones</span>
-    `;
-    plaque.appendChild(headphones);
-
-    const body = document.createElement('div');
-    body.className = 'body';
-    body.textContent = 'awaken the cabin — your browser will ask for webcam access to track your hands';
-    plaque.appendChild(body);
-
-    const nameLabel = document.createElement('div');
-    nameLabel.className = 'eyebrow';
-    nameLabel.style.fontSize = '10px';
-    nameLabel.style.marginTop = '4px';
-    nameLabel.textContent = 'Conductor';
-    plaque.appendChild(nameLabel);
-
-    const nameRow = document.createElement('div');
-    nameRow.className = 'begin-name-row';
-    this.input = document.createElement('input');
-    this.input.className = 'begin-name-input';
-    this.input.spellcheck = false;
-    this.input.autocomplete = 'off';
-    this.input.maxLength = 24;
-    this.input.value = pickName();
-    this.input.classList.add('is-suggestion');
-    this.input.addEventListener('input', () => {
-      this.input.value = this.input.value.toUpperCase();
-      this.input.classList.remove('is-suggestion');
+    this.btn.addEventListener('click', () => this.submit(opts.onBegin));
+    this.rerollBtn.addEventListener('click', () => {
+      this.input.value = pickName(this.input.value.trim());
+      this.input.focus();
+      this.input.select();
     });
     this.input.addEventListener('keydown', e => {
       if (e.key === 'Enter') {
         e.preventDefault();
-        this.btn.click();
+        this.submit(opts.onBegin);
       }
     });
 
-    this.rerollBtn = document.createElement('button');
-    this.rerollBtn.className = 'btn ghost begin-reroll';
-    this.rerollBtn.type = 'button';
-    this.rerollBtn.title = 'reroll a name';
-    this.rerollBtn.textContent = '↻';
-    this.rerollBtn.addEventListener('click', () => {
-      let next = pickName();
-      // Avoid the obvious case of rolling the same name twice in a row.
-      if (next === this.input.value && SOLARPUNK_NAMES.length > 1) {
-        next = pickName();
-      }
-      this.input.value = next;
-      this.input.classList.add('is-suggestion');
-      this.input.focus();
-      this.input.select();
-    });
+    this.resizeHandler = () => this.fit();
+    window.addEventListener('resize', this.resizeHandler);
+    this.fit();
 
-    nameRow.append(this.input, this.rerollBtn);
-    plaque.appendChild(nameRow);
-
-    this.btn = document.createElement('button');
-    this.btn.className = 'btn primary begin-start';
-    this.btn.textContent = 'Start';
-    this.btn.addEventListener('click', async () => {
-      if (this.busy) return;
-      const name = this.input.value.trim();
-      if (!name) {
-        this.errEl.textContent = 'name is required';
-        this.input.focus();
-        return;
-      }
-      this.busy = true;
-      this.btn.disabled = true;
-      this.input.disabled = true;
-      this.rerollBtn.disabled = true;
-      this.btn.textContent = 'Awakening…';
-      this.errEl.textContent = '';
-      try {
-        await opts.onBegin(name);
-        this.dismiss();
-      } catch (err) {
-        this.busy = false;
-        this.btn.disabled = false;
-        this.input.disabled = false;
-        this.rerollBtn.disabled = false;
-        this.btn.textContent = 'Try Again';
-        this.errEl.textContent = err instanceof Error ? err.message : String(err);
-      }
-    });
-    plaque.appendChild(this.btn);
-
-    this.errEl = document.createElement('div');
-    this.errEl.className = 'err';
-    plaque.appendChild(this.errEl);
-
-    stage.appendChild(plaque);
-
-    // Defer focus until after the gate is mounted; selecting lets the user
+    // Defer focus until after the gate is mounted. Selecting lets the user
     // overwrite the suggestion just by typing.
     queueMicrotask(() => {
       this.input.focus();
@@ -168,7 +93,166 @@ export class BeginGate {
     });
   }
 
+  private fit(): void {
+    const sw = window.innerWidth;
+    const sh = window.innerHeight;
+    const s = Math.min(sw / STAGE_W, sh / STAGE_H);
+    this.stage.style.transform = `translate(-50%, -50%) scale(${s})`;
+  }
+
+  private div(className: string): HTMLElement {
+    const el = document.createElement('div');
+    el.className = className;
+    return el;
+  }
+
+  private buildEmbers(): HTMLElement {
+    const wrap = this.div('begin-embers');
+    wrap.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 18; i++) {
+      const dot = document.createElement('span');
+      dot.className = 'begin-ember';
+      const left = (i * 47 + 13) % 100;
+      const dur = 9 + (i % 5) * 2;
+      const delay = (i * 0.7) % 10;
+      const size = 2 + (i % 3);
+      dot.style.left = `${left}%`;
+      dot.style.width = `${size}px`;
+      dot.style.height = `${size}px`;
+      dot.style.animationDuration = `${dur}s`;
+      dot.style.animationDelay = `${delay}s`;
+      wrap.appendChild(dot);
+    }
+    return wrap;
+  }
+
+  private buildTopRail(): HTMLElement {
+    const rail = this.div('begin-top-rail begin-fade-down');
+
+    const meta = document.createElement('span');
+    meta.className = 'begin-meta-left';
+    meta.textContent = 'AURA  ·  LINE  ·  №  VII';
+    rail.appendChild(meta);
+
+    const pill = document.createElement('span');
+    pill.className = 'begin-headphones-pill';
+    pill.innerHTML = `
+      <svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12V10a8 8 0 0 1 16 0v2" />
+        <rect x="1" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
+        <rect x="17" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
+      </svg>
+      <span>Best experienced with headphones</span>
+    `;
+    rail.appendChild(pill);
+
+    const date = document.createElement('span');
+    date.className = 'begin-meta-right';
+    date.textContent = 'MMXXVI';
+    rail.appendChild(date);
+
+    return rail;
+  }
+
+  private buildTitleBlock(): HTMLElement {
+    const block = this.div('begin-title-block begin-fade-down begin-delay-1');
+
+    const eyebrow = this.div('begin-eyebrow');
+    eyebrow.textContent = '·  THE  ·';
+    block.appendChild(eyebrow);
+
+    const display = this.div('begin-display');
+    display.textContent = 'Jam Train';
+    block.appendChild(display);
+
+    return block;
+  }
+
+  private buildBottomRail(): {
+    row: HTMLElement;
+    input: HTMLInputElement;
+    reroll: HTMLButtonElement;
+    button: HTMLButtonElement;
+    err: HTMLElement;
+  } {
+    const rail = this.div('begin-bottom-rail begin-fade-up begin-delay-2');
+
+    const field = this.div('begin-conductor-field');
+    const label = this.div('begin-conductor-label');
+    label.textContent = 'CONDUCTOR';
+    field.appendChild(label);
+
+    const inputRow = this.div('begin-conductor-input-row');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'begin-conductor-input';
+    input.spellcheck = false;
+    input.autocomplete = 'off';
+    input.maxLength = 24;
+    input.value = pickName();
+    input.setAttribute('aria-label', 'Conductor name');
+
+    const reroll = document.createElement('button');
+    reroll.type = 'button';
+    reroll.className = 'begin-reroll';
+    reroll.title = 'reroll a name';
+    reroll.setAttribute('aria-label', 'Reshuffle conductor name');
+    reroll.textContent = '↻';
+
+    inputRow.append(input, reroll);
+    field.appendChild(inputRow);
+    rail.appendChild(field);
+
+    const beginCol = this.div('begin-action-col');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'begin-start';
+    button.innerHTML = 'BEGIN <span aria-hidden="true">▸</span>';
+    beginCol.appendChild(button);
+
+    const awaken = document.createElement('p');
+    awaken.className = 'begin-awaken';
+    awaken.textContent =
+      'awaken the cabin — your browser will ask for webcam access to track your hands.';
+    beginCol.appendChild(awaken);
+
+    const err = this.div('begin-err');
+    beginCol.appendChild(err);
+    rail.appendChild(beginCol);
+
+    return { row: rail, input, reroll, button, err };
+  }
+
+  private async submit(onBegin: (name: string) => Promise<void> | void): Promise<void> {
+    if (this.busy) return;
+    const name = this.input.value.trim();
+    if (!name) {
+      this.errEl.textContent = 'name is required';
+      this.input.focus();
+      return;
+    }
+    this.busy = true;
+    this.btn.disabled = true;
+    this.input.disabled = true;
+    this.rerollBtn.disabled = true;
+    this.btn.textContent = 'Awakening…';
+    this.errEl.textContent = '';
+    try {
+      await onBegin(name);
+      this.dismiss();
+    } catch (err) {
+      this.busy = false;
+      this.btn.disabled = false;
+      this.input.disabled = false;
+      this.rerollBtn.disabled = false;
+      this.btn.innerHTML = 'TRY AGAIN <span aria-hidden="true">▸</span>';
+      this.errEl.textContent = err instanceof Error ? err.message : String(err);
+    }
+  }
+
   private dismiss(): void {
+    window.removeEventListener('resize', this.resizeHandler);
     this.el.classList.add('fade-out');
     setTimeout(() => this.el.remove(), 420);
   }

@@ -178,7 +178,10 @@ export class Hud {
   }
 
   setConductorName(name: string): void {
-    this.conductorName = name;
+    // PlayerPlaque renders the partner uppercased; uppercase the local
+    // conductor too so both sides match. The intro field accepts free-form
+    // mixed-case for evocative names ("Solas") — we only flatten on storage.
+    this.conductorName = name.toUpperCase();
     this.applyPlaques();
   }
 
