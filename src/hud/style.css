@@ -1207,3 +1207,43 @@
   .spin-slow, .pulse, .rec-pulse, .fade-out { animation: none; }
   .announcement-toast { transition: none; }
 }
+
+/* ── InstrumentPicker ─────────────────────────────────────────────────────── */
+.instrument-picker {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(8, 16, 28, 0.6);
+  backdrop-filter: blur(6px);
+  position: absolute;
+  bottom: 14px;
+  pointer-events: auto;
+}
+.instrument-picker.left  { left: 14px; }
+.instrument-picker.right { right: 14px; }
+.instrument-picker.readonly { opacity: 0.7; }
+
+.instrument-picker-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.instrument-picker-btn:hover:not(:disabled) {
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(255, 255, 255, 0.04);
+}
+.instrument-picker-btn:disabled { cursor: default; }
+.instrument-picker-btn.active {
+  color: var(--instrument-color);
+  border-color: var(--instrument-color);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--instrument-color) 35%, transparent);
+}
+.instrument-picker-btn svg { width: 22px; height: 22px; }
