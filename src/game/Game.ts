@@ -13,6 +13,7 @@ import { Ribbon } from './visuals/Ribbon';
 import { Sparks } from './visuals/Sparks';
 import { CenterStage } from './CenterStage';
 import { isInstrumentId, type InstrumentId, type PlayerVisual } from './instruments';
+import { isCreatureId } from './creatures';
 import { makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
@@ -706,6 +707,18 @@ export class Game {
     this.installPlayerVisual(player, id);
     this.handSynth.setInstrument(player, id);
     this.centerStage?.setSlotInstrument(player === 'local' ? 0 : 1, id);
+  }
+
+  setPlayerCreature(player: 'local' | 'remote', id: string): void {
+    if (!isCreatureId(id)) {
+      console.warn('[game] setPlayerCreature: invalid id', id);
+      return;
+    }
+    const rig = player === 'local' ? this.localRig : this.remoteRig;
+    rig.setCreature(id);
+    // Re-install the player's instrument visual since it anchors between the
+    // new palms — palm geometry/material lives on the rebuilt skeleton.
+    this.installPlayerVisual(player, this.playerInstruments[player]);
   }
 
   private setupCabinPane(): void {

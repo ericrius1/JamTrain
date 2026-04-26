@@ -4,8 +4,10 @@ import { Hud, DEFAULT_BACKING_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME
 import { DevOverlay } from './hud/DevOverlay';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
 import { isInstrumentId, type InstrumentId } from './game/instruments';
+import { isCreatureId, type CreatureId } from './game/creatures';
 
 const LOCAL_INSTRUMENT_KEY = 'jam-train.local-instrument';
+const LOCAL_CREATURE_KEY = 'jam-train.local-creature';
 
 // Persisted toggle state. Camera and volumes survive across sessions; share-
 // video and mic are intentionally NOT persisted — every new cabin entry is a
@@ -230,6 +232,27 @@ if (hasStored) {
   hud.setLocalInstrument(id);
   game.setPlayerInstrument('local', id);
   void game.multiplayer.setLocalInstrument(id);
+}
+
+// ─── Creature wiring ──────────────────────────────────────────────────────
+// Local creature arrives from server (e.g. our row's persisted value):
+game.multiplayer.onLocalCreatureChange(id => {
+  if (!isCreatureId(id)) return;
+  game.setPlayerCreature('local', id);
+});
+
+// Partner creature mirror:
+game.multiplayer.onPartnerCreatureChange(id => {
+  if (!isCreatureId(id)) return;
+  game.setPlayerCreature('remote', id);
+});
+
+// On boot, apply any stored local creature and push to server.
+const storedCreature = localStorage.getItem(LOCAL_CREATURE_KEY);
+if (storedCreature !== null && isCreatureId(storedCreature)) {
+  const id = storedCreature as CreatureId;
+  game.setPlayerCreature('local', id);
+  void game.multiplayer.setLocalCreature(id);
 }
 
 onUrlRoomChange(room => {
