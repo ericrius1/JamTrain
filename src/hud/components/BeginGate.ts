@@ -22,6 +22,28 @@ export class BeginGate {
     this.el = document.createElement('div');
     this.el.className = 'begin-gate';
 
+    // Layered backdrop sits above the 3D canvas so the cabin doesn't bleed
+    // through. Texture + warm vignette match the in-game brass aesthetic.
+    const backdrop = document.createElement('div');
+    backdrop.className = 'begin-backdrop';
+    this.el.appendChild(backdrop);
+
+    const stage = document.createElement('div');
+    stage.className = 'begin-stage';
+    this.el.appendChild(stage);
+
+    // Hero artwork — solar-steampunk lion DJ. The image is what the
+    // copy refers to ("best experienced with headphones") so it carries
+    // most of the visual weight on this screen.
+    const hero = document.createElement('div');
+    hero.className = 'begin-hero';
+    const heroImg = document.createElement('img');
+    heroImg.src = '/intro-lion.png';
+    heroImg.alt = '';
+    heroImg.draggable = false;
+    hero.appendChild(heroImg);
+    stage.appendChild(hero);
+
     const plaque = document.createElement('div');
     plaque.className = 'plaque begin-plaque';
     appendRivets(plaque);
@@ -35,6 +57,19 @@ export class BeginGate {
     title.className = 'title';
     title.textContent = 'Jam Train';
     plaque.appendChild(title);
+
+    const headphones = document.createElement('div');
+    headphones.className = 'begin-headphones';
+    headphones.innerHTML = `
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 14v-2a8 8 0 0 1 16 0v2" />
+        <path d="M4 14h3v6H5a1 1 0 0 1-1-1z" />
+        <path d="M20 14h-3v6h2a1 1 0 0 0 1-1z" />
+      </svg>
+      <span>Best experienced with headphones</span>
+    `;
+    plaque.appendChild(headphones);
 
     const body = document.createElement('div');
     body.className = 'body';
@@ -123,7 +158,7 @@ export class BeginGate {
     this.errEl.className = 'err';
     plaque.appendChild(this.errEl);
 
-    this.el.appendChild(plaque);
+    stage.appendChild(plaque);
 
     // Defer focus until after the gate is mounted; selecting lets the user
     // overwrite the suggestion just by typing.

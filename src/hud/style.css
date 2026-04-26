@@ -383,28 +383,140 @@
   color: var(--sun);
 }
 
-/* Begin gate (initial overlay) */
+/* Begin gate (initial overlay) — fully opaque, covers the 3D scene so the
+   intro reads as its own screen rather than a panel sitting on top of the
+   cabin. Two-column stage: hero artwork on the left, plaque on the right. */
 .begin-gate {
-  position: absolute;
+  position: fixed;
   inset: 0;
   display: grid;
   place-items: center;
-  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0.85));
-  z-index: 5;
+  z-index: 100;
   pointer-events: auto;
+  overflow: hidden;
+  isolation: isolate;
+  animation: beginFadeIn 0.6s ease both;
 }
+.begin-backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 38%, rgba(246, 179, 51, 0.12) 0%, transparent 70%),
+    radial-gradient(ellipse 100% 90% at 50% 110%, rgba(176, 107, 58, 0.18) 0%, transparent 65%),
+    linear-gradient(180deg, #0c0805 0%, #1a0f06 45%, #050302 100%);
+  z-index: -2;
+}
+.begin-backdrop::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      rgba(246, 179, 51, 0.018) 0 2px,
+      transparent 2px 4px
+    );
+  mix-blend-mode: screen;
+  pointer-events: none;
+}
+.begin-backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 48%, transparent 55%, rgba(0, 0, 0, 0.65) 100%);
+  pointer-events: none;
+}
+.begin-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 56px;
+  width: min(1180px, 92vw);
+  max-height: 92vh;
+  padding: 24px;
+  z-index: 1;
+}
+@media (max-width: 900px) {
+  .begin-stage {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 28px;
+    max-height: none;
+  }
+}
+
+/* Hero artwork — framed in brass with a glow ring. The image is purely
+   atmospheric, so we let it dominate without any caption. */
+.begin-hero {
+  position: relative;
+  border-radius: 6px;
+  padding: 8px;
+  background: linear-gradient(180deg, rgba(56, 38, 18, 0.94), rgba(20, 12, 6, 0.94));
+  border: 1px solid var(--brass-2);
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.30),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 18px 40px rgba(0, 0, 0, 0.7),
+    0 0 60px rgba(246, 179, 51, 0.10);
+  animation: beginRise 0.7s ease both;
+}
+.begin-hero::before {
+  content: '';
+  position: absolute;
+  inset: 3px;
+  border: 1px solid rgba(200, 154, 75, 0.45);
+  border-radius: 4px;
+  pointer-events: none;
+  z-index: 2;
+}
+.begin-hero img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+  object-fit: cover;
+  border-radius: 3px;
+  filter: saturate(1.05) contrast(1.02);
+}
+
 .begin-plaque {
-  padding: 28px 36px;
+  padding: 32px 40px 28px;
   text-align: center;
   min-width: 320px;
+  max-width: 460px;
+  justify-self: center;
+  animation: beginRise 0.7s 0.08s ease both;
 }
 .begin-plaque .stamp { margin-bottom: 6px; }
 .begin-plaque .title {
   font-family: 'IM Fell English', serif;
-  font-size: 38px;
+  font-size: 56px;
   line-height: 1;
   color: var(--sun);
-  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 0 rgba(0, 0, 0, 0.5), 0 0 24px rgba(246, 179, 51, 0.35);
+  letter-spacing: 0.01em;
+}
+.begin-headphones {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px auto 6px;
+  padding: 8px 16px 7px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(200, 154, 75, 0.35);
+  border-radius: 999px;
+  font-family: 'IM Fell English SC', serif;
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--parchment);
+}
+.begin-headphones svg {
+  width: 18px;
+  height: 18px;
+  color: var(--sun);
+  flex: 0 0 auto;
 }
 .begin-plaque .body {
   font-family: 'IM Fell English', serif;
@@ -412,6 +524,15 @@
   font-size: 14px;
   color: var(--brass);
   margin: 8px 0 16px;
+}
+
+@keyframes beginFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes beginRise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .begin-plaque .err {
   font-family: 'JetBrains Mono', monospace;

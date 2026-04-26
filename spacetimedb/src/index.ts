@@ -95,6 +95,15 @@ function findSoloRoom(ctx: any): string | null {
   return null;
 }
 
+function findAvailableVariant(ctx: any, baseName: string): string {
+  if (countOnlineOthers(ctx, baseName) < 2) return baseName;
+  for (let n = 2; n < 1000; n++) {
+    const variant = `${baseName}-${n}`;
+    if (countOnlineOthers(ctx, variant) < 2) return variant;
+  }
+  return baseName;
+}
+
 export const request_seat = spacetimedb.reducer(
   {
     preferredRoom: t.string(),
@@ -114,7 +123,7 @@ export const request_seat = spacetimedb.reducer(
       const solo = findSoloRoom(ctx);
       if (solo) target = solo;
     }
-    if (!target) target = cleanFallback;
+    if (!target) target = findAvailableVariant(ctx, cleanFallback);
 
     const seatIndex = nextSeatIndex(ctx, target);
     const existing = ctx.db.player.identity.find(ctx.sender);
