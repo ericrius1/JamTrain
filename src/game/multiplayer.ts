@@ -11,6 +11,7 @@ type PartnerListener = (name: string | null) => void;
 type SeatListener = (localSeat: number, partnerSeat: number) => void;
 type SignalListener = (signal: { id: bigint; senderId: string; kind: string; payload: string }) => void;
 type PartnerIdentityListener = (identityHex: string | null) => void;
+type InstrumentListener = (instrumentId: string) => void;
 
 const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
@@ -38,6 +39,10 @@ export class MultiplayerClient {
   private partnerIdentityHex: string | null = null;
   private signalListeners = new Set<SignalListener>();
   private partnerIdentityListeners = new Set<PartnerIdentityListener>();
+  private localInstrument: string = 'flute';
+  private partnerInstrument: string = 'flute';
+  private localInstrumentListeners = new Set<InstrumentListener>();
+  private partnerInstrumentListeners = new Set<InstrumentListener>();
   private subscriptionApplied = false;
   private roomId: string;
   private displayName: string;
@@ -99,6 +104,36 @@ export class MultiplayerClient {
 
   getPartnerIdentity(): string | null {
     return this.partnerIdentityHex;
+  }
+
+  onLocalInstrumentChange(listener: InstrumentListener): void {
+    this.localInstrumentListeners.add(listener);
+    listener(this.localInstrument);
+  }
+
+  onPartnerInstrumentChange(listener: InstrumentListener): void {
+    this.partnerInstrumentListeners.add(listener);
+    listener(this.partnerInstrument);
+  }
+
+  getLocalInstrument(): string {
+    return this.localInstrument;
+  }
+
+  getPartnerInstrument(): string {
+    return this.partnerInstrument;
+  }
+
+  async setLocalInstrument(instrumentId: string): Promise<void> {
+    if (this.localInstrument === instrumentId) return;
+    this.localInstrument = instrumentId;
+    for (const listener of this.localInstrumentListeners) listener(instrumentId);
+    if (!this.connection?.isActive) return;
+    try {
+      await this.connection.reducers.updateInstrument({ instrument: instrumentId });
+    } catch (err) {
+      console.warn('[jam-train] update_instrument failed', err);
+    }
   }
 
   async sendWebrtcSignal(recipientHex: string, kind: string, payload: string): Promise<void> {
@@ -340,6 +375,7 @@ export class MultiplayerClient {
     // ONLINE partner in our cabin. Stale/offline rows don't count.
     let nextName: string | null = null;
     let nextIdentity: string | null = null;
+    let nextInstrument: string = 'flute';
     if (this.connection) {
       for (const row of this.connection.db.player.iter()) {
         const id = row.identity.toHexString();
@@ -348,6 +384,7 @@ export class MultiplayerClient {
         if (!row.online) continue;
         nextName = row.displayName || 'Player';
         nextIdentity = id;
+        nextInstrument = row.instrument || 'flute';
         break;
       }
     }
@@ -355,6 +392,11 @@ export class MultiplayerClient {
     if (nextIdentity !== this.partnerIdentityHex) {
       this.partnerIdentityHex = nextIdentity;
       for (const listener of this.partnerIdentityListeners) listener(nextIdentity);
+    }
+
+    if (nextInstrument !== this.partnerInstrument) {
+      this.partnerInstrument = nextInstrument;
+      for (const listener of this.partnerInstrumentListeners) listener(nextInstrument);
     }
 
     if (nextName === this.partnerName) return;
@@ -383,6 +425,10 @@ export class MultiplayerClient {
     if (row.identity.toHexString() !== this.localId) return;
     this.setRoomId(row.roomId);
     this.setLocalSeat(row.seatIndex);
+    if (row.instrument && row.instrument !== this.localInstrument) {
+      this.localInstrument = row.instrument;
+      for (const listener of this.localInstrumentListeners) listener(row.instrument);
+    }
   }
 
   private setLocalSeat(seatIndex: number): void {
