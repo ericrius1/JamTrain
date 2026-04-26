@@ -378,11 +378,10 @@ export class AudioEngine {
     }
   }
 
+  // Backing slider (bed + drums). Independent from the player synth's mix
+  // slider — that lives on HandSynthEngine.
   setMasterGain(value: number): void {
-    // Slider 0–1 → actual gain via power curve. Halved from the original
-    // ceiling (0.25 → 0.12) so peaks don't slam the limiter, with the same
-    // perceptual curve so the slider's bottom end stays useful.
-    const MAX_MUSIC_GAIN = 0.12;
+    const MAX_MUSIC_GAIN = 0.22;
     const CURVE_EXP = 2.5;
     const v = value <= 0 ? 0 : Math.min(1, value);
     this.params.masterGain = MAX_MUSIC_GAIN * Math.pow(v, CURVE_EXP);

@@ -272,12 +272,14 @@ export class Game {
     return this.webrtc.getShareVideo();
   }
 
-  setMusicVolume(value: number): void {
+  // Bed + drums backing track.
+  setBackingVolume(value: number): void {
     this.audio.setMasterGain(value);
   }
 
-  getMusicVolume(): number {
-    return this.audio.getMasterGain();
+  // Player synth (flute + rhodes).
+  setMusicVolume(value: number): void {
+    this.handSynth.setMasterGain(value);
   }
 
   setDisplayName(name: string): void {

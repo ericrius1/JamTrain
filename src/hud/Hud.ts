@@ -10,7 +10,11 @@ import { SharePopover } from './components/SharePopover';
 import { AnnouncementToast } from './components/AnnouncementToast';
 import { MixerPanel } from './components/MixerPanel';
 
-export const DEFAULT_MUSIC_VOLUME = 0.5;
+// Default mix balance. Synth (Music) sits a few dB above the backing so
+// melody pokes through accompaniment; both have plenty of slider headroom
+// to push higher or back off entirely.
+export const DEFAULT_BACKING_VOLUME = 0.55;
+export const DEFAULT_MUSIC_VOLUME = 0.55;
 export const DEFAULT_VOICE_VOLUME = 1.0;
 
 // Instrument labels shown on the plaques. Both players are in the same
@@ -132,6 +136,7 @@ export class Hud {
     this.remotePanel = new VideoPanel(stageWrap, { side: 'right', mode: 'remote' });
 
     this.mixerPanel = new MixerPanel({
+      backing: DEFAULT_BACKING_VOLUME,
       music: DEFAULT_MUSIC_VOLUME,
       voice: DEFAULT_VOICE_VOLUME,
     });
@@ -200,13 +205,18 @@ export class Hud {
     this.localPanel.onShareVideoClick(listener);
   }
 
-  setMixerValues(music: number, voice: number): void {
+  setMixerValues(backing: number, music: number, voice: number): void {
+    this.mixerPanel.setBackingVolume(backing);
     this.mixerPanel.setMusicVolume(music);
     this.mixerPanel.setVoiceVolume(voice);
   }
 
   setRemoteVolume(volume: number): void {
     this.remotePanel.setRemoteVolume(volume);
+  }
+
+  onBackingVolumeChange(listener: (value: number) => void): void {
+    this.mixerPanel.onBackingChange(listener);
   }
 
   onMusicVolumeChange(listener: (value: number) => void): void {

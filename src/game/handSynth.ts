@@ -114,6 +114,18 @@ export class HandSynthEngine {
     return PROFILE_LABELS[profile];
   }
 
+  // Music slider (synth voices). Slider 0..1 → curved dB into volumeDb.
+  // Calibrated so the synth sits a few dB above the bed at default mix —
+  // melody should poke through accompaniment.
+  setMasterGain(value: number): void {
+    const MAX_SYNTH_GAIN = 0.35;
+    const CURVE_EXP = 2.5;
+    const v = value <= 0 ? 0 : Math.min(1, value);
+    const linear = MAX_SYNTH_GAIN * Math.pow(v, CURVE_EXP);
+    this.params.volumeDb = linear > 0.0001 ? 20 * Math.log10(linear) : -60;
+    this.registered?.pane?.refresh();
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     const Tone = await import('tone');

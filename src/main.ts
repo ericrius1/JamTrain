@@ -1,6 +1,6 @@
 import './style.css';
 import { Game } from './game/Game';
-import { Hud, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME } from './hud/Hud';
+import { Hud, DEFAULT_BACKING_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME } from './hud/Hud';
 import { DevOverlay } from './hud/DevOverlay';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
 
@@ -12,6 +12,7 @@ type AvPrefs = {
   camera: boolean;
   shareVideo: boolean;
   mic: boolean;
+  backingVolume: number;
   musicVolume: number;
   voiceVolume: number;
 };
@@ -24,6 +25,7 @@ const loadPrefs = (): AvPrefs => {
     camera: false,
     shareVideo: false,
     mic: false,
+    backingVolume: DEFAULT_BACKING_VOLUME,
     musicVolume: DEFAULT_MUSIC_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
   };
@@ -35,6 +37,7 @@ const loadPrefs = (): AvPrefs => {
       camera: !!parsed.camera,
       shareVideo: !!parsed.shareVideo,
       mic: !!parsed.mic,
+      backingVolume: clampUnit(parsed.backingVolume, DEFAULT_BACKING_VOLUME),
       musicVolume: clampUnit(parsed.musicVolume, DEFAULT_MUSIC_VOLUME),
       voiceVolume: clampUnit(parsed.voiceVolume, DEFAULT_VOICE_VOLUME),
     };
@@ -112,9 +115,10 @@ const hud = new Hud({
       hud.setMicEnabled(avPrefs.mic);
       hud.setShareVideoEnabled(avPrefs.shareVideo);
 
+      game.setBackingVolume(avPrefs.backingVolume);
       game.setMusicVolume(avPrefs.musicVolume);
       hud.setRemoteVolume(avPrefs.voiceVolume);
-      hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
+      hud.setMixerValues(avPrefs.backingVolume, avPrefs.musicVolume, avPrefs.voiceVolume);
 
       started = true;
     },
@@ -226,6 +230,11 @@ hud.onMicToggle(() => {
   avPrefs.mic = next;
   savePrefs(avPrefs);
 });
+hud.onBackingVolumeChange(value => {
+  game.setBackingVolume(value);
+  avPrefs.backingVolume = value;
+  savePrefs(avPrefs);
+});
 hud.onMusicVolumeChange(value => {
   game.setMusicVolume(value);
   avPrefs.musicVolume = value;
@@ -240,7 +249,7 @@ hud.onVoiceVolumeChange(value => {
 // Apply any persisted mixer values to the HUD immediately so the sliders
 // reflect saved state from frame one (audio engine + music gain are applied
 // after Begin in onBegin since they require a user gesture).
-hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
+hud.setMixerValues(avPrefs.backingVolume, avPrefs.musicVolume, avPrefs.voiceVolume);
 hud.setRemoteVolume(avPrefs.voiceVolume);
 
 void game.start();
