@@ -1,5 +1,10 @@
 import './style.css';
 import { Game } from './game/Game';
+
+window.addEventListener('vite:preloadError', () => {
+  window.location.reload();
+});
+
 import { Hud, DEFAULT_BACKING_VOLUME, DEFAULT_MUSIC_VOLUME, DEFAULT_VOICE_VOLUME } from './hud/Hud';
 import { DevOverlay } from './hud/DevOverlay';
 import { onUrlRoomChange, readRoomFromUrl, writeRoomToUrl } from './game/router';
@@ -324,6 +329,20 @@ hud.onBackingVolumeChange(value => {
   game.setBackingVolume(value);
   avPrefs.backingVolume = value;
   savePrefs(avPrefs);
+});
+
+// Robot's hand-played instrument defaults to muted while iterating on
+// instruments — easier to hear yourself. `m` toggles. Real partners always
+// play; the toggle only gates the procedural robot fill-in.
+window.addEventListener('keydown', e => {
+  if (e.key !== 'm' && e.key !== 'M') return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const target = e.target as HTMLElement | null;
+  if (target?.matches('input, textarea, [contenteditable=true]')) return;
+  if (!started) return;
+  const next = !game.isRobotJamMuted();
+  game.setRobotJamMuted(next);
+  hud.announce(next ? 'robot muted' : 'robot jamming');
 });
 hud.onMusicVolumeChange(value => {
   game.setMusicVolume(value);

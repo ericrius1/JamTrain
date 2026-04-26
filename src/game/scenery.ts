@@ -31,7 +31,7 @@ export const SCENERY_DEFS = {
   cycleOffset:        { default: 0.08, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
   trainSpeed:         { default: 1.1,  min: 0,   max: 3,    step: 0.01,  label: 'train speed' },
   hillAmplitude:      { default: 1.0,  min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape' },
-  auroraIntensity:    { default: 0.76, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
+  auroraIntensity:    { default: 0.28, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
   starIntensity:      { default: 0.78, min: 0,   max: 1,    step: 0.01,  label: 'stars' },
   moonSize:           { default: 0.34, min: 0.12, max: 0.58, step: 0.01, label: 'moon size' },
   moonPhase:          { type: 'string', default: '', readonly: true, label: 'moon phase' },
@@ -255,9 +255,9 @@ export class ScenerySystem {
       this.weather?.update(delta, { fgBiome: currentFg, bgBiome: currentBg });
     }
 
-    const dayColor = new THREE.Color(0x2f6172);
-    const duskColor = new THREE.Color(0x4d3158);
-    const nightColor = new THREE.Color(0x071013);
+    const dayColor = new THREE.Color(0x6f4d2c);
+    const duskColor = new THREE.Color(0x7a3f2e);
+    const nightColor = new THREE.Color(0x070503);
     this.atmosphere.background.copy(nightColor).lerp(dayColor, daylight).lerp(duskColor, goldenHour * 0.35);
     this.atmosphere.daylight = daylight;
     this.atmosphere.night = night;
@@ -288,11 +288,11 @@ export class ScenerySystem {
       const snow = smoothstep(this.bgSnowThreshold.sub(0.04), this.bgSnowThreshold.add(0.02), u.y).mul(this.bgSnowMix);
       baseColor.assign(mix(baseColor, this.bgSnowTint, snow));
       // Soft fog into the sky horizon at the top of the strip.
-      const fogTint = mix(color(0xa9c4dc), color(0x0a1218), this.skyNight);
+      const fogTint = mix(color(0xf0c183), color(0x0a0806), this.skyNight);
       baseColor.assign(mix(baseColor, fogTint, u.y.mul(this.bgFog).clamp(0, 1)));
       // Ocean shimmer band (applies at low u.y, dims into nothing higher up).
       const shimmerBand = float(1).sub(smoothstep(0.0, 0.18, u.y)).mul(this.bgShimmer).mul(0.45);
-      baseColor.addAssign(color(0xb0d8e8).mul(shimmerBand));
+      baseColor.addAssign(color(0xffcc74).mul(shimmerBand));
       return baseColor;
     })();
     material.depthWrite = true;
@@ -412,9 +412,9 @@ export class ScenerySystem {
       const y = u.y.mul(1.08).sub(0.18);
       const horizon = smoothstep(0.0, 0.72, y);
 
-      const daySky = mix(color(0xf2a268), color(0x74c7ff), horizon);
-      const duskSky = mix(color(0xff8d64), color(0x241b56), smoothstep(0.02, 0.82, y));
-      const nightSky = mix(color(0x071018), color(0x173c61), horizon);
+      const daySky = mix(color(0xffb861), color(0xd89048), horizon);
+      const duskSky = mix(color(0xff9b55), color(0x2b1817), smoothstep(0.02, 0.82, y));
+      const nightSky = mix(color(0x060403), color(0x1d1713), horizon);
       const sky = mix(mix(daySky, duskSky, this.skySunset), nightSky, this.skyNight).toVar('windowSky');
 
       const belowMask = float(1).sub(smoothstep(0.19, 0.31, u.y));

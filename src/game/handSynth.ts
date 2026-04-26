@@ -52,7 +52,7 @@ type Profile = InstrumentId;  // 'flute' | 'bell' | 'sparks'
 export const PROFILE_LABELS: Record<Profile, string> = {
   flute: 'Cedar Flute',
   bell: 'Velvet Bell',
-  sparks: 'Glass Sparks',
+  sparks: 'Golden Sigil',
 };
 
 const PROFILE_SCALES: Record<Profile, string[]> = {
@@ -76,6 +76,8 @@ type Voice = {
   panner: any;
   dryGain: any;
   wetSend: any;
+  reverb: any;
+  reverbReturn: any;
   active: boolean;
   currentNoteIdx: number;
   pulse: number;
@@ -87,11 +89,9 @@ export class HandSynthEngine {
 
   private master?: any;
   private limiter?: any;
-  private reverb?: any;
-  private reverbReturn?: any;
-
   private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'flute', remote: 'bell' };
+  private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
 
   private mouseXN = 0.5;
   private mouseYN = 0.5;
@@ -165,15 +165,13 @@ export class HandSynthEngine {
     this.limiter = new Tone.Limiter(-6).toDestination();
     this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).connect(this.limiter);
 
-    // One shared reverb the two voices send into. Wet level per voice is set
-    // by that voice's expression hand (X axis), not by the reverb's own wet.
-    this.reverb = new Tone.Reverb({ decay: 4.5, preDelay: 0.02, wet: 1 });
-    await this.reverb.generate?.();
-    this.reverbReturn = new Tone.Gain(0.55).connect(this.master);
-    this.reverb.connect(this.reverbReturn);
-
     this.voices.local = this.createVoice(this.pendingInstruments.local, PROFILE_SCALES[this.pendingInstruments.local]);
     this.voices.remote = this.createVoice(this.pendingInstruments.remote, PROFILE_SCALES[this.pendingInstruments.remote]);
+    await Promise.all(
+      PLAYER_KEYS
+        .map(key => this.voices[key]?.reverb?.ready)
+        .filter(Boolean)
+    );
 
     this.attachPane();
     this.running = true;
@@ -216,24 +214,21 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) this.silenceVoice(key);
   }
 
+  setMuted(player: PlayerKey, muted: boolean): void {
+    if (this.muted[player] === muted) return;
+    this.muted[player] = muted;
+    if (muted) this.silenceVoice(player);
+  }
+
   setInstrument(player: PlayerKey, id: InstrumentId): void {
+    this.pendingInstruments[player] = id;
     if (!this.running || !this.tone) {
       // Defer until start(); we can read the desired instrument at start time.
-      this.pendingInstruments[player] = id;
       return;
     }
     const current = this.voices[player];
     if (current?.profile === id) return;
-    // Gracefully release any held note on the outgoing voice before disposing.
-    if (current) {
-      if (current.active) current.synth.triggerRelease();
-      current.synth?.dispose?.();
-      current.vibrato?.dispose?.();
-      current.filter?.dispose?.();
-      current.panner?.dispose?.();
-      current.dryGain?.dispose?.();
-      current.wetSend?.dispose?.();
-    }
+    if (current) this.disposeVoice(current);
     this.voices[player] = this.createVoice(id, PROFILE_SCALES[id]);
   }
 
@@ -257,16 +252,9 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const v = this.voices[key];
       if (!v) continue;
-      v.synth?.dispose?.();
-      v.vibrato?.dispose?.();
-      v.filter?.dispose?.();
-      v.panner?.dispose?.();
-      v.dryGain?.dispose?.();
-      v.wetSend?.dispose?.();
+      this.disposeVoice(v);
       this.voices[key] = null;
     }
-    this.reverbReturn?.dispose?.();
-    this.reverb?.dispose?.();
     this.master?.dispose?.();
     this.limiter?.dispose?.();
     this.registered?.dispose();
@@ -277,7 +265,13 @@ export class HandSynthEngine {
     const pan = profile === 'flute' ? -0.35 : profile === 'bell' ? 0.35 : 0;
     const panner = new Tone.Panner(pan).connect(this.master);
     const dryGain = new Tone.Gain(0).connect(panner);
-    const wetSend = new Tone.Gain(0).connect(this.reverb);
+    const reverbReturn = new Tone.Gain(0.55).connect(panner);
+    const reverb = new Tone.Reverb({
+      decay: profile === 'sparks' ? 2.6 : 4.5,
+      preDelay: 0.02,
+      wet: 1,
+    }).connect(reverbReturn);
+    const wetSend = new Tone.Gain(0).connect(reverb);
     const filter = new Tone.Filter({
       frequency: this.params.filterMinHz,
       type: 'lowpass',
@@ -338,6 +332,8 @@ export class HandSynthEngine {
       panner,
       dryGain,
       wetSend,
+      reverb,
+      reverbReturn,
       active: false,
       currentNoteIdx: -1,
       pulse: 0,
@@ -375,7 +371,7 @@ export class HandSynthEngine {
     // Pulse always decays on every frame regardless of input state.
     voice.pulse = Math.max(0, voice.pulse - delta * 3);
 
-    if (!input) {
+    if (this.muted[key] || !input) {
       this.silenceVoice(key);
       return;
     }
@@ -417,12 +413,51 @@ export class HandSynthEngine {
 
   private silenceVoice(key: PlayerKey): void {
     const voice = this.voices[key];
-    if (!voice || !voice.active) return;
-    voice.synth.triggerRelease();
-    voice.dryGain.gain.rampTo(0, PARAM_RAMP * 2);
-    voice.wetSend.gain.rampTo(0, PARAM_RAMP * 2);
+    if (!voice) return;
+    this.releaseVoice(voice, false);
+  }
+
+  private releaseVoice(voice: Voice, immediate: boolean): void {
+    if (!voice.active && !immediate) return;
+    try {
+      voice.synth.triggerRelease?.(this.tone?.now?.());
+    } catch (err) {
+      console.warn('[handSynth] triggerRelease failed', err);
+    }
+    if (immediate) {
+      this.setGainNow(voice.dryGain, 0);
+      this.setGainNow(voice.wetSend, 0);
+    } else {
+      voice.dryGain.gain.rampTo(0, PARAM_RAMP * 2);
+      voice.wetSend.gain.rampTo(0, PARAM_RAMP * 2);
+    }
     voice.active = false;
     voice.currentNoteIdx = -1;
+  }
+
+  private disposeVoice(voice: Voice): void {
+    this.releaseVoice(voice, true);
+    voice.synth?.dispose?.();
+    voice.vibrato?.dispose?.();
+    voice.filter?.dispose?.();
+    voice.panner?.dispose?.();
+    voice.dryGain?.dispose?.();
+    voice.wetSend?.dispose?.();
+    voice.reverb?.dispose?.();
+    voice.reverbReturn?.dispose?.();
+  }
+
+  private setGainNow(node: any, value: number): void {
+    const gain = node?.gain;
+    if (!gain) return;
+    try {
+      const now = this.tone?.now?.() ?? 0;
+      gain.cancelScheduledValues?.(now);
+      if (typeof gain.setValueAtTime === 'function') gain.setValueAtTime(value, now);
+      else gain.value = value;
+    } catch {
+      try { gain.value = value; } catch { /* noop */ }
+    }
   }
 
   private attachMouseListener(): void {
@@ -467,16 +502,20 @@ export class HandSynthEngine {
   }
 
   private applyVibrato(): void {
-    const v = this.voices.local;
-    if (!v?.vibrato) return;
-    v.vibrato.frequency.rampTo(this.params.vibratoHz, PARAM_RAMP);
-    v.vibrato.depth.rampTo(this.params.vibratoDepth, PARAM_RAMP);
+    for (const key of PLAYER_KEYS) {
+      const v = this.voices[key];
+      if (!v?.vibrato) continue;
+      v.vibrato.frequency.rampTo(this.params.vibratoHz, PARAM_RAMP);
+      v.vibrato.depth.rampTo(this.params.vibratoDepth, PARAM_RAMP);
+    }
   }
 
   private applyRhodesVolume(): void {
-    const v = this.voices.remote;
-    if (!v) return;
-    v.synth.volume.rampTo(this.params.rhodesVolDb, PARAM_RAMP);
+    for (const key of PLAYER_KEYS) {
+      const v = this.voices[key];
+      if (!v || v.profile === 'flute') continue;
+      v.synth.volume.rampTo(this.params.rhodesVolDb + (v.profile === 'sparks' ? 2 : 0), PARAM_RAMP);
+    }
   }
 }
 

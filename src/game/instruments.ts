@@ -44,10 +44,10 @@ export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
   },
   sparks: {
     id: 'sparks',
-    label: 'Glass Sparks',
-    subtitle: 'particles · crystalline',
-    color: '#f7cf72',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="6" cy="12" r="1.4"/><circle cx="10" cy="9" r="1"/><circle cx="13" cy="14" r="1.2"/><circle cx="16" cy="10" r="1"/><circle cx="19" cy="13" r="1.4"/></svg>`,
+    label: 'Golden Sigil',
+    subtitle: 'filigree · radiant',
+    color: '#f6bd4b',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="8" ry="3.4"/><ellipse cx="12" cy="12" rx="8" ry="3.4" transform="rotate(58 12 12)"/><ellipse cx="12" cy="12" rx="8" ry="3.4" transform="rotate(-58 12 12)"/></svg>`,
   },
 };
 

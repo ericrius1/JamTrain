@@ -118,6 +118,7 @@ export class Game {
   private localPose?: PlayerPose;
   private remotePose?: PlayerPose;
   private partnerPresent = false;
+  private robotJamMuted = true;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -142,6 +143,7 @@ export class Game {
     });
     this.multiplayer.onPartnerIdentity(identity => {
       this.partnerPresent = identity !== null;
+      this.applyRobotMute();
     });
 
     this.webrtc = new WebRTCClient(
@@ -187,9 +189,9 @@ export class Game {
 
     this.linkGeometry.setAttribute('position', new THREE.BufferAttribute(this.linkPositions, 3));
     const linkMaterial = new THREE.LineBasicMaterial({
-      color: 0xaefcff,
+      color: 0xf6bd4b,
       transparent: true,
-      opacity: 0.52,
+      opacity: 0.42,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
@@ -326,6 +328,21 @@ export class Game {
     this.handSynth.setMasterGain(value);
   }
 
+  // Mute the procedural robot fill-in's hand-played voice. Has no effect
+  // when a real partner is present — only the robot stand-in is gated.
+  setRobotJamMuted(muted: boolean): void {
+    this.robotJamMuted = muted;
+    this.applyRobotMute();
+  }
+
+  isRobotJamMuted(): boolean {
+    return this.robotJamMuted;
+  }
+
+  private applyRobotMute(): void {
+    this.handSynth.setMuted('remote', !this.partnerPresent && this.robotJamMuted);
+  }
+
   setDisplayName(name: string): void {
     this.multiplayer.setDisplayName(name);
   }
@@ -374,11 +391,11 @@ export class Game {
 
   private setupRenderer(): void {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    this.renderer.setClearColor(0x071013, 1);
+    this.renderer.setClearColor(0x050403, 1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
-    this.scene.background = new THREE.Color(0x071013);
-    this.scene.fog = new THREE.Fog(0x071013, 7, 22);
+    this.scene.background = new THREE.Color(0x050403);
+    this.scene.fog = new THREE.Fog(0x070503, 6.5, 20);
   }
 
   private setupCamera(): void {
@@ -469,7 +486,7 @@ export class Game {
     for (const z of [-4.65, -3.1, -1.55, 0, 1.55, 3.1, 4.65]) {
       const isHero = Math.abs(z) < 1.7;
       const baseIntensity = isHero ? 0.55 : 0.32;
-      const light = new THREE.PointLight(0xffb069, baseIntensity, 3.2, 1.4);
+      const light = new THREE.PointLight(0xf5a33b, baseIntensity, 3.2, 1.4);
       light.position.set(0, 2.34, z);
       this.scene.add(light);
       this.cabinLights.push({ light, baseIntensity });
@@ -477,10 +494,10 @@ export class Game {
 
     this.setupCabinPane();
 
-    this.ambientLight = new THREE.AmbientLight(0x9fb9c1, 0.92);
+    this.ambientLight = new THREE.AmbientLight(0x7d5a35, 0.72);
     this.scene.add(this.ambientLight);
 
-    this.keyLight = new THREE.DirectionalLight(0xf7cf72, 1.45);
+    this.keyLight = new THREE.DirectionalLight(0xffbd54, 1.65);
     this.keyLight.position.set(-2.8, 4.2, 3.5);
     this.keyLight.castShadow = true;
     this.keyLight.target.position.set(0, 1, 0);
@@ -517,16 +534,16 @@ export class Game {
     const group = new THREE.Group();
     group.name = 'cabin-shell';
 
-    const floorMat = new THREE.MeshStandardMaterial({ color: 0x231b18, roughness: 0.86, metalness: 0.0 });
-    const wallMat = new THREE.MeshStandardMaterial({ color: 0x1a2024, roughness: 0.92, metalness: 0.0 });
-    const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x1a1512, roughness: 0.98, metalness: 0.0 });
-    const trimMat = new THREE.MeshStandardMaterial({ color: 0x6e9684, roughness: 0.68, metalness: 0.22 });
-    const woodMat = new THREE.MeshStandardMaterial({ color: 0x9c7e4d, roughness: 0.58, metalness: 0.08 });
-    const seatMat = new THREE.MeshStandardMaterial({ color: 0x4c233b, roughness: 0.7, metalness: 0.02 });
+    const floorMat = new THREE.MeshStandardMaterial({ color: 0x1b1009, roughness: 0.82, metalness: 0.04 });
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0x100c0a, roughness: 0.88, metalness: 0.05 });
+    const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x0d0907, roughness: 0.96, metalness: 0.02 });
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0xa16e2c, roughness: 0.45, metalness: 0.42 });
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x603419, roughness: 0.56, metalness: 0.12 });
+    const seatMat = new THREE.MeshStandardMaterial({ color: 0x2b1713, roughness: 0.72, metalness: 0.04 });
     const glassMat = new THREE.MeshStandardMaterial({
-      color: 0xb5dbe6,
+      color: 0xffd49a,
       transparent: true,
-      opacity: 0.14,
+      opacity: 0.12,
       roughness: 0.62,
       metalness: 0,
       depthWrite: false,
@@ -644,7 +661,7 @@ export class Game {
       group.add(tableLeg);
     }
 
-    const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xd9a974 });
+    const fixtureMat = new THREE.MeshBasicMaterial({ color: 0xf0b24d });
     const fixtureZs = [-4.65, -3.1, -1.55, 0, 1.55, 3.1, 4.65];
     for (const z of fixtureZs) {
       const fixture = new THREE.Mesh(this.roundedBox(0.5, 0.022, 0.09, wallR), fixtureMat);
@@ -865,12 +882,12 @@ export class Game {
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(atmosphere.background);
 
     if (this.ambientLight) {
-      this.ambientLight.color.set(0x8ea7bc).lerp(new THREE.Color(0xffd0a1), atmosphere.daylight * 0.48);
-      this.ambientLight.intensity = 0.46 + atmosphere.daylight * 0.55 + atmosphere.night * 0.12;
+      this.ambientLight.color.set(0x3f2a1d).lerp(new THREE.Color(0xffc37a), atmosphere.daylight * 0.62);
+      this.ambientLight.intensity = 0.38 + atmosphere.daylight * 0.48 + atmosphere.night * 0.14;
     }
     if (this.keyLight) {
-      this.keyLight.color.set(0x91d5ff).lerp(new THREE.Color(0xffcf84), atmosphere.daylight);
-      this.keyLight.intensity = 0.45 + atmosphere.daylight * 1.25;
+      this.keyLight.color.set(0x9d5f2f).lerp(new THREE.Color(0xffc05a), atmosphere.daylight);
+      this.keyLight.intensity = 0.58 + atmosphere.daylight * 1.35 + atmosphere.night * 0.18;
       this.keyLight.position.set(-2.8, 3.1 + atmosphere.daylight * 1.5, 3.5);
     }
   }

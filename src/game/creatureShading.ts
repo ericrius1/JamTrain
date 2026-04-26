@@ -137,8 +137,8 @@ export function makeClothMaterial(lighting: CreatureLighting, seatColor: number)
 export function makeFurMaterial(lighting: CreatureLighting): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial();
   m.colorNode = makeCreatureColorNode(lighting, {
-    baseColor: color('#cf9a55'),
-    sssColor: color('#9b5a2c'),
+    baseColor: color('#b97933'),
+    sssColor: color('#7c3f19'),
     sssStrength: 0.22,
     fiberHashStrength: 0.10,
   });
@@ -149,7 +149,7 @@ export function makeManeMaterial(lighting: CreatureLighting, seatColor: number):
   const m = new THREE.MeshBasicNodeMaterial();
   // Mane base = warm gold tinted toward seat color (keeps gold dominant).
   const seat = new THREE.Color(seatColor);
-  const gold = new THREE.Color('#d6953f');
+  const gold = new THREE.Color('#c9862d');
   const maneBase = gold.clone().lerp(seat, 0.35);
   m.colorNode = makeCreatureColorNode(lighting, {
     baseColor: color(maneBase),
@@ -166,14 +166,14 @@ export function makeEyeMaterial(lighting: CreatureLighting): THREE.MeshBasicNode
   return m;
 }
 
-/** Cyan glow used at palm/wrist nodes — anchor points for instrument visuals. */
+/** Golden glow used at palm/wrist nodes — anchor points for instrument visuals. */
 export function makeAccentMaterial(): THREE.MeshBasicNodeMaterial {
   const m = new THREE.MeshBasicNodeMaterial();
   m.colorNode = Fn(() => {
     const n = normalWorld;
     const view = cameraPosition.sub(positionWorld).normalize();
     const fres = float(1).sub(n.dot(view).abs()).clamp(0, 1);
-    return color('#7ef2ff').mul(float(0.6).add(pow(fres, 1.8).mul(0.9)));
+    return color('#ffd36b').mul(float(0.72).add(pow(fres, 1.8).mul(1.05)));
   })() as unknown as AnyColorNode;
   return m;
 }
