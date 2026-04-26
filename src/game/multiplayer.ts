@@ -222,7 +222,7 @@ export class MultiplayerClient {
   }
 
   sendPose(pose: PlayerPose, time: number): void {
-    if (time - this.lastSendAt < 0.055) return;
+    if (time - this.lastSendAt < 0.033) return;
     this.lastSendAt = time;
     const poseJson = serializePose({ ...pose, id: this.localId, roomId: this.roomId });
 
