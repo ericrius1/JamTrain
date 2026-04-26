@@ -38,6 +38,7 @@ import ConsumeWebrtcSignalReducer from "./consume_webrtc_signal_reducer";
 import LeaveRoomReducer from "./leave_room_reducer";
 import RequestSeatReducer from "./request_seat_reducer";
 import SendWebrtcSignalReducer from "./send_webrtc_signal_reducer";
+import UpdateInstrumentReducer from "./update_instrument_reducer";
 
 // Import all procedure arg schemas
 
@@ -85,6 +86,7 @@ const reducersSchema = __reducers(
   __reducerSchema("leave_room", LeaveRoomReducer),
   __reducerSchema("request_seat", RequestSeatReducer),
   __reducerSchema("send_webrtc_signal", SendWebrtcSignalReducer),
+  __reducerSchema("update_instrument", UpdateInstrumentReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */

@@ -12,6 +12,7 @@ const player = table(
     displayName: t.string(),
     seatIndex: t.i32(),
     online: t.bool(),
+    instrument: t.string(),
     connectedAt: t.timestamp(),
     updatedAt: t.timestamp(),
   }
@@ -125,6 +126,7 @@ export const request_seat = spacetimedb.reducer(
         displayName: cleanName,
         seatIndex,
         online: true,
+        instrument: existing.instrument || 'flute',
         updatedAt: ctx.timestamp,
       });
       return;
@@ -136,7 +138,26 @@ export const request_seat = spacetimedb.reducer(
       displayName: cleanName,
       seatIndex,
       online: true,
+      instrument: 'flute',
       connectedAt: ctx.timestamp,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
+const ALLOWED_INSTRUMENTS = new Set(['flute', 'bell', 'sparks']);
+
+export const update_instrument = spacetimedb.reducer(
+  { instrument: t.string() },
+  (ctx, { instrument }) => {
+    if (!ALLOWED_INSTRUMENTS.has(instrument)) {
+      throw new SenderError(`invalid instrument: ${instrument}`);
+    }
+    const row = ctx.db.player.identity.find(ctx.sender);
+    if (!row) return;
+    ctx.db.player.identity.update({
+      ...row,
+      instrument,
       updatedAt: ctx.timestamp,
     });
   }

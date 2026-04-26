@@ -16,6 +16,7 @@ export const Player = __t.object("Player", {
   displayName: __t.string(),
   seatIndex: __t.i32(),
   online: __t.bool(),
+  instrument: __t.string(),
   connectedAt: __t.timestamp(),
   updatedAt: __t.timestamp(),
 });
