@@ -243,6 +243,7 @@ export class Hud {
     this.partnerPresent = !!name;
     this.applyPlaques();
     this.renderNetRow();
+    this.localPanel.setPartnerPresent(this.partnerPresent);
   }
 
   private applyPlaques(): void {
