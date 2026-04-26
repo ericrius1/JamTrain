@@ -333,6 +333,8 @@ export class PlasmaOrb {
   private registered?: ReturnType<typeof registerTweaks<typeof PLASMA_DEFS>>;
   private smoothedEnergy = 0;
   private targetEnergy = 0;
+  private smoothedMusicIntensity = 0;
+  private targetMusicIntensity = 0;
   private targetFingertips: PlasmaOrbMetaball[] = [];
   private smoothedFingertips: SmoothedMetaball[] = Array.from(
     { length: MAX_FINGER_METABALLS },
@@ -509,9 +511,26 @@ export class PlasmaOrb {
     this.targetEnergy = Math.max(0, Math.min(1, energy * this.params.energyBoost));
   }
 
+  // Cozy, breath-like reactivity to music. Avoids harsh strobing — instead
+  // the orb breathes brighter and softens its iso threshold (subtly puffs)
+  // and stirs a touch more on note attacks and drum hits.
+  setMusicIntensity(value: number): void {
+    this.targetMusicIntensity = Math.max(0, Math.min(1, value));
+  }
+
   update(elapsed: number, delta: number): void {
     const energyAlpha = 1 - Math.exp(-delta * 5);
     this.smoothedEnergy += (this.targetEnergy - this.smoothedEnergy) * energyAlpha;
+    // Faster smoothing on music intensity so the breath responds to note
+    // attacks but still glides instead of strobing.
+    const musicAlpha = 1 - Math.exp(-delta * 9);
+    this.smoothedMusicIntensity +=
+      (this.targetMusicIntensity - this.smoothedMusicIntensity) * musicAlpha;
+    const m = this.smoothedMusicIntensity;
+    this.uIsoLevel.value = this.params.isoLevel - m * 0.16;
+    this.uBrightness.value = this.params.brightness * (1 + m * 0.4);
+    this.uNoiseAmp.value = this.params.noiseAmp + m * 0.05;
+    this.uWobbleSpeed.value = this.params.wobbleSpeed * (1 + m * 0.45);
 
     const posAlpha = 1 - Math.exp(-delta * 18);
     const radiusAlpha = 1 - Math.exp(-delta * 12);

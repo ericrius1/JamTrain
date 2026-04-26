@@ -133,7 +133,7 @@ export class VideoPanel {
 
     const hint = document.createElement('div');
     hint.className = 'video-panel-toolbar-hint';
-    hint.textContent = 'Tap Camera to track your hands · You can play without it.';
+    hint.textContent = 'Tap Camera to track your hands · You can play without it with mouse/trackpad';
     toolbar.appendChild(hint);
     this.hintEl = hint;
 
@@ -160,7 +160,7 @@ export class VideoPanel {
     if (this.hintEl) {
       this.hintEl.textContent = enabled
         ? 'Want your partner to see and hear you? Toggle Share Video / Mic →'
-        : 'Tap Camera to track your hands · You can play without it.';
+        : 'Tap Camera to track your hands · You can play without it with mouse/trackpad';
     }
   }
 

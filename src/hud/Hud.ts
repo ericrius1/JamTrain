@@ -13,6 +13,12 @@ import { MixerPanel } from './components/MixerPanel';
 export const DEFAULT_MUSIC_VOLUME = 0.5;
 export const DEFAULT_VOICE_VOLUME = 1.0;
 
+// Instrument labels shown on the plaques. Both players are in the same
+// pentatonic scale (handled in handSynth.ts) so the plaque just calls out
+// what each player is voicing.
+const LOCAL_INSTRUMENT = 'Cedar Flute';
+const REMOTE_INSTRUMENT = 'Velvet Keys';
+
 export type HudCallbacks = {
   onBegin: (conductorName: string) => Promise<void> | void;
   onRoomChange: (room: string) => void;
@@ -97,7 +103,7 @@ export class Hud {
     this.playerLeft = new PlayerPlaque({
       side: 'left',
       name: 'AVA',
-      voice: 'Glass Bells · Ionian',
+      voice: LOCAL_INSTRUMENT,
       kind: 'conductor',
     });
     this.uiEl.appendChild(this.playerLeft.el);
@@ -105,7 +111,7 @@ export class Hud {
     this.playerRight = new PlayerPlaque({
       side: 'right',
       name: 'KORO·v3',
-      voice: 'Wire Loom · Lydian',
+      voice: REMOTE_INSTRUMENT,
       kind: 'automaton',
     });
     this.uiEl.appendChild(this.playerRight.el);
@@ -235,20 +241,20 @@ export class Hud {
 
     localPlaque.set({
       name: this.conductorName,
-      voice: 'Glass Bells · Ionian',
+      voice: LOCAL_INSTRUMENT,
       kind: 'conductor',
     });
 
     if (this.partnerName) {
       partnerPlaque.set({
         name: this.partnerName.toUpperCase(),
-        voice: 'Live hands · improvising',
+        voice: REMOTE_INSTRUMENT,
         kind: 'conductor',
       });
     } else {
       partnerPlaque.set({
         name: 'KORO·v3',
-        voice: 'Wire Loom · Lydian',
+        voice: REMOTE_INSTRUMENT,
         kind: 'automaton',
       });
     }

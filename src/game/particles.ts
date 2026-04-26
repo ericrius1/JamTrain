@@ -108,6 +108,7 @@ export class LinkParticles {
   private strips: GpuLinkStrip[] = [];
   private fallback?: CpuTrailFallback;
   private gpuActive = true;
+  private musicIntensity = 0;
 
   constructor(private scene: THREE.Scene) {
     const colors = [
@@ -145,13 +146,23 @@ export class LinkParticles {
 
     try {
       for (let i = 0; i < this.strips.length; i += 1) {
-        this.strips[i].update(renderer, links[i % links.length]);
+        const link = links[i % links.length];
+        // Layer music intensity on top of the link's tension. Note attacks
+        // and drum hits give the threads a gentle shimmer.
+        const boosted: LinkSample = this.musicIntensity > 0
+          ? { ...link, tension: clamp(link.tension + this.musicIntensity * 0.4, 0.05, 1) }
+          : link;
+        this.strips[i].update(renderer, boosted);
       }
     } catch (error) {
       console.warn('GPU particle update failed; using CPU trail fallback', error);
       this.useFallback();
       this.fallback?.update(links, timeSeconds);
     }
+  }
+
+  setMusicIntensity(value: number): void {
+    this.musicIntensity = clamp(value, 0, 1);
   }
 
   private useFallback(): void {

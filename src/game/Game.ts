@@ -89,7 +89,9 @@ export class Game {
   private scenery: ScenerySystem;
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
+  private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
   private plasmaOrb?: PlasmaOrb;
+  private musicIntensity = 0;
   private shadowsTweaks?: ReturnType<typeof registerTweaks<typeof SHADOWS_DEFS>>;
   private readonly shadowParams = makeParams(SHADOWS_DEFS);
   private cabinTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_DEFS>>;
@@ -406,9 +408,11 @@ export class Game {
 
     for (const z of [-4.65, -3.1, -1.55, 0, 1.55, 3.1, 4.65]) {
       const isHero = Math.abs(z) < 1.7;
-      const light = new THREE.PointLight(0xffb069, isHero ? 0.55 : 0.32, 3.2, 1.4);
+      const baseIntensity = isHero ? 0.55 : 0.32;
+      const light = new THREE.PointLight(0xffb069, baseIntensity, 3.2, 1.4);
       light.position.set(0, 2.34, z);
       this.scene.add(light);
+      this.cabinLights.push({ light, baseIntensity });
     }
 
     this.setupCabinPane();
@@ -669,7 +673,8 @@ export class Game {
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
     this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
-    this.handSynth.update(localPose, delta);
+    this.handSynth.update(localPose, remotePose, delta);
+    this.updateMusicReactivity(delta);
     this.multiplayer.sendPose(localPose, elapsed);
     if (this.cameraMode === 'game') this.updateCameraDolly(delta);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
@@ -723,6 +728,33 @@ export class Game {
       this.plasmaOrb.setEnergy(energy);
     }
     return links;
+  }
+
+  private updateMusicReactivity(delta: number): void {
+    // Combine drum hits + synth note attacks into a single 0..1 pulse, plus a
+    // gentle sustained "music is happening" baseline. Smoothed so the visuals
+    // breathe rather than strobe.
+    const drumPulse = this.audio.getDrumPulse();
+    const drumLevel = this.audio.getDrumLevel();
+    const notePulse = this.handSynth.getNotePulse();
+    const synthActivity = this.handSynth.getActivity();
+    const sustained = clamp(drumLevel * 0.55 + synthActivity * 0.4, 0, 1);
+    const pulse = Math.max(drumPulse, notePulse);
+    const targetIntensity = clamp(sustained * 0.45 + pulse * 0.85, 0, 1);
+
+    const alpha = 1 - Math.exp(-delta * 7);
+    this.musicIntensity += (targetIntensity - this.musicIntensity) * alpha;
+
+    this.plasmaOrb?.setMusicIntensity(this.musicIntensity);
+    this.particles.setMusicIntensity(this.musicIntensity * 0.7);
+
+    // Cabin lights: very subtle warm breath. Drum kicks give a tiny bump,
+    // sustained activity adds a touch of overall warmth. Stays under ±10%
+    // of the baseline so it never reads as harsh strobing.
+    const lightMod = 1 + drumPulse * 0.06 + sustained * 0.05;
+    for (const entry of this.cabinLights) {
+      entry.light.intensity = entry.baseIntensity * lightMod;
+    }
   }
 
   private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number }): void {

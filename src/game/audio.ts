@@ -11,6 +11,10 @@ export const AUDIO_DEFS = {
   reverbWetRange:     { default: 0.18, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
   shimmerMaxDb:       { default: -18,  min: -30,  max: 0,    step: 0.5,  label: 'shimmer dB' },
   muteHandModulation: { type: 'boolean', default: false, label: 'mute hands' },
+  drumLevelDb:        { default: -12,  min: -40,  max: 0,    step: 0.5,  label: 'drums dB' },
+  drumBpm:            { default: 74,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
+  drumEbbPeriod:      { default: 78,   min: 20,   max: 240,  step: 1,    label: 'drum ebb sec' },
+  muteDrums:          { type: 'boolean', default: false, label: 'mute drums' },
 } as const;
 
 export type AudioParams = ParamsOf<typeof AUDIO_DEFS>;
@@ -80,6 +84,19 @@ export class AudioEngine {
   private chordPhase = 0;
   private registered?: ReturnType<typeof registerTweaks<typeof AUDIO_DEFS>>;
 
+  // Lo-fi drum kit. Tight + dry, routed straight to the compressor so the
+  // hand-modulated lowpass and big reverb don't smear the transients.
+  private kick?: any;
+  private snare?: any;
+  private hihat?: any;
+  private snareFilter?: any;
+  private hatFilter?: any;
+  private drumGain?: any;
+  private drumSeq?: any;
+  private elapsed = 0;
+  private kickAt = -Infinity;
+  private snareAt = -Infinity;
+
   // Smoothed input stats — drift slowly so hand-loss does not snap.
   private smoothed = {
     avgX: 0,
@@ -98,6 +115,10 @@ export class AudioEngine {
     reverbWetRange: AUDIO_DEFS.reverbWetRange.default,
     shimmerMaxDb: AUDIO_DEFS.shimmerMaxDb.default,
     muteHandModulation: AUDIO_DEFS.muteHandModulation.default,
+    drumLevelDb: AUDIO_DEFS.drumLevelDb.default,
+    drumBpm: AUDIO_DEFS.drumBpm.default,
+    drumEbbPeriod: AUDIO_DEFS.drumEbbPeriod.default,
+    muteDrums: AUDIO_DEFS.muteDrums.default,
   };
 
   constructor(
@@ -185,14 +206,77 @@ export class AudioEngine {
     this.subBBanks[b].triggerAttack(transposeOctaveDown(initial.b.voices[0]));
     this.shimmerBanks[b].triggerAttack(this.shimmerNote());
 
+    this.setupDrums(Tone);
+
     this.attachPane();
     this.running = true;
     this.publish();
   }
 
+  private setupDrums(Tone: typeof import('tone')): void {
+    // Drums sit dry on the compressor bus — they bypass the lowpass + chorus +
+    // big reverb so the transients stay tight and the lo-fi groove doesn't
+    // smear into the bass ambience.
+    this.drumGain = new Tone.Gain(0).connect(this.compressor);
+
+    this.kick = new Tone.MembraneSynth({
+      pitchDecay: 0.05,
+      octaves: 5,
+      oscillator: { type: 'sine' } as any,
+      envelope: { attack: 0.001, decay: 0.45, sustain: 0.01, release: 1.0 },
+      volume: -8,
+    }).connect(this.drumGain);
+
+    // Bandpass-filtered pink noise → soft brushed snare.
+    this.snareFilter = new Tone.Filter({ frequency: 2200, type: 'bandpass', Q: 1.1 }).connect(this.drumGain);
+    this.snare = new Tone.NoiseSynth({
+      noise: { type: 'pink' } as any,
+      envelope: { attack: 0.003, decay: 0.16, sustain: 0, release: 0.16 },
+      volume: -14,
+    }).connect(this.snareFilter);
+
+    // Highpass white-noise tick — barely-there shaker / closed hat.
+    this.hatFilter = new Tone.Filter({ frequency: 7200, type: 'highpass', Q: 0.7 }).connect(this.drumGain);
+    this.hihat = new Tone.NoiseSynth({
+      noise: { type: 'white' } as any,
+      envelope: { attack: 0.001, decay: 0.04, sustain: 0, release: 0.04 },
+      volume: -28,
+    }).connect(this.hatFilter);
+
+    Tone.getTransport().bpm.value = this.params.drumBpm;
+    Tone.getTransport().swing = 0.18;
+    Tone.getTransport().swingSubdivision = '16n';
+
+    // 16-step lofi pattern. Numbers are velocities (0 = rest).
+    //               1   e   &   a   2   e   &   a   3   e   &   a   4   e   &   a
+    const KICK   = [0.95,   0,   0,   0,    0,   0, 0.7,   0,    0,   0,   0,   0,    0,   0,   0,   0];
+    const SNARE  = [   0,   0,   0,   0, 0.65,   0,   0,   0,    0,   0,   0,   0, 0.65,   0,   0,   0];
+    const HAT    = [   0, 0.5,   0, 0.45,    0, 0.5,   0, 0.45,    0, 0.5,   0, 0.45,    0, 0.5,   0, 0.45];
+
+    this.drumSeq = new Tone.Sequence((time: number, step: number) => {
+      const kv = KICK[step];
+      const sv = SNARE[step];
+      const hv = HAT[step];
+      if (kv) {
+        this.kick?.triggerAttackRelease('C2', '8n', time, kv);
+        this.kickAt = this.elapsed;
+      }
+      if (sv) {
+        this.snare?.triggerAttackRelease('16n', time, sv);
+        this.snareAt = this.elapsed;
+      }
+      if (hv) {
+        this.hihat?.triggerAttackRelease('32n', time, hv);
+      }
+    }, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], '16n');
+    this.drumSeq.start(0);
+    Tone.getTransport().start('+0.1');
+  }
+
   update(local: PlayerPose, remote: PlayerPose, daylight: number, delta: number): void {
     if (!this.running || !this.tone) return;
 
+    this.elapsed += delta;
     this.chordPhase += delta;
     if (this.chordPhase >= this.params.chordCycleSeconds) {
       this.chordPhase = 0;
@@ -240,14 +324,46 @@ export class AudioEngine {
 
     const shimmerLinear = p * this.tone.dbToGain(this.params.shimmerMaxDb);
     this.shimmerGain.gain.rampTo(shimmerLinear, PARAM_RAMP);
+
+    // Drums ebb in and out over a slow cosine bell so the train moves through
+    // jam phases — quiet a while, then a soft groove builds and recedes.
+    if (this.drumGain) {
+      const period = Math.max(8, this.params.drumEbbPeriod);
+      const t = (this.elapsed % period) / period;
+      const bell = (1 - Math.cos(t * Math.PI * 2)) * 0.5; // 0..1..0 over period
+      const ebbT = Math.pow(bell, 1.4); // bias slightly toward quiet
+      const muted = this.params.muteDrums ? 0 : 1;
+      const drumLinear = ebbT * muted * this.tone.dbToGain(this.params.drumLevelDb);
+      this.drumGain.gain.rampTo(drumLinear, PARAM_RAMP * 4);
+    }
+  }
+
+  // 0..1 spike on each drum hit, decaying. Visuals layer this for cozy
+  // beat-driven pulses that don't read as harsh strobing.
+  getDrumPulse(): number {
+    if (!this.running) return 0;
+    const ageK = Math.max(0, this.elapsed - this.kickAt);
+    const ageS = Math.max(0, this.elapsed - this.snareAt);
+    const k = Math.exp(-ageK * 6);
+    const s = Math.exp(-ageS * 4) * 0.55;
+    return Math.min(1, k + s);
+  }
+
+  // Smoothed daylight-independent activity level — useful for "is the music
+  // currently playing" cues like cabin light intensity.
+  getDrumLevel(): number {
+    if (!this.running || !this.drumGain) return 0;
+    const period = Math.max(8, this.params.drumEbbPeriod);
+    const t = (this.elapsed % period) / period;
+    const bell = (1 - Math.cos(t * Math.PI * 2)) * 0.5;
+    return this.params.muteDrums ? 0 : Math.pow(bell, 1.4);
   }
 
   setMasterGain(value: number): void {
-    // Slider 0–1 → actual gain via power curve. The ceiling (0.25) is well
-    // below the old linear max (1.0), and the exponent puts most of the
-    // slider's resolution in the very-quiet range — slider 0.5 lands near
-    // 0.044 gain, roughly where slider 7 sat in the original linear mapping.
-    const MAX_MUSIC_GAIN = 0.25;
+    // Slider 0–1 → actual gain via power curve. Calibrated so slider 0.5 lands
+    // around the loudness that used to sit near slider 0.2, with a tighter
+    // ceiling so the bed sits comfortably under the synth + drum layers.
+    const MAX_MUSIC_GAIN = 0.025;
     const CURVE_EXP = 2.5;
     const v = value <= 0 ? 0 : Math.min(1, value);
     this.params.masterGain = MAX_MUSIC_GAIN * Math.pow(v, CURVE_EXP);
@@ -312,6 +428,13 @@ export class AudioEngine {
     this.panner?.dispose?.();
     this.compressor?.dispose?.();
     this.master?.dispose?.();
+    this.drumSeq?.dispose?.();
+    this.kick?.dispose?.();
+    this.snare?.dispose?.();
+    this.hihat?.dispose?.();
+    this.snareFilter?.dispose?.();
+    this.hatFilter?.dispose?.();
+    this.drumGain?.dispose?.();
     this.registered?.dispose();
     this.publish();
   }
@@ -414,6 +537,7 @@ export class AudioEngine {
       onChange: {
         attackSeconds:  () => this.applyEnvelopeUpdate(),
         releaseSeconds: () => this.applyEnvelopeUpdate(),
+        drumBpm:        v => { this.tone?.getTransport().bpm.rampTo(v, 1); },
       },
     });
   }

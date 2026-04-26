@@ -3,16 +3,18 @@ import { clamp } from './math';
 import type { HandPose, PlayerPose } from './types';
 
 export const HAND_SYNTH_DEFS = {
-  enabled:      { type: 'boolean', default: true,  label: 'enabled' },
-  volumeDb:     { default: -6,     min: -40, max: 6,    step: 0.5,  label: 'volume dB' },
-  filterMinHz:  { default: 280,    min: 80,  max: 2000, step: 10,   label: 'filter min Hz' },
-  filterMaxHz:  { default: 5800,   min: 800, max: 9000, step: 50,   label: 'filter max Hz' },
-  filterQ:      { default: 1.4,    min: 0.5, max: 8,    step: 0.1,  label: 'filter Q' },
-  attack:       { default: 0.20,   min: 0.01, max: 2,   step: 0.01, label: 'attack sec' },
-  release:      { default: 1.6,    min: 0.1, max: 5,    step: 0.05, label: 'release sec' },
-  vibratoHz:    { default: 4.5,    min: 0,   max: 9,    step: 0.1,  label: 'vibrato Hz' },
-  vibratoDepth: { default: 0.04,   min: 0,   max: 0.2,  step: 0.005,label: 'vibrato depth' },
-  mouseEnabled: { type: 'boolean', default: true,  label: 'mouse plays' },
+  enabled:       { type: 'boolean', default: true,  label: 'enabled' },
+  volumeDb:      { default: -8,    min: -40, max: 6,    step: 0.5,  label: 'volume dB' },
+  filterMinHz:   { default: 320,   min: 80,  max: 2000, step: 10,   label: 'filter min Hz' },
+  filterMaxHz:   { default: 5800,  min: 800, max: 9000, step: 50,   label: 'filter max Hz' },
+  filterQ:       { default: 1.4,   min: 0.5, max: 8,    step: 0.1,  label: 'filter Q' },
+  attack:        { default: 0.20,  min: 0.01, max: 2,   step: 0.01, label: 'attack sec' },
+  release:       { default: 1.6,   min: 0.1, max: 5,    step: 0.05, label: 'release sec' },
+  vibratoHz:     { default: 4.5,   min: 0,   max: 9,    step: 0.1,  label: 'flute vib Hz' },
+  vibratoDepth:  { default: 0.04,  min: 0,   max: 0.2,  step: 0.005,label: 'flute vib depth' },
+  reverbWetMax:  { default: 0.85,  min: 0,   max: 1,    step: 0.01, label: 'reverb max' },
+  rhodesVolDb:   { default: -3,    min: -24, max: 6,    step: 0.5,  label: 'rhodes dB' },
+  mouseEnabled:  { type: 'boolean', default: true,  label: 'mouse plays' },
 } as const;
 
 export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
@@ -20,7 +22,8 @@ export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
 // A minor pentatonic, two octaves. Sits well over both bass-ambience
 // palettes (F major / A minor at night, G major / D major by day) because
 // its tones are common to both keys.
-const SCALE_NOTES: string[] = ['A3', 'C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5', 'E5', 'G5', 'A5'];
+const SCALE_NOTES_LOCAL: string[] = ['A3', 'C4', 'D4', 'E4', 'G4', 'A4', 'C5', 'D5', 'E5', 'G5', 'A5'];
+const SCALE_NOTES_REMOTE: string[] = SCALE_NOTES_LOCAL.map(transposeOctaveDown);
 
 const PRESENCE_THRESHOLD = 0.5;
 const PARAM_RAMP = 0.08;
@@ -32,34 +35,44 @@ const HAND_X_RANGE = 0.6;
 const HAND_Y_LOW = 0.4;
 const HAND_Y_HIGH = 1.8;
 
-type SourceKey = 'left' | 'right' | 'mouse';
-const SOURCE_KEYS: SourceKey[] = ['left', 'right', 'mouse'];
-
-type SourceState = {
-  synth: any;
-  vibrato: any;
-  filter: any;
-  gain: any;
-  active: boolean;
-  currentNoteIdx: number;
-};
-
 // Deadband around each note boundary (in scale-step units) so a hand resting
 // near a boundary doesn't flicker between two pitches.
 const NOTE_HYSTERESIS = 0.18;
 
+type Profile = 'flute' | 'rhodes';
+export const PROFILE_LABELS: Record<Profile, string> = {
+  flute: 'Cedar Flute',
+  rhodes: 'Velvet Keys',
+};
+
+type PlayerKey = 'local' | 'remote';
+const PLAYER_KEYS: PlayerKey[] = ['local', 'remote'];
+
 type Coords = { xN: number; yN: number };
+type Input = { pitch: Coords; expression: Coords | null };
+
+type Voice = {
+  profile: Profile;
+  scale: string[];
+  synth: any;
+  filter: any;
+  vibrato?: any;
+  dryGain: any;
+  wetSend: any;
+  active: boolean;
+  currentNoteIdx: number;
+  pulse: number;
+};
 
 export class HandSynthEngine {
   private tone?: typeof import('tone');
   private running = false;
-  private master?: any;
 
-  private sources: Record<SourceKey, SourceState | null> = {
-    left: null,
-    right: null,
-    mouse: null,
-  };
+  private master?: any;
+  private reverb?: any;
+  private reverbReturn?: any;
+
+  private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
 
   private mouseXN = 0.5;
   private mouseYN = 0.5;
@@ -77,6 +90,8 @@ export class HandSynthEngine {
     release: HAND_SYNTH_DEFS.release.default,
     vibratoHz: HAND_SYNTH_DEFS.vibratoHz.default,
     vibratoDepth: HAND_SYNTH_DEFS.vibratoDepth.default,
+    reverbWetMax: HAND_SYNTH_DEFS.reverbWetMax.default,
+    rhodesVolDb: HAND_SYNTH_DEFS.rhodesVolDb.default,
     mouseEnabled: HAND_SYNTH_DEFS.mouseEnabled.default,
   };
 
@@ -89,6 +104,11 @@ export class HandSynthEngine {
     this.attachMouseListener();
   }
 
+  getProfileLabel(player: PlayerKey): string {
+    const profile = player === 'local' ? 'flute' : 'rhodes';
+    return PROFILE_LABELS[profile];
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     const Tone = await import('tone');
@@ -97,34 +117,59 @@ export class HandSynthEngine {
 
     this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).toDestination();
 
-    for (const key of SOURCE_KEYS) {
-      this.sources[key] = this.createSource();
-    }
+    // One shared reverb the two voices send into. Wet level per voice is set
+    // by that voice's expression hand (X axis), not by the reverb's own wet.
+    this.reverb = new Tone.Reverb({ decay: 4.5, preDelay: 0.02, wet: 1 });
+    await this.reverb.generate?.();
+    this.reverbReturn = new Tone.Gain(0.55).connect(this.master);
+    this.reverb.connect(this.reverbReturn);
+
+    this.voices.local = this.createVoice('flute', SCALE_NOTES_LOCAL);
+    this.voices.remote = this.createVoice('rhodes', SCALE_NOTES_REMOTE);
 
     this.attachPane();
     this.running = true;
   }
 
-  update(local: PlayerPose, delta: number): void {
+  update(local: PlayerPose, remote: PlayerPose, delta: number): void {
     if (!this.running || !this.tone) return;
     this.elapsed += delta;
 
     if (!this.params.enabled) {
-      this.silenceAll();
+      for (const key of PLAYER_KEYS) this.silenceVoice(key);
       return;
     }
 
-    const left = local.hands.left;
-    const right = local.hands.right;
-
-    this.updateSource('left',  left.confidence  > PRESENCE_THRESHOLD ? this.handCoords(left)  : null);
-    this.updateSource('right', right.confidence > PRESENCE_THRESHOLD ? this.handCoords(right) : null);
-
     const mouseFresh =
       this.params.mouseEnabled && (this.elapsed - this.mouseLastAt) < MOUSE_IDLE_TIMEOUT;
-    this.updateSource('mouse', mouseFresh ? { xN: this.mouseXN, yN: this.mouseYN } : null);
+    const localInput = this.resolveInput(local, mouseFresh ? { xN: this.mouseXN, yN: this.mouseYN } : null);
+    const remoteInput = this.resolveInput(remote, null);
+
+    this.updateVoice('local', localInput, delta);
+    this.updateVoice('remote', remoteInput, delta);
 
     this.master.gain.rampTo(this.tone.dbToGain(this.params.volumeDb), PARAM_RAMP);
+  }
+
+  // 0..1 spike on each note attack/change, decaying. Visuals layer this on
+  // top of the drum pulse for a unified beat-driven shimmer.
+  getNotePulse(): number {
+    let max = 0;
+    for (const key of PLAYER_KEYS) {
+      const v = this.voices[key];
+      if (v && v.pulse > max) max = v.pulse;
+    }
+    return max;
+  }
+
+  // 0..1 — fraction of voices currently held. Useful for sustained
+  // reactivity (e.g., "are people jamming right now?").
+  getActivity(): number {
+    let count = 0;
+    for (const key of PLAYER_KEYS) {
+      if (this.voices[key]?.active) count += 1;
+    }
+    return count / PLAYER_KEYS.length;
   }
 
   dispose(): void {
@@ -134,97 +179,163 @@ export class HandSynthEngine {
     }
     if (!this.running) return;
     this.running = false;
-    for (const key of SOURCE_KEYS) {
-      const src = this.sources[key];
-      if (!src) continue;
-      src.synth?.dispose?.();
-      src.vibrato?.dispose?.();
-      src.filter?.dispose?.();
-      src.gain?.dispose?.();
-      this.sources[key] = null;
+    for (const key of PLAYER_KEYS) {
+      const v = this.voices[key];
+      if (!v) continue;
+      v.synth?.dispose?.();
+      v.vibrato?.dispose?.();
+      v.filter?.dispose?.();
+      v.dryGain?.dispose?.();
+      v.wetSend?.dispose?.();
+      this.voices[key] = null;
     }
+    this.reverbReturn?.dispose?.();
+    this.reverb?.dispose?.();
     this.master?.dispose?.();
     this.registered?.dispose();
   }
 
-  private createSource(): SourceState {
+  private createVoice(profile: Profile, scale: string[]): Voice {
     const Tone = this.tone!;
-    const gain = new Tone.Gain(0).connect(this.master);
+    const dryGain = new Tone.Gain(0).connect(this.master);
+    const wetSend = new Tone.Gain(0).connect(this.reverb);
     const filter = new Tone.Filter({
       frequency: this.params.filterMinHz,
       type: 'lowpass',
       rolloff: -12,
       Q: this.params.filterQ,
-    }).connect(gain);
-    // Subtle pitch wobble for a breathy, flute-like character.
-    const vibrato = new Tone.Vibrato({
-      frequency: this.params.vibratoHz,
-      depth: this.params.vibratoDepth,
-    }).connect(filter);
-    const synth = new Tone.Synth({
-      oscillator: { type: 'triangle' } as any,
-      envelope: {
-        attack: this.params.attack,
-        decay: 0.3,
-        sustain: 0.95,
-        release: this.params.release,
-      },
-      // No portamento — pitch snaps between scale steps. A real pentatonic
-      // flute can't play microtones between holes.
-      portamento: 0,
-      volume: 0,
-    }).connect(vibrato);
-    return { synth, vibrato, filter, gain, active: false, currentNoteIdx: -1 };
+    });
+    filter.connect(dryGain);
+    filter.connect(wetSend);
+
+    let synth: any;
+    let vibrato: any;
+
+    if (profile === 'flute') {
+      vibrato = new Tone.Vibrato({
+        frequency: this.params.vibratoHz,
+        depth: this.params.vibratoDepth,
+      }).connect(filter);
+      synth = new Tone.Synth({
+        oscillator: { type: 'triangle' } as any,
+        envelope: {
+          attack: this.params.attack,
+          decay: 0.3,
+          sustain: 0.95,
+          release: this.params.release,
+        },
+        portamento: 0,
+        volume: 0,
+      }).connect(vibrato);
+    } else {
+      // Rhodes-ish FM voice: bell-like attack that decays into a warm sine
+      // body. Mixes well under the flute and bass ambience because the body
+      // is a near-pure sine — no cutting harmonics.
+      synth = new Tone.FMSynth({
+        harmonicity: 1,
+        modulationIndex: 4.5,
+        oscillator: { type: 'sine' } as any,
+        envelope: { attack: 0.005, decay: 0.9, sustain: 0.35, release: 1.4 },
+        modulation: { type: 'sine' } as any,
+        modulationEnvelope: { attack: 0.002, decay: 0.6, sustain: 0, release: 0.5 },
+        portamento: 0,
+        volume: this.params.rhodesVolDb,
+      }).connect(filter);
+    }
+
+    return {
+      profile,
+      scale,
+      synth,
+      filter,
+      vibrato,
+      dryGain,
+      wetSend,
+      active: false,
+      currentNoteIdx: -1,
+      pulse: 0,
+    };
   }
 
-  private handCoords(hand: HandPose): Coords {
-    const xN = clamp((hand.palm.x + HAND_X_RANGE) / (HAND_X_RANGE * 2), 0, 1);
-    const yN = clamp((hand.palm.y - HAND_Y_LOW) / (HAND_Y_HIGH - HAND_Y_LOW), 0, 1);
-    return { xN, yN };
+  // Decide which hand plays pitch and which (if any) modulates expression.
+  // Right hand is the "playing" hand by default; if only the left hand is
+  // visible, it takes over pitch and there's no expression modulator.
+  private resolveInput(pose: PlayerPose, mouse: Coords | null): Input | null {
+    const left = pose.hands.left;
+    const right = pose.hands.right;
+    const lOn = left.confidence > PRESENCE_THRESHOLD;
+    const rOn = right.confidence > PRESENCE_THRESHOLD;
+
+    if (rOn && lOn) {
+      return { pitch: handCoords(right), expression: handCoords(left) };
+    }
+    if (rOn) {
+      return { pitch: handCoords(right), expression: null };
+    }
+    if (lOn) {
+      return { pitch: handCoords(left), expression: null };
+    }
+    if (mouse) {
+      return { pitch: mouse, expression: null };
+    }
+    return null;
   }
 
-  private updateSource(key: SourceKey, coords: Coords | null): void {
-    const src = this.sources[key];
-    if (!src) return;
+  private updateVoice(key: PlayerKey, input: Input | null, delta: number): void {
+    const voice = this.voices[key];
+    if (!voice) return;
 
-    if (!coords) {
-      if (src.active) {
-        src.synth.triggerRelease();
-        src.gain.gain.rampTo(0, PARAM_RAMP * 2);
-        src.active = false;
-        src.currentNoteIdx = -1;
-      }
+    // Pulse always decays on every frame regardless of input state.
+    voice.pulse = Math.max(0, voice.pulse - delta * 3);
+
+    if (!input) {
+      this.silenceVoice(key);
       return;
     }
 
+    const { pitch, expression } = input;
+
+    // Filter cutoff: prefer expression hand Y; fall back to playing hand X.
+    const filterT = expression ? expression.yN : pitch.xN;
     const filterHz =
-      this.params.filterMinHz + coords.xN * (this.params.filterMaxHz - this.params.filterMinHz);
-    src.filter.frequency.rampTo(filterHz, PARAM_RAMP);
-    src.filter.Q.rampTo(this.params.filterQ, PARAM_RAMP);
+      this.params.filterMinHz + filterT * (this.params.filterMaxHz - this.params.filterMinHz);
+    voice.filter.frequency.rampTo(filterHz, PARAM_RAMP);
+    voice.filter.Q.rampTo(this.params.filterQ, PARAM_RAMP);
 
-    const idx = pickNoteIndex(coords.yN, src.currentNoteIdx);
-    const note = SCALE_NOTES[idx];
+    // Reverb send: from expression hand X (no expression hand → dry).
+    const wetT = expression ? expression.xN : 0;
+    voice.wetSend.gain.rampTo(wetT * this.params.reverbWetMax, PARAM_RAMP * 2);
+    voice.dryGain.gain.rampTo(1, PARAM_RAMP);
 
-    if (!src.active) {
-      src.synth.triggerAttack(note);
-      src.gain.gain.rampTo(1, PARAM_RAMP);
-      src.currentNoteIdx = idx;
-      src.active = true;
-    } else if (idx !== src.currentNoteIdx) {
-      src.synth.setNote(note);
-      src.currentNoteIdx = idx;
+    const idx = pickNoteIndex(pitch.yN, voice.currentNoteIdx);
+    const note = voice.scale[idx];
+
+    if (!voice.active) {
+      voice.synth.triggerAttack(note);
+      voice.currentNoteIdx = idx;
+      voice.active = true;
+      voice.pulse = 1;
+    } else if (idx !== voice.currentNoteIdx) {
+      // Rhodes re-attacks each note (mallet); flute glides between holes via
+      // setNote so the breath stays continuous.
+      if (voice.profile === 'rhodes') {
+        voice.synth.triggerAttack(note);
+      } else {
+        voice.synth.setNote(note);
+      }
+      voice.currentNoteIdx = idx;
+      voice.pulse = Math.max(voice.pulse, voice.profile === 'rhodes' ? 1 : 0.5);
     }
   }
 
-  private silenceAll(): void {
-    for (const key of SOURCE_KEYS) {
-      const src = this.sources[key];
-      if (src && src.active) {
-        src.synth.triggerRelease();
-        src.gain.gain.rampTo(0, PARAM_RAMP * 2);
-        src.active = false;
-      }
-    }
+  private silenceVoice(key: PlayerKey): void {
+    const voice = this.voices[key];
+    if (!voice || !voice.active) return;
+    voice.synth.triggerRelease();
+    voice.dryGain.gain.rampTo(0, PARAM_RAMP * 2);
+    voice.wetSend.gain.rampTo(0, PARAM_RAMP * 2);
+    voice.active = false;
+    voice.currentNoteIdx = -1;
   }
 
   private attachMouseListener(): void {
@@ -251,37 +362,47 @@ export class HandSynthEngine {
         release:      () => this.applyEnvelope(),
         vibratoHz:    () => this.applyVibrato(),
         vibratoDepth: () => this.applyVibrato(),
+        rhodesVolDb:  () => this.applyRhodesVolume(),
       },
     });
   }
 
   private applyEnvelope(): void {
-    for (const key of SOURCE_KEYS) {
-      const src = this.sources[key];
-      if (!src) continue;
-      src.synth.envelope.attack = this.params.attack;
-      src.synth.envelope.release = this.params.release;
+    for (const key of PLAYER_KEYS) {
+      const v = this.voices[key];
+      if (!v) continue;
+      v.synth.envelope.attack = v.profile === 'rhodes' ? Math.min(0.05, this.params.attack) : this.params.attack;
+      v.synth.envelope.release = this.params.release;
     }
   }
 
   private applyVibrato(): void {
-    for (const key of SOURCE_KEYS) {
-      const src = this.sources[key];
-      if (!src) continue;
-      src.vibrato.frequency.rampTo(this.params.vibratoHz, PARAM_RAMP);
-      src.vibrato.depth.rampTo(this.params.vibratoDepth, PARAM_RAMP);
-    }
+    const v = this.voices.local;
+    if (!v?.vibrato) return;
+    v.vibrato.frequency.rampTo(this.params.vibratoHz, PARAM_RAMP);
+    v.vibrato.depth.rampTo(this.params.vibratoDepth, PARAM_RAMP);
   }
+
+  private applyRhodesVolume(): void {
+    const v = this.voices.remote;
+    if (!v) return;
+    v.synth.volume.rampTo(this.params.rhodesVolDb, PARAM_RAMP);
+  }
+}
+
+function handCoords(hand: HandPose): Coords {
+  const xN = clamp((hand.palm.x + HAND_X_RANGE) / (HAND_X_RANGE * 2), 0, 1);
+  const yN = clamp((hand.palm.y - HAND_Y_LOW) / (HAND_Y_HIGH - HAND_Y_LOW), 0, 1);
+  return { xN, yN };
 }
 
 // Pick a discrete scale step from a normalized 0..1 y position. Adds a small
 // hysteresis band around each boundary so a hand hovering near the edge
 // doesn't ping-pong between two pitches.
 function pickNoteIndex(yN: number, currentIdx: number): number {
-  const N = SCALE_NOTES.length;
+  const N = SCALE_NOTES_LOCAL.length;
   const continuous = clamp(yN * N, 0, N - 0.0001);
-  const rawIdx = Math.floor(continuous);
-  if (currentIdx < 0) return rawIdx;
+  if (currentIdx < 0) return Math.floor(continuous);
   if (continuous > currentIdx + 1 + NOTE_HYSTERESIS) {
     return Math.min(N - 1, Math.floor(continuous));
   }
@@ -289,4 +410,11 @@ function pickNoteIndex(yN: number, currentIdx: number): number {
     return Math.max(0, Math.floor(continuous));
   }
   return currentIdx;
+}
+
+function transposeOctaveDown(note: string): string {
+  const match = note.match(/^([A-G]#?)(-?\d+)$/);
+  if (!match) return note;
+  const [, name, octave] = match;
+  return `${name}${Number(octave) - 1}`;
 }
