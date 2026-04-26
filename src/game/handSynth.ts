@@ -4,7 +4,7 @@ import type { HandPose, PlayerPose } from './types';
 
 export const HAND_SYNTH_DEFS = {
   enabled:       { type: 'boolean', default: true,  label: 'enabled' },
-  volumeDb:      { default: -8,    min: -40, max: 6,    step: 0.5,  label: 'volume dB' },
+  volumeDb:      { default: -16,   min: -40, max: 6,    step: 0.5,  label: 'volume dB' },
   filterMinHz:   { default: 320,   min: 80,  max: 2000, step: 10,   label: 'filter min Hz' },
   filterMaxHz:   { default: 5800,  min: 800, max: 9000, step: 50,   label: 'filter max Hz' },
   filterQ:       { default: 1.4,   min: 0.5, max: 8,    step: 0.1,  label: 'filter Q' },
@@ -57,6 +57,7 @@ type Voice = {
   synth: any;
   filter: any;
   vibrato?: any;
+  panner: any;
   dryGain: any;
   wetSend: any;
   active: boolean;
@@ -69,6 +70,7 @@ export class HandSynthEngine {
   private running = false;
 
   private master?: any;
+  private limiter?: any;
   private reverb?: any;
   private reverbReturn?: any;
 
@@ -77,7 +79,10 @@ export class HandSynthEngine {
   private mouseXN = 0.5;
   private mouseYN = 0.5;
   private elapsed = 0;
-  private mouseLastAt = -Infinity;
+  // Wall-clock timestamp (seconds) of the last mousemove. Wall-clock — not
+  // the game's elapsed — so that a tab hide (which freezes the rAF loop)
+  // doesn't preserve "fresh mouse" state forever.
+  private mouseLastAtMs = -Infinity;
   private mouseListener?: (e: PointerEvent) => void;
 
   private params: HandSynthParams = {
@@ -115,7 +120,11 @@ export class HandSynthEngine {
     this.tone = Tone;
     await Tone.start();
 
-    this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).toDestination();
+    // Hard-limit the synth bus so retriggering mallets and ringing filters
+    // can never crackle the destination, even when summed with the bed +
+    // drums coming from the AudioEngine on the same context.
+    this.limiter = new Tone.Limiter(-6).toDestination();
+    this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).connect(this.limiter);
 
     // One shared reverb the two voices send into. Wet level per voice is set
     // by that voice's expression hand (X axis), not by the reverb's own wet.
@@ -140,8 +149,8 @@ export class HandSynthEngine {
       return;
     }
 
-    const mouseFresh =
-      this.params.mouseEnabled && (this.elapsed - this.mouseLastAt) < MOUSE_IDLE_TIMEOUT;
+    const mouseAgeSec = (performance.now() - this.mouseLastAtMs) / 1000;
+    const mouseFresh = this.params.mouseEnabled && mouseAgeSec < MOUSE_IDLE_TIMEOUT;
     const localInput = this.resolveInput(local, mouseFresh ? { xN: this.mouseXN, yN: this.mouseYN } : null);
     const remoteInput = this.resolveInput(remote, null);
 
@@ -160,6 +169,12 @@ export class HandSynthEngine {
       if (v && v.pulse > max) max = v.pulse;
     }
     return max;
+  }
+
+  // Force-release every voice. Called on tab hide so a held note doesn't
+  // ring forever if the rAF loop pauses while a hand was triggering.
+  silenceAll(): void {
+    for (const key of PLAYER_KEYS) this.silenceVoice(key);
   }
 
   // 0..1 — fraction of voices currently held. Useful for sustained
@@ -185,6 +200,7 @@ export class HandSynthEngine {
       v.synth?.dispose?.();
       v.vibrato?.dispose?.();
       v.filter?.dispose?.();
+      v.panner?.dispose?.();
       v.dryGain?.dispose?.();
       v.wetSend?.dispose?.();
       this.voices[key] = null;
@@ -192,12 +208,18 @@ export class HandSynthEngine {
     this.reverbReturn?.dispose?.();
     this.reverb?.dispose?.();
     this.master?.dispose?.();
+    this.limiter?.dispose?.();
     this.registered?.dispose();
   }
 
   private createVoice(profile: Profile, scale: string[]): Voice {
     const Tone = this.tone!;
-    const dryGain = new Tone.Gain(0).connect(this.master);
+    // Pan the two voices apart so flute (local) and rhodes (remote) are
+    // perceptually distinct even when their notes overlap. Reverb stays
+    // mono-shared so the cabin still glues them together.
+    const pan = profile === 'flute' ? -0.35 : 0.35;
+    const panner = new Tone.Panner(pan).connect(this.master);
+    const dryGain = new Tone.Gain(0).connect(panner);
     const wetSend = new Tone.Gain(0).connect(this.reverb);
     const filter = new Tone.Filter({
       frequency: this.params.filterMinHz,
@@ -249,6 +271,7 @@ export class HandSynthEngine {
       synth,
       filter,
       vibrato,
+      panner,
       dryGain,
       wetSend,
       active: false,
@@ -347,7 +370,7 @@ export class HandSynthEngine {
       const yN = clamp(1 - (e.clientY - rect.top) / rect.height, 0, 1);
       this.mouseXN = xN;
       this.mouseYN = yN;
-      this.mouseLastAt = this.elapsed;
+      this.mouseLastAtMs = performance.now();
     };
     this.canvas.addEventListener('pointermove', this.mouseListener);
   }

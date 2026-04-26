@@ -184,9 +184,19 @@ export class Game {
     this.handTracker.attachPane(this.paneDock);
     attachHandDepthPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
     this.resize();
     this.renderer.setAnimationLoop(() => this.update());
   }
+
+  // Tab-hide handler. Suspends the shared Tone audio context so the bed,
+  // drums, and synth all go silent in the background; releases any held
+  // synth voices first so the user doesn't return to a stuck note.
+  private handleVisibilityChange = (): void => {
+    const hidden = document.hidden;
+    if (hidden) this.handSynth.silenceAll();
+    void this.audio.setSuspended(hidden);
+  };
 
   async startCamera(): Promise<void> {
     await this.handTracker.startCamera();
@@ -296,6 +306,7 @@ export class Game {
   }
 
   dispose(): void {
+    document.removeEventListener('visibilitychange', this.handleVisibilityChange);
     this.handTracker.dispose();
     this.multiplayer.dispose();
     this.webrtc.dispose();

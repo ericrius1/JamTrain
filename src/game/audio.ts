@@ -11,7 +11,7 @@ export const AUDIO_DEFS = {
   reverbWetRange:     { default: 0.18, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
   shimmerMaxDb:       { default: -18,  min: -30,  max: 0,    step: 0.5,  label: 'shimmer dB' },
   muteHandModulation: { type: 'boolean', default: false, label: 'mute hands' },
-  drumLevelDb:        { default: -12,  min: -40,  max: 0,    step: 0.5,  label: 'drums dB' },
+  drumLevelDb:        { default: -3,   min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
   drumBpm:            { default: 74,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
   drumEbbPeriod:      { default: 78,   min: 20,   max: 240,  step: 1,    label: 'drum ebb sec' },
   muteDrums:          { type: 'boolean', default: false, label: 'mute drums' },
@@ -79,6 +79,7 @@ export class AudioEngine {
   private reverb?: any;
   private panner?: any;
   private compressor?: any;
+  private limiter?: any;
 
   private chordIndex = 0;
   private chordPhase = 0;
@@ -135,7 +136,11 @@ export class AudioEngine {
     this.tone = Tone;
     await Tone.start();
 
-    this.master = new Tone.Gain(this.params.masterGain).toDestination();
+    // Brick-wall limiter on the way out so summed peaks (bed + drums + the
+    // hand synth which connects to its own destination) never crackle. -3 dB
+    // ceiling leaves headroom for the synth bus that lives outside this chain.
+    this.limiter = new Tone.Limiter(-3).toDestination();
+    this.master = new Tone.Gain(this.params.masterGain).connect(this.limiter);
     // Tame voice-stacking buildup before it hits the master fader. Threshold
     // is set high enough that quiet passages pass through clean and only
     // crowded chord transitions get gently squeezed.
@@ -231,7 +236,7 @@ export class AudioEngine {
     this.snareFilter = new Tone.Filter({ frequency: 2200, type: 'bandpass', Q: 1.1 }).connect(this.drumGain);
     this.snare = new Tone.NoiseSynth({
       noise: { type: 'pink' } as any,
-      envelope: { attack: 0.003, decay: 0.16, sustain: 0, release: 0.16 },
+      envelope: { attack: 0.005, decay: 0.16, sustain: 0, release: 0.16 },
       volume: -14,
     }).connect(this.snareFilter);
 
@@ -239,7 +244,7 @@ export class AudioEngine {
     this.hatFilter = new Tone.Filter({ frequency: 7200, type: 'highpass', Q: 0.7 }).connect(this.drumGain);
     this.hihat = new Tone.NoiseSynth({
       noise: { type: 'white' } as any,
-      envelope: { attack: 0.001, decay: 0.04, sustain: 0, release: 0.04 },
+      envelope: { attack: 0.003, decay: 0.04, sustain: 0, release: 0.04 },
       volume: -28,
     }).connect(this.hatFilter);
 
@@ -359,11 +364,25 @@ export class AudioEngine {
     return this.params.muteDrums ? 0 : Math.pow(bell, 1.4);
   }
 
+  // Suspend the underlying audio context when the tab is hidden so nothing
+  // keeps playing in the background. Tone resumes cleanly on the next call.
+  async setSuspended(suspended: boolean): Promise<void> {
+    if (!this.tone) return;
+    const ctx = (this.tone.getContext() as unknown as { rawContext: AudioContext }).rawContext;
+    if (!ctx) return;
+    try {
+      if (suspended && ctx.state === 'running') await ctx.suspend();
+      else if (!suspended && ctx.state === 'suspended') await ctx.resume();
+    } catch (e) {
+      console.warn('audio suspend toggle failed', e);
+    }
+  }
+
   setMasterGain(value: number): void {
-    // Slider 0–1 → actual gain via power curve. Calibrated so slider 0.5 lands
-    // around the loudness that used to sit near slider 0.2, with a tighter
-    // ceiling so the bed sits comfortably under the synth + drum layers.
-    const MAX_MUSIC_GAIN = 0.025;
+    // Slider 0–1 → actual gain via power curve. Halved from the original
+    // ceiling (0.25 → 0.12) so peaks don't slam the limiter, with the same
+    // perceptual curve so the slider's bottom end stays useful.
+    const MAX_MUSIC_GAIN = 0.12;
     const CURVE_EXP = 2.5;
     const v = value <= 0 ? 0 : Math.min(1, value);
     this.params.masterGain = MAX_MUSIC_GAIN * Math.pow(v, CURVE_EXP);
@@ -428,6 +447,7 @@ export class AudioEngine {
     this.panner?.dispose?.();
     this.compressor?.dispose?.();
     this.master?.dispose?.();
+    this.limiter?.dispose?.();
     this.drumSeq?.dispose?.();
     this.kick?.dispose?.();
     this.snare?.dispose?.();
