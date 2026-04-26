@@ -243,7 +243,7 @@ export class ScenerySystem {
       const bg = this.scheduler.background();
       const currentFg = fg.t < 0.5 ? fg.from : fg.to;
       const currentBg = bg.t < 0.5 ? bg.from : bg.to;
-      const weatherNow = this.scheduler.weatherAt((Date.now() - this.epochMs) / 1000);
+      const weatherNow = this.scheduler.weatherAt(Date.now() / 1000);
       this.skyLife.update(delta, {
         daylight,
         goldenHour,
