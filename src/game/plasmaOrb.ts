@@ -16,11 +16,11 @@ export type PlasmaOrbOptions = {
 
 const MAX_FINGER_METABALLS = 20;
 const MAX_METABALLS = MAX_FINGER_METABALLS + 1;
-const MAX_SURFACE_STEPS = 48;
+const MAX_SURFACE_STEPS = 24;
 const MAX_REFINE_STEPS = 5;
 
 export const PLASMA_DEFS = {
-  radius:          { default: 0.72, min: 0.2,   max: 0.8,  step: 0.01,  label: 'orb radius' },
+  radius:          { default: 0.42, min: 0.2,   max: 0.8,  step: 0.01,  label: 'orb radius' },
   boundRadius:     { default: 1.08, min: 0.7,   max: 1.8,  step: 0.01,  label: 'field bounds' },
   fingerRadius:    { default: 0.030,min: 0.015, max: 0.16, step: 0.001, label: 'tip radius' },
   fingerInfluence: { default: 1.0,  min: 0,     max: 3,    step: 0.01,  label: 'tip influence' },
@@ -34,7 +34,7 @@ export const PLASMA_DEFS = {
   coolColor:       { type: 'color', default: '#146f92', label: 'deep' },
   warmColor:       { type: 'color', default: '#5bd0ca', label: 'surface' },
   hotColor:        { type: 'color', default: '#d8fff8', label: 'shine' },
-  surfaceSteps:    { default: 24,   min: 6, max: MAX_SURFACE_STEPS, step: 1, folder: 'quality / tone', label: 'surface steps' },
+  surfaceSteps:    { default: 12,   min: 6, max: MAX_SURFACE_STEPS, step: 1, folder: 'quality / tone', label: 'surface steps' },
   refineSteps:     { default: 2,    min: 0, max: MAX_REFINE_STEPS,  step: 1, folder: 'quality / tone', label: 'edge refine' },
   brightness:      { default: 1.05, min: 0.2, max: 2, step: 0.05,           folder: 'quality / tone' },
   alpha:           { default: 0.96, min: 0.1, max: 1, step: 0.01,           folder: 'quality / tone' },

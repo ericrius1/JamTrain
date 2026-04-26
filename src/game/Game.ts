@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { AudioEngine } from './audio';
 import { attachHandDepthPane } from './handDepth';
+import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
 import { MultiplayerClient } from './multiplayer';
@@ -74,6 +75,7 @@ export class Game {
   private lastFrameAt = this.startedAt;
   readonly handTracker: HandTracker;
   private audio: AudioEngine;
+  private handSynth: HandSynthEngine;
   private multiplayer: MultiplayerClient;
   private webrtc: WebRTCClient;
   private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
@@ -112,6 +114,7 @@ export class Game {
     this.paneDock = this.createPaneDock();
     this.handTracker = new HandTracker(ui.inputStatus);
     this.audio = new AudioEngine(ui.musicStatus, this.paneDock);
+    this.handSynth = new HandSynthEngine(canvas, this.paneDock);
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
@@ -188,8 +191,9 @@ export class Game {
     this.webrtc.notifyLocalStreamReady();
   }
 
-  startAudio(): Promise<void> {
-    return this.audio.start();
+  async startAudio(): Promise<void> {
+    await this.audio.start();
+    await this.handSynth.start();
   }
 
   connectMultiplayer(): void {
@@ -297,6 +301,7 @@ export class Game {
     this.scenery.dispose();
     this.plasmaOrb?.dispose();
     this.audio.dispose();
+    this.handSynth.dispose();
     this.cameraTweaks?.dispose();
     this.shadowsTweaks?.dispose();
     this.cabinTweaks?.dispose();
@@ -664,6 +669,7 @@ export class Game {
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
     this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
+    this.handSynth.update(localPose, delta);
     this.multiplayer.sendPose(localPose, elapsed);
     if (this.cameraMode === 'game') this.updateCameraDolly(delta);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();

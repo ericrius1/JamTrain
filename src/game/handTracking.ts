@@ -4,8 +4,16 @@ import { clamp, lerpVec, vec } from './math';
 import { makeSimulatedHands } from './pose';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type Vec3Data } from './types';
 
+type HandposeInput =
+  | HTMLCanvasElement
+  | OffscreenCanvas
+  | ImageBitmap
+  | HTMLImageElement
+  | HTMLVideoElement
+  | ImageData;
+
 type MicroHandpose = {
-  detect(source: HTMLVideoElement): Promise<unknown[]>;
+  detect(source: HandposeInput): Promise<unknown[]>;
   dispose?: () => void;
   reset?: () => void;
 };
@@ -53,8 +61,11 @@ const RESET_COOLDOWN_S = 1;
 export class HandTracker {
   private video?: HTMLVideoElement;
   private detector?: MicroHandpose;
-  private detecting = false;
-  private lastDetectAt = 0;
+  private detectInputCanvas?: HTMLCanvasElement;
+  private detectInputCtx?: CanvasRenderingContext2D;
+  private detectRafHandle = 0;
+  private detectLoopRunning = false;
+  private latestUpdateTime = 0;
   private cameraHands?: Record<Handedness, HandPose>;
   private rawDetections: RawDetection[] = [];
   private pointer = { x: 0, y: 0 };
@@ -129,6 +140,7 @@ export class HandTracker {
       this.mode = 'camera';
       this.status = 'hands: camera';
       this.publishStatus();
+      this.startDetectLoop();
     } catch (error) {
       console.warn('Hand tracking fell back to simulation', error);
       this.mode = 'error';
@@ -138,12 +150,52 @@ export class HandTracker {
   }
 
   update(time: number): Record<Handedness, HandPose> {
-    if (this.mode === 'camera' && this.video && this.detector && time - this.lastDetectAt > 0.045 && !this.detecting) {
-      this.lastDetectAt = time;
-      this.detecting = true;
-      void this.detector
-        .detect(this.video)
+    this.latestUpdateTime = time;
+
+    const simulated = makeSimulatedHands(time, this.pointer.x, this.pointer.y);
+    if (!this.cameraHands) return simulated;
+
+    const hands = {} as Record<Handedness, HandPose>;
+    for (const handedness of handednesses) {
+      hands[handedness] = this.cameraHands[handedness] ?? simulated[handedness];
+    }
+    return hands;
+  }
+
+  // Mirrors the official micro-handpose demo: chain detect → rAF → detect with
+  // no throttle, so the overlay tracks the live video as tightly as the model
+  // allows. The intermediate canvas avoids per-frame createImageBitmap cost
+  // and works around an iOS Safari WebGPU bug noted in the demo source.
+  private startDetectLoop(): void {
+    if (this.detectLoopRunning || !this.video || !this.detector) return;
+    this.detectLoopRunning = true;
+
+    const inputCanvas = document.createElement('canvas');
+    const inputCtx = inputCanvas.getContext('2d');
+    if (inputCtx) {
+      this.detectInputCanvas = inputCanvas;
+      this.detectInputCtx = inputCtx;
+    }
+
+    const tick = (): void => {
+      if (!this.detectLoopRunning || !this.video || !this.detector) return;
+
+      const w = this.video.videoWidth;
+      const h = this.video.videoHeight;
+      let source: HandposeInput = this.video;
+      if (this.detectInputCanvas && this.detectInputCtx && w && h) {
+        if (this.detectInputCanvas.width !== w || this.detectInputCanvas.height !== h) {
+          this.detectInputCanvas.width = w;
+          this.detectInputCanvas.height = h;
+        }
+        this.detectInputCtx.drawImage(this.video, 0, 0);
+        source = this.detectInputCanvas;
+      }
+
+      this.detector
+        .detect(source)
         .then(results => {
+          const time = this.latestUpdateTime;
           this.maybeResetForLockIn(results.length, time);
           this.cameraHands = this.mapDetections(results, time);
           this.status = this.cameraHands ? 'hands: camera' : 'hands: searching';
@@ -155,18 +207,12 @@ export class HandTracker {
           this.publishStatus();
         })
         .finally(() => {
-          this.detecting = false;
+          if (this.detectLoopRunning) {
+            this.detectRafHandle = requestAnimationFrame(tick);
+          }
         });
-    }
-
-    const simulated = makeSimulatedHands(time, this.pointer.x, this.pointer.y);
-    if (!this.cameraHands) return simulated;
-
-    const hands = {} as Record<Handedness, HandPose>;
-    for (const handedness of handednesses) {
-      hands[handedness] = this.cameraHands[handedness] ?? simulated[handedness];
-    }
-    return hands;
+    };
+    this.detectRafHandle = requestAnimationFrame(tick);
   }
 
   getVideo(): HTMLVideoElement | undefined {
@@ -217,6 +263,8 @@ export class HandTracker {
   }
 
   dispose(): void {
+    this.detectLoopRunning = false;
+    cancelAnimationFrame(this.detectRafHandle);
     this.detector?.dispose?.();
     if (this.video?.srcObject instanceof MediaStream) {
       for (const track of this.video.srcObject.getTracks()) track.stop();
