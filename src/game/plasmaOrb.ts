@@ -22,10 +22,10 @@ const MAX_REFINE_STEPS = 5;
 export const PLASMA_DEFS = {
   radius:          { default: 0.42, min: 0.2,   max: 0.8,  step: 0.01,  label: 'orb radius' },
   boundRadius:     { default: 1.08, min: 0.7,   max: 1.8,  step: 0.01,  label: 'field bounds' },
-  fingerRadius:    { default: 0.052,min: 0.015, max: 0.16, step: 0.001, label: 'tip radius' },
+  fingerRadius:    { default: 0.030,min: 0.015, max: 0.16, step: 0.001, label: 'tip radius' },
   fingerInfluence: { default: 1.0,  min: 0,     max: 3,    step: 0.01,  label: 'tip influence' },
-  activeTipLimit:  { default: 12,   min: 2,     max: MAX_FINGER_METABALLS, step: 1, label: 'active tips' },
-  activeTipRange:  { default: 1.18, min: 0.45,  max: 1.8,  step: 0.01,  label: 'tip range' },
+  activeTipLimit:  { default: 20,   min: 2,     max: MAX_FINGER_METABALLS, step: 1, label: 'active tips' },
+  orbReach:        { default: 0.6,  min: 0.42,  max: 1.8,  step: 0.01,  label: 'orb reach' },
   isoLevel:        { default: 1.0,  min: 0.45,  max: 1.8,  step: 0.01,  label: 'melt threshold' },
   noiseAmp:        { default: 0.0,  min: 0,     max: 0.25, step: 0.005, label: 'shape ripple' },
   wobbleFreq:      { default: 3.2,  min: 0.5,   max: 12,   step: 0.1,   label: 'texture scale' },
@@ -34,7 +34,7 @@ export const PLASMA_DEFS = {
   coolColor:       { type: 'color', default: '#146f92', label: 'deep' },
   warmColor:       { type: 'color', default: '#5bd0ca', label: 'surface' },
   hotColor:        { type: 'color', default: '#d8fff8', label: 'shine' },
-  surfaceSteps:    { default: 12,   min: 6, max: MAX_SURFACE_STEPS, step: 1, folder: 'quality / tone', label: 'surface steps' },
+  surfaceSteps:    { default: 24,   min: 6, max: MAX_SURFACE_STEPS, step: 1, folder: 'quality / tone', label: 'surface steps' },
   refineSteps:     { default: 2,    min: 0, max: MAX_REFINE_STEPS,  step: 1, folder: 'quality / tone', label: 'edge refine' },
   brightness:      { default: 1.05, min: 0.2, max: 2, step: 0.05,           folder: 'quality / tone' },
   alpha:           { default: 0.96, min: 0.1, max: 1, step: 0.01,           folder: 'quality / tone' },
@@ -65,6 +65,7 @@ fn plasmaMetaballs(
   uNoiseAmp: f32,
   uWobbleFreq: f32,
   uWobbleSpeed: f32,
+  uOrbReach: f32,
   uB0: vec4<f32>,
   uB1: vec4<f32>,
   uB2: vec4<f32>,
@@ -145,10 +146,13 @@ fn plasmaMetaballs(
 
     let t = mix(tMin, tMax, f32(i + 1) * invSteps);
     let p = ro + rd * t;
+    let orbAttn = 1.0 - smoothstep(uOrbReach * 0.7, uOrbReach, length(p - uCenter));
     var field = 0.0;
     for (var bi: i32 = 0; bi < ${MAX_METABALLS}; bi = bi + 1) {
       if (bi >= uBallCount) { break; }
-      field = field + fieldContribution(p, balls[bi]);
+      var contribution = fieldContribution(p, balls[bi]);
+      if (bi == 0) { contribution = contribution * orbAttn; }
+      field = field + contribution;
     }
 
     var density = field - uIsoLevel;
@@ -168,10 +172,13 @@ fn plasmaMetaballs(
         if (ri >= uRefineSteps) { break; }
         let mid = (lo + hi) * 0.5;
         let mp = ro + rd * mid;
+        let mpAttn = 1.0 - smoothstep(uOrbReach * 0.7, uOrbReach, length(mp - uCenter));
         var mf = 0.0;
         for (var bi: i32 = 0; bi < ${MAX_METABALLS}; bi = bi + 1) {
           if (bi >= uBallCount) { break; }
-          mf = mf + fieldContribution(mp, balls[bi]);
+          var contribution = fieldContribution(mp, balls[bi]);
+          if (bi == 0) { contribution = contribution * mpAttn; }
+          mf = mf + contribution;
         }
         var mn = 0.0;
         if (uNoiseAmp > 0.001) {
@@ -201,12 +208,19 @@ fn plasmaMetaballs(
   }
 
   let p = ro + rd * hitT;
+  let hitOrbAttn = 1.0 - smoothstep(uOrbReach * 0.7, uOrbReach, length(p - uCenter));
   var grad = vec3<f32>(0.0);
   var fieldAtHit = 0.0;
   for (var bi: i32 = 0; bi < ${MAX_METABALLS}; bi = bi + 1) {
     if (bi >= uBallCount) { break; }
-    fieldAtHit = fieldAtHit + fieldContribution(p, balls[bi]);
-    grad = grad + fieldGradient(p, balls[bi]);
+    var contribution = fieldContribution(p, balls[bi]);
+    var ballGrad = fieldGradient(p, balls[bi]);
+    if (bi == 0) {
+      contribution = contribution * hitOrbAttn;
+      ballGrad = ballGrad * hitOrbAttn;
+    }
+    fieldAtHit = fieldAtHit + contribution;
+    grad = grad + ballGrad;
   }
   var normal = normalize(uCenter - p);
   if (dot(grad, grad) > 0.000001) {
@@ -335,6 +349,7 @@ export class PlasmaOrb {
   private uNoiseAmp = uniform(PLASMA_DEFS.noiseAmp.default);
   private uWobbleFreq = uniform(PLASMA_DEFS.wobbleFreq.default);
   private uWobbleSpeed = uniform(PLASMA_DEFS.wobbleSpeed.default);
+  private uOrbReach = uniform(PLASMA_DEFS.orbReach.default);
   private uB0 = uniform(new THREE.Vector4());
   private uB1 = uniform(new THREE.Vector4());
   private uB2 = uniform(new THREE.Vector4());
@@ -399,6 +414,7 @@ export class PlasmaOrb {
         noiseAmp:     v => { this.uNoiseAmp.value = v; },
         wobbleFreq:   v => { this.uWobbleFreq.value = v; },
         wobbleSpeed:  v => { this.uWobbleSpeed.value = v; },
+        orbReach:     v => { this.uOrbReach.value = v; },
         coolColor:    v => hexToVec3(v, this.uCool.value),
         warmColor:    v => hexToVec3(v, this.uWarm.value),
         hotColor:     v => hexToVec3(v, this.uHot.value),
@@ -434,6 +450,7 @@ export class PlasmaOrb {
           uNoiseAmp: this.uNoiseAmp,
           uWobbleFreq: this.uWobbleFreq,
           uWobbleSpeed: this.uWobbleSpeed,
+          uOrbReach: this.uOrbReach,
           uB0: this.uB0,
           uB1: this.uB1,
           uB2: this.uB2,
@@ -488,10 +505,6 @@ export class PlasmaOrb {
     this.targetFingertips = fingertips.slice(0, MAX_FINGER_METABALLS);
   }
 
-  inActiveRange(point: THREE.Vector3): boolean {
-    return point.distanceToSquared(this.mesh.position) <= this.params.activeTipRange * this.params.activeTipRange;
-  }
-
   setEnergy(energy: number): void {
     this.targetEnergy = Math.max(0, Math.min(1, energy * this.params.energyBoost));
   }
@@ -504,18 +517,17 @@ export class PlasmaOrb {
     const radiusAlpha = 1 - Math.exp(-delta * 12);
     const effectiveFingerRadius = this.params.fingerRadius * Math.sqrt(Math.max(this.params.fingerInfluence, 0));
     const activeLimit = Math.max(0, Math.min(MAX_FINGER_METABALLS, this.params.activeTipLimit | 0));
-    const activeRangeSq = Math.max(0.01, this.params.activeTipRange * this.params.activeTipRange);
     const radiusEpsilon = Math.max(effectiveFingerRadius * 0.04, 0.0005);
 
-    // Only tracked fingertips that are within the orb's pull range qualify.
-    // Everything is sorted by distance so the closest tips win the slot budget.
+    // Every fingertip is a candidate; sort by distance to the orb so the
+    // closest ones win slots if there are more than activeLimit. Whether a
+    // fingertip visibly merges with the central orb is decided in the shader
+    // by uOrbReach (the orb's effective field range), not by a JS filter.
     const candidates = this.targetFingertips
-      .filter(target => target.tracked !== false)
       .map(target => ({
         target,
         distanceSq: target.position.distanceToSquared(this.mesh.position),
       }))
-      .filter(entry => entry.distanceSq <= activeRangeSq)
       .sort((a, b) => a.distanceSq - b.distanceSq);
 
     // Map current id → slot so a fingertip keeps the same smoothed slot

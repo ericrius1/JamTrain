@@ -1,4 +1,5 @@
 import Stats from 'stats.js';
+import { resetAllTweaks } from './tweakDefs';
 
 export class DevOverlay {
   private paneDock: HTMLElement;
@@ -46,6 +47,11 @@ export class DevOverlay {
       if (this.visible && (e.key === 'c' || e.key === 'C')) {
         e.preventDefault();
         this.onCameraCycle?.();
+        return;
+      }
+      if (this.visible && (e.key === 'r' || e.key === 'R')) {
+        e.preventDefault();
+        resetAllTweaks();
       }
     };
     window.addEventListener('keydown', this.keyHandler);

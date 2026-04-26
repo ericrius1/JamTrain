@@ -15,7 +15,34 @@ import { ScenerySystem } from './scenery';
 import { hashString, roomEpoch } from './seedRandom';
 import { fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
-import { Pane } from 'tweakpane';
+import { makeParams, registerTweaks } from '../hud/tweakDefs';
+
+const SHADOWS_DEFS = {
+  mapSize:    { default: 2048,    options: { '1024': 1024, '2048': 2048, '4096': 4096 }, label: 'map size' },
+  radius:     { default: 6,       min: 0,      max: 20,    step: 0.1,    label: 'radius' },
+  normalBias: { default: 0.04,    min: 0,      max: 0.2,   step: 0.001,  label: 'normal bias' },
+  bias:       { default: -0.0002, min: -0.005, max: 0.005, step: 0.0001, label: 'bias' },
+  blurSamples:{ default: 16,      min: 1,      max: 32,    step: 1,      label: 'blur samples' },
+} as const;
+
+const CAMERA_DOLLY_DEFS = {
+  fovWide:          { default: 62,   min: 30,  max: 90,  step: 1,    label: 'fov wide' },
+  fovNarrow:        { default: 66,   min: 30,  max: 100, step: 1,    label: 'fov narrow' },
+  dollyBackMeters:  { default: 2.4,  min: 0,   max: 5,   step: 0.05, label: 'dolly back m' },
+  riseMeters:       { default: 0.18, min: 0,   max: 1,   step: 0.01, label: 'rise m' },
+  narrowAspect:     { default: 0.55, min: 0.3, max: 1.5, step: 0.01, label: 'narrow aspect' },
+  smoothingSeconds: { default: 0.45, min: 0,   max: 2,   step: 0.01, label: 'lag sec' },
+} as const;
+
+const PLAYERS_DEFS = {
+  backOffset: { default: -0.14, min: -0.4, max: 0.8, step: 0.01, label: 'back offset' },
+} as const;
+
+const CABIN_DEFS = {
+  bevelRadius:    { default: 0.04, min: 0, max: 0.12, step: 0.005, label: 'bevel radius' },
+  furnitureBevel: { default: 0.10, min: 0, max: 0.18, step: 0.005, label: 'furniture bevel' },
+  bevelSegments:  { default: 4,    min: 1, max: 8,    step: 1,     label: 'bevel smoothness' },
+} as const;
 
 type GameUi = {
   connectionStatus: HTMLElement;
@@ -39,16 +66,9 @@ export class Game {
   private readonly designCameraPos = new THREE.Vector3(1.66, 1.34, 0.02);
   private readonly designCameraTarget = new THREE.Vector3(-0.12, 1.06, 0);
   private readonly _backDir = new THREE.Vector3();
-  private readonly cameraDolly = {
-    fovWide: 62,
-    fovNarrow: 66,
-    dollyBackMeters: 2.4,
-    riseMeters: 0.18,
-    narrowAspect: 0.55,
-    smoothingSeconds: 0.45,
-  };
+  private readonly cameraDolly = makeParams(CAMERA_DOLLY_DEFS);
   private dollyT = 0;
-  private cameraPane?: Pane;
+  private cameraTweaks?: ReturnType<typeof registerTweaks<typeof CAMERA_DOLLY_DEFS>>;
   private readonly sculptureTarget = new THREE.Vector3(0, 1.08, 0);
   private startedAt = performance.now();
   private lastFrameAt = this.startedAt;
@@ -68,25 +88,13 @@ export class Game {
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
   private plasmaOrb?: PlasmaOrb;
-  private shadowsPane?: Pane;
-  private readonly shadowParams = {
-    mapSize: 2048,
-    radius: 6,
-    normalBias: 0.04,
-    bias: -0.0002,
-    blurSamples: 16,
-  };
-  private cabinPane?: Pane;
+  private shadowsTweaks?: ReturnType<typeof registerTweaks<typeof SHADOWS_DEFS>>;
+  private readonly shadowParams = makeParams(SHADOWS_DEFS);
+  private cabinTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_DEFS>>;
   private cabinGroup?: THREE.Group;
-  private readonly cabinParams = {
-    bevelRadius: 0.04,
-    furnitureBevel: 0.10,
-    bevelSegments: 4,
-  };
-  private playersPane?: Pane;
-  private readonly playersParams = {
-    backOffset: -.14,
-  };
+  private readonly cabinParams = makeParams(CABIN_DEFS);
+  private playersTweaks?: ReturnType<typeof registerTweaks<typeof PLAYERS_DEFS>>;
+  private readonly playersParams = makeParams(PLAYERS_DEFS);
   readonly paneDock: HTMLElement;
   private roomId: string;
   private roomSeed: number;
@@ -289,10 +297,10 @@ export class Game {
     this.scenery.dispose();
     this.plasmaOrb?.dispose();
     this.audio.dispose();
-    this.cameraPane?.dispose();
-    this.shadowsPane?.dispose();
-    this.cabinPane?.dispose();
-    this.playersPane?.dispose();
+    this.cameraTweaks?.dispose();
+    this.shadowsTweaks?.dispose();
+    this.cabinTweaks?.dispose();
+    this.playersTweaks?.dispose();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -359,52 +367,30 @@ export class Game {
   }
 
   private setupShadowsPane(): void {
-    if (!this.keyLight) return;
-    const container = document.createElement('div');
-    this.paneDock.appendChild(container);
-    this.shadowsPane = new Pane({ title: 'Shadows', container });
-    this.shadowsPane.expanded = false;
-    this.shadowsPane.addBinding(this.shadowParams, 'mapSize', {
-      label: 'map size', options: { '1024': 1024, '2048': 2048, '4096': 4096 },
-    }).on('change', () => {
-      if (!this.keyLight) return;
-      this.keyLight.shadow.mapSize.set(this.shadowParams.mapSize, this.shadowParams.mapSize);
-      this.keyLight.shadow.map?.dispose();
-      this.keyLight.shadow.map = null;
+    if (!this.keyLight || this.shadowsTweaks) return;
+    this.shadowsTweaks = registerTweaks(this.paneDock, 'shadows', SHADOWS_DEFS, {
+      title: 'Shadows',
+      params: this.shadowParams,
+      onChange: {
+        mapSize: v => {
+          if (!this.keyLight) return;
+          this.keyLight.shadow.mapSize.set(v, v);
+          this.keyLight.shadow.map?.dispose();
+          this.keyLight.shadow.map = null;
+        },
+        radius:      v => { if (this.keyLight) this.keyLight.shadow.radius = v; },
+        normalBias:  v => { if (this.keyLight) this.keyLight.shadow.normalBias = v; },
+        bias:        v => { if (this.keyLight) this.keyLight.shadow.bias = v; },
+        blurSamples: v => { if (this.keyLight) this.keyLight.shadow.blurSamples = v; },
+      },
     });
-    this.shadowsPane.addBinding(this.shadowParams, 'radius', { label: 'radius', min: 0, max: 20, step: 0.1 })
-      .on('change', () => { if (this.keyLight) this.keyLight.shadow.radius = this.shadowParams.radius; });
-    this.shadowsPane.addBinding(this.shadowParams, 'normalBias', { label: 'normal bias', min: 0, max: 0.2, step: 0.001 })
-      .on('change', () => { if (this.keyLight) this.keyLight.shadow.normalBias = this.shadowParams.normalBias; });
-    this.shadowsPane.addBinding(this.shadowParams, 'bias', { label: 'bias', min: -0.005, max: 0.005, step: 0.0001 })
-      .on('change', () => { if (this.keyLight) this.keyLight.shadow.bias = this.shadowParams.bias; });
-    this.shadowsPane.addBinding(this.shadowParams, 'blurSamples', { label: 'blur samples', min: 1, max: 32, step: 1 })
-      .on('change', () => { if (this.keyLight) this.keyLight.shadow.blurSamples = this.shadowParams.blurSamples; });
   }
 
   private setupCameraPane(): void {
-    if (this.cameraPane) return;
-    const container = document.createElement('div');
-    this.paneDock.appendChild(container);
-    this.cameraPane = new Pane({ title: 'Camera Dolly', container });
-    this.cameraPane.expanded = false;
-    this.cameraPane.addBinding(this.cameraDolly, 'fovWide', {
-      label: 'fov wide', min: 30, max: 90, step: 1,
-    });
-    this.cameraPane.addBinding(this.cameraDolly, 'fovNarrow', {
-      label: 'fov narrow', min: 30, max: 100, step: 1,
-    });
-    this.cameraPane.addBinding(this.cameraDolly, 'dollyBackMeters', {
-      label: 'dolly back m', min: 0, max: 5, step: 0.05,
-    });
-    this.cameraPane.addBinding(this.cameraDolly, 'riseMeters', {
-      label: 'rise m', min: 0, max: 1, step: 0.01,
-    });
-    this.cameraPane.addBinding(this.cameraDolly, 'narrowAspect', {
-      label: 'narrow aspect', min: 0.3, max: 1.5, step: 0.01,
-    });
-    this.cameraPane.addBinding(this.cameraDolly, 'smoothingSeconds', {
-      label: 'lag sec', min: 0, max: 2, step: 0.01,
+    if (this.cameraTweaks) return;
+    this.cameraTweaks = registerTweaks(this.paneDock, 'cameraDolly', CAMERA_DOLLY_DEFS, {
+      title: 'Camera Dolly',
+      params: this.cameraDolly,
     });
   }
 
@@ -613,32 +599,28 @@ export class Game {
   }
 
   private setupPlayersPane(): void {
-    if (this.playersPane) return;
-    const container = document.createElement('div');
-    this.paneDock.appendChild(container);
-    this.playersPane = new Pane({ title: 'Players', container });
-    this.playersPane.expanded = false;
-    this.playersPane.addBinding(this.playersParams, 'backOffset', {
-      label: 'back offset', min: -0.4, max: 0.8, step: 0.01,
-    }).on('change', () => this.applyPlayerBackOffset());
+    if (this.playersTweaks) return;
+    this.playersTweaks = registerTweaks(this.paneDock, 'players', PLAYERS_DEFS, {
+      title: 'Players',
+      params: this.playersParams,
+      onChange: {
+        backOffset: () => this.applyPlayerBackOffset(),
+      },
+    });
   }
 
   private setupCabinPane(): void {
-    if (this.cabinPane) return;
-    const container = document.createElement('div');
-    this.paneDock.appendChild(container);
-    this.cabinPane = new Pane({ title: 'Cabin', container });
-    this.cabinPane.expanded = false;
+    if (this.cabinTweaks) return;
     const rebuild = () => this.buildCabinGeometry();
-    this.cabinPane.addBinding(this.cabinParams, 'bevelRadius', {
-      label: 'bevel radius', min: 0, max: 0.12, step: 0.005,
-    }).on('change', rebuild);
-    this.cabinPane.addBinding(this.cabinParams, 'furnitureBevel', {
-      label: 'furniture bevel', min: 0, max: 0.18, step: 0.005,
-    }).on('change', rebuild);
-    this.cabinPane.addBinding(this.cabinParams, 'bevelSegments', {
-      label: 'bevel smoothness', min: 1, max: 8, step: 1,
-    }).on('change', rebuild);
+    this.cabinTweaks = registerTweaks(this.paneDock, 'cabin', CABIN_DEFS, {
+      title: 'Cabin',
+      params: this.cabinParams,
+      onChange: {
+        bevelRadius:    rebuild,
+        furnitureBevel: rebuild,
+        bevelSegments:  rebuild,
+      },
+    });
   }
 
   getSceneVertexCount(): number {
@@ -704,17 +686,14 @@ export class Game {
       for (const finger of fingerNames) {
         const from = this.localRig.getFingertipWorld(handedness, finger);
         const to = this.remoteRig.getFingertipWorld(handedness, finger);
+        // Every fingertip feeds the same metaball field. Whether it visibly
+        // tendrils into the central orb is governed by distance + the orb's
+        // own influence reach (uOrbReach), not by tracking — default-pose
+        // hands are positioned beyond the orb's reach.
         metaballs.push(
           { id: `local:${handedness}:${finger}`, position: from, tracked: localTracked },
           { id: `remote:${handedness}:${finger}`, position: to, tracked: remoteTracked },
         );
-
-        // Show the rig's standalone fingertip ball whenever this tip isn't
-        // about to be absorbed into the orb's metaball field.
-        const localActive = localTracked && !!this.plasmaOrb?.inActiveRange(from);
-        const remoteActive = remoteTracked && !!this.plasmaOrb?.inActiveRange(to);
-        this.localRig.setFingertipNodeVisible(handedness, finger, !localActive);
-        this.remoteRig.setFingertipNodeVisible(handedness, finger, !remoteActive);
         const fromData = fromThree(from);
         const toData = fromThree(to);
         const tension = clamp(1.25 - Math.abs(distance(fromData, toData) - 1.1) * 0.42, 0.08, 1);
