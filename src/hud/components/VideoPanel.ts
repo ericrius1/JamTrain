@@ -140,19 +140,22 @@ export class VideoPanel {
     this.cameraButton = makeToolbarButton({
       label: 'Camera',
       title: 'Turn on your camera so the game can track your hands.',
-      icon: CAMERA_SVG,
+      iconOn: CAMERA_SVG,
+      iconOff: CAMERA_OFF_SVG,
       onClick: () => { for (const l of this.cameraListeners) l(); },
     });
     this.shareButton = makeToolbarButton({
       label: 'Share Video',
       title: 'Optional — let your partner see your camera feed.',
-      icon: SHARE_SVG,
+      iconOn: SHARE_SVG,
+      iconOff: SHARE_OFF_SVG,
       onClick: () => { for (const l of this.shareVideoListeners) l(); },
     });
     this.micButton = makeToolbarButton({
       label: 'Mic',
       title: 'Optional — let your partner hear you.',
-      icon: MIC_SVG,
+      iconOn: MIC_SVG,
+      iconOff: MIC_OFF_SVG,
       onClick: () => { for (const l of this.micListeners) l(); },
     });
     // Share + Mic appear only after Camera is on (progressive disclosure).
@@ -345,7 +348,8 @@ export class VideoPanel {
 function makeToolbarButton(opts: {
   label: string;
   title: string;
-  icon: string;
+  iconOn: string;
+  iconOff: string;
   onClick: () => void;
 }): HTMLButtonElement {
   const btn = document.createElement('button');
@@ -353,7 +357,11 @@ function makeToolbarButton(opts: {
   btn.className = 'video-panel-toolbar-btn';
   btn.title = opts.title;
   btn.setAttribute('aria-label', opts.label);
-  btn.innerHTML = `${opts.icon}<span>${opts.label}</span>`;
+  btn.innerHTML = `
+    <span class="icon icon-on">${opts.iconOn}</span>
+    <span class="icon icon-off">${opts.iconOff}</span>
+    <span>${opts.label}</span>
+  `;
   btn.addEventListener('click', opts.onClick);
   return btn;
 }
