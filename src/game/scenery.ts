@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
-import { Pane } from 'tweakpane';
 import { Fn, color, float, floor, fract, mix, smoothstep, time, uniform, uv } from 'three/tsl';
+import { makeParams, registerTweaks } from '../hud/tweakDefs';
 import { clamp } from './math';
 import {
   BiomeScheduler,
@@ -15,21 +15,37 @@ import { SkyLife } from './skyLife';
 import { timeOfDayPhase } from './biomes';
 import { Weather } from './weather';
 
+const FG_OPTIONS: Record<string, string> = (() => {
+  const o: Record<string, string> = { auto: 'auto' };
+  for (const id of Object.keys(FOREGROUND_BIOMES)) o[id] = id;
+  return o;
+})();
+const BG_OPTIONS: Record<string, string> = (() => {
+  const o: Record<string, string> = { auto: 'auto' };
+  for (const id of Object.keys(BACKGROUND_BIOMES)) o[id] = id;
+  return o;
+})();
+
+export const SCENERY_DEFS = {
+  cycleLengthSeconds: { default: 180,  min: 30,  max: 600,  step: 1,     label: 'day/night sec' },
+  cycleOffset:        { default: 0.08, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
+  trainSpeed:         { default: 1.1,  min: 0,   max: 3,    step: 0.01,  label: 'train speed' },
+  hillAmplitude:      { default: 1.0,  min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape' },
+  auroraIntensity:    { default: 0.76, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
+  starIntensity:      { default: 0.78, min: 0,   max: 1,    step: 0.01,  label: 'stars' },
+  moonSize:           { default: 0.34, min: 0.12, max: 0.58, step: 0.01, label: 'moon size' },
+  moonPhase:          { type: 'string', default: '', readonly: true, label: 'moon phase' },
+
+  foreground:      { type: 'select', default: 'auto', options: FG_OPTIONS, folder: 'Biomes' },
+  background:      { type: 'select', default: 'auto', options: BG_OPTIONS, folder: 'Biomes' },
+  transitionSpeed: { default: 1, min: 0.1, max: 10, step: 0.1,  folder: 'Biomes' },
+  recencyPenalty:  { default: 1, min: 0,   max: 2,  step: 0.05, folder: 'Biomes' },
+} as const;
+
 type Atmosphere = {
   background: THREE.Color;
   daylight: number;
   night: number;
-};
-
-type SceneryParams = {
-  cycleLengthSeconds: number;
-  cycleOffset: number;
-  trainSpeed: number;
-  hillAmplitude: number;
-  auroraIntensity: number;
-  starIntensity: number;
-  moonSize: number;
-  moonPhase: string;
 };
 
 export type SceneryOptions = {
@@ -54,8 +70,8 @@ const BG_PANEL_HEIGHT = 1.6;
 const BG_BASE_Y = 0.12;
 
 export class ScenerySystem {
-  readonly params: SceneryParams;
-  private pane: Pane;
+  readonly params = makeParams(SCENERY_DEFS);
+  private registered?: ReturnType<typeof registerTweaks<typeof SCENERY_DEFS>>;
   private root = new THREE.Group();
   private skyNight = uniform(0);
   private skySunset = uniform(0);
@@ -108,16 +124,6 @@ export class ScenerySystem {
     this.roomSeed = options.roomSeed;
     this.epochMs = options.sharedEpoch;
     const moonPhase = getMoonPhase(new Date());
-    this.params = {
-      cycleLengthSeconds: 180,
-      cycleOffset: 0.08,
-      trainSpeed: 1.1,
-      hillAmplitude: 1.0,
-      auroraIntensity: 0.76,
-      starIntensity: 0.78,
-      moonSize: 0.34,
-      moonPhase: moonPhase.name,
-    };
     this.moonCos.value = Math.cos(moonPhase.phase * fullTurn);
     this.moonSign.value = moonPhase.phase < 0.5 ? 1 : -1;
 
@@ -127,8 +133,29 @@ export class ScenerySystem {
       () => this.lastCycle,
     );
 
-    this.pane = new Pane({ title: 'Scenery', container: paneContainer });
-    this.setupPane();
+    this.registered = registerTweaks(paneContainer, 'scenery', SCENERY_DEFS, {
+      title: 'Scenery',
+      params: this.params,
+      onChange: {
+        foreground:      v => { this.scheduler.overrides.forceForeground = v === 'auto' ? undefined : v as ForegroundBiomeId; },
+        background:      v => { this.scheduler.overrides.forceBackground = v === 'auto' ? undefined : v as BackgroundBiomeId; },
+        transitionSpeed: v => { this.scheduler.overrides.transitionSpeedMul = v; },
+        recencyPenalty:  v => { this.scheduler.overrides.recencyPenaltyStrength = v; },
+      },
+      buttons: [
+        { folder: 'Weather',  title: 'trigger lightning', onClick: () => this.scheduler.triggerLightningNow((Date.now() - this.epochMs) / 1000) },
+        ...(['shootingStar', 'balloon', 'whale', 'plane'] as const).map(kind => ({
+          folder: 'Sky life',
+          title: ({ shootingStar: 'shooting star', balloon: 'hot air balloon', whale: 'whale spout', plane: 'distant plane' } as Record<string, string>)[kind],
+          onClick: () => this.scheduler.triggerMagic(kind as MagicEvent['kind'], (Date.now() - this.epochMs) / 1000),
+        })),
+      ],
+    });
+
+    // moonPhase is computed at construction (current real-world moon) and never
+    // edited by the user — overwrite anything localStorage tried to restore.
+    this.params.moonPhase = moonPhase.name;
+    this.registered?.pane?.refresh();
   }
 
   build(): void {
@@ -245,61 +272,7 @@ export class ScenerySystem {
   }
 
   dispose(): void {
-    this.pane.dispose();
-  }
-
-  private setupPane(): void {
-    this.pane.addBinding(this.params, 'cycleLengthSeconds', { label: 'day/night sec', min: 30, max: 600, step: 1 });
-    this.pane.addBinding(this.params, 'cycleOffset', { label: 'cycle offset', min: 0, max: 1, step: 0.001 });
-    this.pane.addBinding(this.params, 'trainSpeed', { label: 'train speed', min: 0, max: 3, step: 0.01 });
-    this.pane.addBinding(this.params, 'hillAmplitude', { label: 'hill shape', min: 0.1, max: 2.0, step: 0.01 });
-    this.pane.addBinding(this.params, 'auroraIntensity', { label: 'aurora', min: 0, max: 1.8, step: 0.01 });
-    this.pane.addBinding(this.params, 'starIntensity', { label: 'stars', min: 0, max: 1, step: 0.01 });
-    this.pane.addBinding(this.params, 'moonSize', { label: 'moon size', min: 0.12, max: 0.58, step: 0.01 });
-    this.pane.addBinding(this.params, 'moonPhase', { label: 'moon phase', readonly: true } as never);
-
-    this.setupBiomePane();
-  }
-
-  private setupBiomePane(): void {
-    const biomeFolder = this.pane.addFolder({ title: 'Biomes' });
-    const fgIds: Array<ForegroundBiomeId | 'auto'> = ['auto', ...(Object.keys(FOREGROUND_BIOMES) as ForegroundBiomeId[])];
-    const bgIds: Array<BackgroundBiomeId | 'auto'> = ['auto', ...(Object.keys(BACKGROUND_BIOMES) as BackgroundBiomeId[])];
-    const biomeState = { foreground: 'auto' as ForegroundBiomeId | 'auto', background: 'auto' as BackgroundBiomeId | 'auto', transitionSpeed: 1, recencyPenalty: 1 };
-    const fgOptions: Record<string, string> = {};
-    for (const id of fgIds) fgOptions[id] = id;
-    const bgOptions: Record<string, string> = {};
-    for (const id of bgIds) bgOptions[id] = id;
-    biomeFolder.addBinding(biomeState, 'foreground', { options: fgOptions }).on('change', (ev) => {
-      this.scheduler.overrides.forceForeground = ev.value === 'auto' ? undefined : ev.value as ForegroundBiomeId;
-    });
-    biomeFolder.addBinding(biomeState, 'background', { options: bgOptions }).on('change', (ev) => {
-      this.scheduler.overrides.forceBackground = ev.value === 'auto' ? undefined : ev.value as BackgroundBiomeId;
-    });
-    biomeFolder.addBinding(biomeState, 'transitionSpeed', { min: 0.1, max: 10, step: 0.1 }).on('change', (ev) => {
-      this.scheduler.overrides.transitionSpeedMul = ev.value;
-    });
-    biomeFolder.addBinding(biomeState, 'recencyPenalty', { min: 0, max: 2, step: 0.05 }).on('change', (ev) => {
-      this.scheduler.overrides.recencyPenaltyStrength = ev.value;
-    });
-
-    const weatherFolder = this.pane.addFolder({ title: 'Weather' });
-    weatherFolder.addButton({ title: 'trigger lightning' }).on('click', () => {
-      this.scheduler.triggerLightningNow((Date.now() - this.epochMs) / 1000);
-    });
-
-    const magicFolder = this.pane.addFolder({ title: 'Sky life' });
-    const triggers: Array<{ kind: MagicEvent['kind']; label: string }> = [
-      { kind: 'shootingStar', label: 'shooting star' },
-      { kind: 'balloon', label: 'hot air balloon' },
-      { kind: 'whale', label: 'whale spout' },
-      { kind: 'plane', label: 'distant plane' },
-    ];
-    for (const t of triggers) {
-      magicFolder.addButton({ title: t.label }).on('click', () => {
-        this.scheduler.triggerMagic(t.kind, (Date.now() - this.epochMs) / 1000);
-      });
-    }
+    this.registered?.dispose();
   }
 
   private createSky(): void {

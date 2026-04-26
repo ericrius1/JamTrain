@@ -52,31 +52,24 @@ const fingerReach: Record<FingerName, number> = {
   pinky: 0.28,
 };
 
-const motionModes: Record<string, RobotMotionMode> = {
-  auto: 'auto',
-  still: 'still',
-  solo: 'solo',
-  mirror: 'mirror',
-  complement: 'complement',
-  opposite: 'opposite',
-};
-
 export class RobotMotionController {
-  readonly params: RobotMotionParams = { ...defaultRobotMotionParams };
-  private pane: Pane;
+  readonly params: RobotMotionParams = makeParams(ROBOT_MOTION_DEFS) as RobotMotionParams;
+  private registered?: ReturnType<typeof registerTweaks<typeof ROBOT_MOTION_DEFS>>;
   private previousHands?: Record<Handedness, HandPose>;
   private manualKind?: RobotMotionKind;
   private phase: RobotMotionPhase = {
     kind: 'still',
     startedAt: 0,
-    duration: defaultRobotMotionParams.holdMinSeconds,
+    duration: ROBOT_MOTION_DEFS.holdMinSeconds.default,
     seed: 0.37,
     index: 0,
   };
 
   constructor(paneContainer?: HTMLElement) {
-    this.pane = new Pane({ title: 'Robot Hands', container: paneContainer });
-    this.setupPane();
+    this.registered = registerTweaks(paneContainer, 'robotMotion', ROBOT_MOTION_DEFS, {
+      title: 'Robot Hands',
+      params: this.params,
+    });
   }
 
   update(elapsed: number, delta: number, playerPose?: PlayerPose): Record<Handedness, HandPose> {
@@ -91,32 +84,7 @@ export class RobotMotionController {
   }
 
   dispose(): void {
-    this.pane.dispose();
-  }
-
-  private setupPane(): void {
-    const behavior = this.pane.addFolder({ title: 'Behavior' });
-    behavior.addBinding(this.params, 'mode', { options: motionModes });
-    behavior.addBinding(this.params, 'stillness', { label: 'stillness', min: 0, max: 0.9, step: 0.01 });
-    behavior.addBinding(this.params, 'sequenceSpeed', { label: 'sequence speed', min: 0.25, max: 2.5, step: 0.01 });
-    behavior.addBinding(this.params, 'playerInfluence', { label: 'player follow', min: 0, max: 1, step: 0.01 });
-
-    const gesture = this.pane.addFolder({ title: 'Gesture' });
-    gesture.addBinding(this.params, 'motionScale', { label: 'motion scale', min: 0, max: 1.6, step: 0.01 });
-    gesture.addBinding(this.params, 'idleMotion', { label: 'idle motion', min: 0, max: 0.5, step: 0.01 });
-    gesture.addBinding(this.params, 'handLift', { label: 'hand lift', min: 0, max: 0.28, step: 0.005 });
-    gesture.addBinding(this.params, 'handDrift', { label: 'hand drift', min: 0, max: 0.2, step: 0.005 });
-    gesture.addBinding(this.params, 'fingerActivity', { label: 'fingers', min: 0, max: 1.1, step: 0.01 });
-
-    const timing = this.pane.addFolder({ title: 'Timing' });
-    timing.addBinding(this.params, 'holdMinSeconds', { label: 'hold min', min: 0.2, max: 6, step: 0.05 });
-    timing.addBinding(this.params, 'holdMaxSeconds', { label: 'hold max', min: 0.2, max: 8, step: 0.05 });
-    timing.addBinding(this.params, 'moveMinSeconds', { label: 'move min', min: 0.5, max: 8, step: 0.05 });
-    timing.addBinding(this.params, 'moveMaxSeconds', { label: 'move max', min: 0.5, max: 10, step: 0.05 });
-
-    const smoothing = this.pane.addFolder({ title: 'Smoothing' });
-    smoothing.addBinding(this.params, 'handSmooth', { label: 'hand smooth', min: 0, max: 1, step: 0.01 });
-    smoothing.addBinding(this.params, 'fingerSmooth', { label: 'finger smooth', min: 0, max: 1, step: 0.01 });
+    this.registered?.dispose();
   }
 
   private resolveKind(elapsed: number): RobotMotionKind {

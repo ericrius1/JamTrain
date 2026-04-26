@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { Discard, Fn, cameraPosition, positionWorld, uniform, wgslFn } from 'three/tsl';
-import { Pane } from 'tweakpane';
+import { makeParams, registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 
 export type PlasmaOrbMetaball = {
   id: string;
@@ -18,6 +18,29 @@ const MAX_FINGER_METABALLS = 20;
 const MAX_METABALLS = MAX_FINGER_METABALLS + 1;
 const MAX_SURFACE_STEPS = 48;
 const MAX_REFINE_STEPS = 5;
+
+export const PLASMA_DEFS = {
+  radius:          { default: 0.42, min: 0.2,   max: 0.8,  step: 0.01,  label: 'orb radius' },
+  boundRadius:     { default: 1.08, min: 0.7,   max: 1.8,  step: 0.01,  label: 'field bounds' },
+  fingerRadius:    { default: 0.052,min: 0.015, max: 0.16, step: 0.001, label: 'tip radius' },
+  fingerInfluence: { default: 1.0,  min: 0,     max: 3,    step: 0.01,  label: 'tip influence' },
+  activeTipLimit:  { default: 12,   min: 2,     max: MAX_FINGER_METABALLS, step: 1, label: 'active tips' },
+  activeTipRange:  { default: 1.18, min: 0.45,  max: 1.8,  step: 0.01,  label: 'tip range' },
+  isoLevel:        { default: 1.0,  min: 0.45,  max: 1.8,  step: 0.01,  label: 'melt threshold' },
+  noiseAmp:        { default: 0.0,  min: 0,     max: 0.25, step: 0.005, label: 'shape ripple' },
+  wobbleFreq:      { default: 3.2,  min: 0.5,   max: 12,   step: 0.1,   label: 'texture scale' },
+  wobbleSpeed:     { default: 0.75, min: 0,     max: 4,    step: 0.05,  label: 'flow speed' },
+  energyBoost:     { default: 1,    min: 0,     max: 2,    step: 0.05,  label: 'energy boost' },
+  coolColor:       { type: 'color', default: '#146f92', label: 'deep' },
+  warmColor:       { type: 'color', default: '#5bd0ca', label: 'surface' },
+  hotColor:        { type: 'color', default: '#d8fff8', label: 'shine' },
+  surfaceSteps:    { default: 12,   min: 6, max: MAX_SURFACE_STEPS, step: 1, folder: 'quality / tone', label: 'surface steps' },
+  refineSteps:     { default: 2,    min: 0, max: MAX_REFINE_STEPS,  step: 1, folder: 'quality / tone', label: 'edge refine' },
+  brightness:      { default: 1.05, min: 0.2, max: 2, step: 0.05,           folder: 'quality / tone' },
+  alpha:           { default: 0.96, min: 0.1, max: 1, step: 0.01,           folder: 'quality / tone' },
+} as const;
+
+export type PlasmaParams = ParamsOf<typeof PLASMA_DEFS>;
 
 const pseudoNoiseFn = wgslFn(/* wgsl */ `
 fn pseudoNoise(s: vec3<f32>) -> f32 {
@@ -284,11 +307,6 @@ fn waterTexel(
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const metaballFn = wgslFn(metaballWGSL, [pseudoNoiseFn] as any);
 
-function colorToVec3(hex: number): THREE.Vector3 {
-  const c = new THREE.Color(hex);
-  return new THREE.Vector3(c.r, c.g, c.b);
-}
-
 type SmoothedMetaball = {
   id: string | null;
   position: THREE.Vector3;
@@ -297,14 +315,8 @@ type SmoothedMetaball = {
 
 export class PlasmaOrb {
   readonly mesh: THREE.Mesh;
-  private radius: number;
-  private boundRadius = 1.08;
-  private fingerRadius = 0.052;
-  private fingerInfluence = 1.0;
-  private activeTipLimit = 12;
-  private activeTipRange = 1.18;
-  private energyBoost = 1;
-  private pane?: Pane;
+  readonly params: PlasmaParams;
+  private registered?: ReturnType<typeof registerTweaks<typeof PLASMA_DEFS>>;
   private smoothedEnergy = 0;
   private targetEnergy = 0;
   private targetFingertips: PlasmaOrbMetaball[] = [];
@@ -315,14 +327,14 @@ export class PlasmaOrb {
 
   private uTime = uniform(0);
   private uCenter = uniform(new THREE.Vector3());
-  private uBoundRadius = uniform(this.boundRadius);
+  private uBoundRadius = uniform(PLASMA_DEFS.boundRadius.default);
   private uEnergy = uniform(0);
-  private uIsoLevel = uniform(1.0);
+  private uIsoLevel = uniform(PLASMA_DEFS.isoLevel.default);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private uBallCount = (uniform as any)(1, 'int');
-  private uNoiseAmp = uniform(0.0);
-  private uWobbleFreq = uniform(3.2);
-  private uWobbleSpeed = uniform(0.75);
+  private uNoiseAmp = uniform(PLASMA_DEFS.noiseAmp.default);
+  private uWobbleFreq = uniform(PLASMA_DEFS.wobbleFreq.default);
+  private uWobbleSpeed = uniform(PLASMA_DEFS.wobbleSpeed.default);
   private uB0 = uniform(new THREE.Vector4());
   private uB1 = uniform(new THREE.Vector4());
   private uB2 = uniform(new THREE.Vector4());
@@ -344,15 +356,15 @@ export class PlasmaOrb {
   private uB18 = uniform(new THREE.Vector4());
   private uB19 = uniform(new THREE.Vector4());
   private uB20 = uniform(new THREE.Vector4());
-  private uCool = uniform(colorToVec3(0x146f92));
-  private uWarm = uniform(colorToVec3(0x5bd0ca));
-  private uHot = uniform(colorToVec3(0xd8fff8));
+  private uCool = uniform(new THREE.Vector3());
+  private uWarm = uniform(new THREE.Vector3());
+  private uHot = uniform(new THREE.Vector3());
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private uSteps = (uniform as any)(12, 'int');
+  private uSteps = (uniform as any)(PLASMA_DEFS.surfaceSteps.default, 'int');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private uRefineSteps = (uniform as any)(2, 'int');
-  private uBrightness = uniform(1.05);
-  private uAlpha = uniform(0.96);
+  private uRefineSteps = (uniform as any)(PLASMA_DEFS.refineSteps.default, 'int');
+  private uBrightness = uniform(PLASMA_DEFS.brightness.default);
+  private uAlpha = uniform(PLASMA_DEFS.alpha.default);
 
   private ballUniforms = [
     this.uB0, this.uB1, this.uB2, this.uB3, this.uB4, this.uB5, this.uB6,
@@ -361,110 +373,40 @@ export class PlasmaOrb {
   ];
 
   constructor(scene: THREE.Scene, options: PlasmaOrbOptions) {
-    this.radius = options.radius ?? 0.42;
+    // Build the params object up front so options.radius (constructor-provided
+    // override) layers below any persisted user value.
+    this.params = makeParams(PLASMA_DEFS);
+    if (options.radius !== undefined) this.params.radius = options.radius;
+
     this.uCenter.value.copy(options.position);
-    this.uB0.value.set(options.position.x, options.position.y, options.position.z, this.radius);
+    this.uB0.value.set(options.position.x, options.position.y, options.position.z, this.params.radius);
 
     const geometry = new THREE.SphereGeometry(1, 48, 24);
     const material = this.buildMaterial();
 
     this.mesh = new THREE.Mesh(geometry, material);
     this.mesh.position.copy(options.position);
-    this.mesh.scale.setScalar(this.boundRadius);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 10;
     scene.add(this.mesh);
 
-    if (options.paneDock) {
-      const container = document.createElement('div');
-      options.paneDock.appendChild(container);
-      this.pane = new Pane({ title: 'Water Metaballs', container });
-      this.pane.expanded = false;
-      this.registerTweaks();
-    }
-  }
-
-  private registerTweaks(): void {
-    if (!this.pane) return;
-    const pane = this.pane;
-    const params = {
-      radius: this.radius,
-      boundRadius: this.boundRadius,
-      fingerRadius: this.fingerRadius,
-      fingerInfluence: this.fingerInfluence,
-      activeTipLimit: this.activeTipLimit,
-      activeTipRange: this.activeTipRange,
-      isoLevel: this.uIsoLevel.value,
-      noiseAmp: this.uNoiseAmp.value,
-      wobbleFreq: this.uWobbleFreq.value,
-      wobbleSpeed: this.uWobbleSpeed.value,
-      energyBoost: this.energyBoost,
-      coolColor: vec3ToHex(this.uCool.value),
-      warmColor: vec3ToHex(this.uWarm.value),
-      hotColor: vec3ToHex(this.uHot.value),
-      surfaceSteps: this.uSteps.value,
-      refineSteps: this.uRefineSteps.value,
-      brightness: this.uBrightness.value,
-      alpha: this.uAlpha.value,
-    };
-
-    pane.addBinding(params, 'radius', { label: 'orb radius', min: 0.2, max: 0.8, step: 0.01 }).on('change', e => {
-      this.radius = e.value;
-    });
-    pane.addBinding(params, 'boundRadius', { label: 'field bounds', min: 0.7, max: 1.8, step: 0.01 }).on('change', e => {
-      this.boundRadius = e.value;
-      this.uBoundRadius.value = e.value;
-      this.mesh.scale.setScalar(e.value);
-    });
-    pane.addBinding(params, 'fingerRadius', { label: 'tip radius', min: 0.015, max: 0.16, step: 0.001 }).on('change', e => {
-      this.fingerRadius = e.value;
-    });
-    pane.addBinding(params, 'fingerInfluence', { label: 'tip influence', min: 0, max: 3, step: 0.01 }).on('change', e => {
-      this.fingerInfluence = e.value;
-    });
-    pane.addBinding(params, 'activeTipLimit', { label: 'active tips', min: 2, max: MAX_FINGER_METABALLS, step: 1 }).on('change', e => {
-      this.activeTipLimit = e.value | 0;
-    });
-    pane.addBinding(params, 'activeTipRange', { label: 'tip range', min: 0.45, max: 1.8, step: 0.01 }).on('change', e => {
-      this.activeTipRange = e.value;
-    });
-    pane.addBinding(params, 'isoLevel', { label: 'melt threshold', min: 0.45, max: 1.8, step: 0.01 }).on('change', e => {
-      this.uIsoLevel.value = e.value;
-    });
-    pane.addBinding(params, 'noiseAmp', { label: 'shape ripple', min: 0, max: 0.25, step: 0.005 }).on('change', e => {
-      this.uNoiseAmp.value = e.value;
-    });
-    pane.addBinding(params, 'wobbleFreq', { label: 'texture scale', min: 0.5, max: 12, step: 0.1 }).on('change', e => {
-      this.uWobbleFreq.value = e.value;
-    });
-    pane.addBinding(params, 'wobbleSpeed', { label: 'flow speed', min: 0, max: 4, step: 0.05 }).on('change', e => {
-      this.uWobbleSpeed.value = e.value;
-    });
-    pane.addBinding(params, 'energyBoost', { label: 'energy boost', min: 0, max: 2, step: 0.05 }).on('change', e => {
-      this.energyBoost = e.value;
-    });
-    pane.addBinding(params, 'coolColor', { label: 'deep' }).on('change', e => {
-      hexToVec3(e.value, this.uCool.value);
-    });
-    pane.addBinding(params, 'warmColor', { label: 'surface' }).on('change', e => {
-      hexToVec3(e.value, this.uWarm.value);
-    });
-    pane.addBinding(params, 'hotColor', { label: 'shine' }).on('change', e => {
-      hexToVec3(e.value, this.uHot.value);
-    });
-
-    const advanced = pane.addFolder({ title: 'quality / tone', expanded: false });
-    advanced.addBinding(params, 'surfaceSteps', { label: 'surface steps', min: 6, max: MAX_SURFACE_STEPS, step: 1 }).on('change', e => {
-      this.uSteps.value = e.value | 0;
-    });
-    advanced.addBinding(params, 'refineSteps', { label: 'edge refine', min: 0, max: MAX_REFINE_STEPS, step: 1 }).on('change', e => {
-      this.uRefineSteps.value = e.value | 0;
-    });
-    advanced.addBinding(params, 'brightness', { min: 0.2, max: 2, step: 0.05 }).on('change', e => {
-      this.uBrightness.value = e.value;
-    });
-    advanced.addBinding(params, 'alpha', { min: 0.1, max: 1, step: 0.01 }).on('change', e => {
-      this.uAlpha.value = e.value;
+    this.registered = registerTweaks(options.paneDock, 'plasmaOrb', PLASMA_DEFS, {
+      title: 'Water Metaballs',
+      params: this.params,
+      onChange: {
+        boundRadius:  v => { this.uBoundRadius.value = v; this.mesh.scale.setScalar(v); },
+        isoLevel:     v => { this.uIsoLevel.value = v; },
+        noiseAmp:     v => { this.uNoiseAmp.value = v; },
+        wobbleFreq:   v => { this.uWobbleFreq.value = v; },
+        wobbleSpeed:  v => { this.uWobbleSpeed.value = v; },
+        coolColor:    v => hexToVec3(v, this.uCool.value),
+        warmColor:    v => hexToVec3(v, this.uWarm.value),
+        hotColor:     v => hexToVec3(v, this.uHot.value),
+        surfaceSteps: v => { this.uSteps.value = v | 0; },
+        refineSteps:  v => { this.uRefineSteps.value = v | 0; },
+        brightness:   v => { this.uBrightness.value = v; },
+        alpha:        v => { this.uAlpha.value = v; },
+      },
     });
   }
 
@@ -547,11 +489,11 @@ export class PlasmaOrb {
   }
 
   inActiveRange(point: THREE.Vector3): boolean {
-    return point.distanceToSquared(this.mesh.position) <= this.activeTipRange * this.activeTipRange;
+    return point.distanceToSquared(this.mesh.position) <= this.params.activeTipRange * this.params.activeTipRange;
   }
 
   setEnergy(energy: number): void {
-    this.targetEnergy = Math.max(0, Math.min(1, energy * this.energyBoost));
+    this.targetEnergy = Math.max(0, Math.min(1, energy * this.params.energyBoost));
   }
 
   update(elapsed: number, delta: number): void {
@@ -560,9 +502,9 @@ export class PlasmaOrb {
 
     const posAlpha = 1 - Math.exp(-delta * 18);
     const radiusAlpha = 1 - Math.exp(-delta * 12);
-    const effectiveFingerRadius = this.fingerRadius * Math.sqrt(Math.max(this.fingerInfluence, 0));
-    const activeLimit = Math.max(0, Math.min(MAX_FINGER_METABALLS, this.activeTipLimit | 0));
-    const activeRangeSq = Math.max(0.01, this.activeTipRange * this.activeTipRange);
+    const effectiveFingerRadius = this.params.fingerRadius * Math.sqrt(Math.max(this.params.fingerInfluence, 0));
+    const activeLimit = Math.max(0, Math.min(MAX_FINGER_METABALLS, this.params.activeTipLimit | 0));
+    const activeRangeSq = Math.max(0.01, this.params.activeTipRange * this.params.activeTipRange);
     const radiusEpsilon = Math.max(effectiveFingerRadius * 0.04, 0.0005);
 
     // Only tracked fingertips that are within the orb's pull range qualify.
@@ -648,7 +590,7 @@ export class PlasmaOrb {
     // Pack contiguously into the shader uniforms. The shader sums field
     // contributions, so packing order is irrelevant to the look but lets
     // uBallCount stay tight for ray-march cost.
-    this.ballUniforms[0].value.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z, this.radius);
+    this.ballUniforms[0].value.set(this.mesh.position.x, this.mesh.position.y, this.mesh.position.z, this.params.radius);
     let writeIdx = 1;
     for (let i = 0; i < this.smoothedFingertips.length; i += 1) {
       const slot = this.smoothedFingertips[i];
@@ -665,23 +607,14 @@ export class PlasmaOrb {
     this.uTime.value = elapsed;
     this.uEnergy.value = this.smoothedEnergy;
     this.uCenter.value.copy(this.mesh.position);
-    this.uBoundRadius.value = this.boundRadius;
-    this.mesh.scale.setScalar(this.boundRadius);
   }
 
   dispose(): void {
-    this.pane?.dispose();
+    this.registered?.dispose();
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.mesh.removeFromParent();
   }
-}
-
-function vec3ToHex(v: THREE.Vector3): string {
-  const r = Math.round(Math.max(0, Math.min(1, v.x)) * 255);
-  const g = Math.round(Math.max(0, Math.min(1, v.y)) * 255);
-  const b = Math.round(Math.max(0, Math.min(1, v.z)) * 255);
-  return '#' + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
 }
 
 function hexToVec3(hex: string, target: THREE.Vector3): void {

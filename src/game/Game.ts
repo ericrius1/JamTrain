@@ -126,12 +126,8 @@ export class Game {
 
     this.localRig = new PlayerRig(this.scene, { seatIndex: 0, color: 0x2d7f8c });
     this.remoteRig = new PlayerRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, robot: true });
-    // Per-frame visibility is managed in updateLinks: a fingertip node is
-    // shown as a small standalone glowing ball whenever it is NOT actively
-    // feeding the central orb (untracked, or tracked but out of orb range),
-    // and hidden when it is so the metaball blob can take over.
-    this.localRig.setFingertipNodesVisible(true);
-    this.remoteRig.setFingertipNodesVisible(true);
+    this.localRig.setFingertipNodesVisible(false);
+    this.remoteRig.setFingertipNodesVisible(false);
     this.applyPlayerBackOffset();
     this.multiplayer.onSeatChange((localSeat, partnerSeat) => {
       this.localRig.setSeatIndex(localSeat);
