@@ -17,20 +17,6 @@ const player = table(
   }
 );
 
-const handState = table(
-  {
-    name: 'hand_state',
-    public: true,
-    indexes: [{ accessor: 'hand_state_room_id', name: 'hand_state_room_id', algorithm: 'btree', columns: ['roomId'] }],
-  },
-  {
-    identity: t.identity().primaryKey(),
-    roomId: t.string(),
-    poseJson: t.string(),
-    updatedAt: t.timestamp(),
-  }
-);
-
 const webrtcSignal = table(
   {
     name: 'webrtc_signal',
@@ -57,7 +43,6 @@ const webrtcSignal = table(
 
 const spacetimedb = schema({
   player,
-  handState,
   webrtcSignal,
 });
 
@@ -157,42 +142,7 @@ export const request_seat = spacetimedb.reducer(
   }
 );
 
-export const update_pose = spacetimedb.reducer(
-  { roomId: t.string(), poseJson: t.string() },
-  (ctx, { poseJson }) => {
-    if (poseJson.length > 24000) throw new SenderError('pose payload too large');
-
-    // The server owns the player's room assignment. The roomId argument is
-    // ignored — clients only update poses for the room they were placed
-    // into via request_seat. Stale poses (sent before the first
-    // request_seat completes) are silently dropped.
-    const playerRow = ctx.db.player.identity.find(ctx.sender);
-    if (!playerRow) return;
-
-    const room = playerRow.roomId;
-    const existingPose = ctx.db.handState.identity.find(ctx.sender);
-    if (existingPose) {
-      ctx.db.handState.identity.update({
-        ...existingPose,
-        roomId: room,
-        poseJson,
-        updatedAt: ctx.timestamp,
-      });
-      return;
-    }
-
-    ctx.db.handState.insert({
-      identity: ctx.sender,
-      roomId: room,
-      poseJson,
-      updatedAt: ctx.timestamp,
-    });
-  }
-);
-
 export const leave_room = spacetimedb.reducer(ctx => {
-  // Explicit leave (e.g., user clicks Disembark) — fully remove the rows.
-  ctx.db.handState.identity.delete(ctx.sender);
   ctx.db.player.identity.delete(ctx.sender);
 });
 

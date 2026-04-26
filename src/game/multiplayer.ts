@@ -1,6 +1,6 @@
 import { Identity } from 'spacetimedb';
 import { DbConnection, tables, type ErrorContext } from '../module_bindings';
-import type { HandState, Player, WebrtcSignal } from '../module_bindings/types';
+import type { Player, WebrtcSignal } from '../module_bindings/types';
 import { parsePose, serializePose } from './pose';
 import { pickRandomRoomName, sanitizeRoomName } from './roomNames';
 import type { ConnectionState, PlayerPose } from './types';
@@ -234,15 +234,7 @@ export class MultiplayerClient {
       sentAt: Date.now(),
     });
 
-    // Primary transport: peer-to-peer DataChannel. SpacetimeDB pose mirror
-    // is kept for one more commit (Task 5 deletes it) so we can compare.
     this.poseTransport?.(poseJson);
-
-    if (this.connection?.isActive) {
-      void this.connection.reducers.updatePose({ roomId: this.roomId, poseJson }).catch(error => {
-        console.warn('SpacetimeDB pose update failed', error);
-      });
-    }
   }
 
   getRemotePose(): PlayerPose | undefined {
@@ -302,15 +294,6 @@ export class MultiplayerClient {
   }
 
   private registerSpacetimeHandlers(conn: DbConnection): void {
-    conn.db.handState.onInsert((_ctx, row) => this.acceptHandState(row));
-    conn.db.handState.onUpdate((_ctx, _oldRow, row) => this.acceptHandState(row));
-    conn.db.handState.onDelete((_ctx, row) => {
-      const identity = row.identity.toHexString();
-      if (identity !== this.localId) {
-        console.info('[jam-train] partner hand_state deleted', identity, 'in', row.roomId);
-      }
-      if (this.remotePose?.id === identity) this.remotePose = undefined;
-    });
     conn.db.player.onInsert((_ctx, row) => {
       this.acceptOwnPlayer(row);
       this.maybeAnnouncePlayer(row);
@@ -343,8 +326,6 @@ export class MultiplayerClient {
         // Pass 2: track who's already in the cabin (silent — no toasts;
         // subscriptionApplied is still false at this point).
         this.rebuildKnownPlayers();
-        // Pass 3: prime remote pose from any pre-existing hand state.
-        for (const row of conn.db.handState.iter()) this.acceptHandState(row);
         this.subscriptionApplied = true;
         // Now sync the partner plaque with whoever's actually online here.
         this.updatePartner();
@@ -353,7 +334,7 @@ export class MultiplayerClient {
       .onError(ctx => {
         console.warn('SpacetimeDB subscription failed', ctx.event);
       })
-      .subscribe([tables.handState, tables.player, tables.webrtcSignal]);
+      .subscribe([tables.player, tables.webrtcSignal]);
   }
 
   private maybeAnnouncePlayer(row: Player): void {
@@ -461,33 +442,6 @@ export class MultiplayerClient {
     this.partnerSeatIndex = partner;
     if (this.remotePose) this.remotePose.seatIndex = partner;
     for (const listener of this.seatListeners) listener(local, partner);
-  }
-
-  private acceptHandState(row: HandState): void {
-    const id = row.identity.toHexString();
-    if (id === this.localId) return;
-    if (row.roomId !== this.roomId) {
-      // Partner is in a different room than us — drop their pose.
-      // (Only log when we previously had them, so we can see the moment
-      // a real divergence kicks in.)
-      if (this.remotePose?.id === id) {
-        console.info('[jam-train] dropping pose: partner room', row.roomId, '!= our room', this.roomId);
-      }
-      return;
-    }
-    const pose = parsePose(row.poseJson);
-    if (!pose) return;
-    const wasPresent = this.remotePose?.id === id;
-    this.remotePose = {
-      ...pose,
-      id,
-      roomId: row.roomId,
-      seatIndex: this.partnerSeatIndex,
-      updatedAt: Date.now(),
-    };
-    if (!wasPresent) {
-      console.info('[jam-train] partner pose first received', id, 'in', row.roomId);
-    }
   }
 
   private setRoomId(nextRoom: string): void {

@@ -10,14 +10,6 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export const HandState = __t.object("HandState", {
-  identity: __t.identity(),
-  roomId: __t.string(),
-  poseJson: __t.string(),
-  updatedAt: __t.timestamp(),
-});
-export type HandState = __Infer<typeof HandState>;
-
 export const Player = __t.object("Player", {
   identity: __t.identity(),
   roomId: __t.string(),

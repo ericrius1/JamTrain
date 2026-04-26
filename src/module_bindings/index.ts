@@ -38,12 +38,10 @@ import ConsumeWebrtcSignalReducer from "./consume_webrtc_signal_reducer";
 import LeaveRoomReducer from "./leave_room_reducer";
 import RequestSeatReducer from "./request_seat_reducer";
 import SendWebrtcSignalReducer from "./send_webrtc_signal_reducer";
-import UpdatePoseReducer from "./update_pose_reducer";
 
 // Import all procedure arg schemas
 
 // Import all table schema definitions
-import HandStateRow from "./hand_state_table";
 import PlayerRow from "./player_table";
 import WebrtcSignalRow from "./webrtc_signal_table";
 
@@ -51,20 +49,6 @@ import WebrtcSignalRow from "./webrtc_signal_table";
 
 /** The schema information for all tables in this module. This is defined the same was as the tables would have been defined in the server. */
 const tablesSchema = __schema({
-  handState: __table({
-    name: 'hand_state',
-    indexes: [
-      { accessor: 'identity', name: 'hand_state_identity_idx_btree', algorithm: 'btree', columns: [
-        'identity',
-      ] },
-      { accessor: 'hand_state_room_id', name: 'hand_state_room_id_idx_btree', algorithm: 'btree', columns: [
-        'roomId',
-      ] },
-    ],
-    constraints: [
-      { name: 'hand_state_identity_key', constraint: 'unique', columns: ['identity'] },
-    ],
-  }, HandStateRow),
   player: __table({
     name: 'player',
     indexes: [
@@ -101,7 +85,6 @@ const reducersSchema = __reducers(
   __reducerSchema("leave_room", LeaveRoomReducer),
   __reducerSchema("request_seat", RequestSeatReducer),
   __reducerSchema("send_webrtc_signal", SendWebrtcSignalReducer),
-  __reducerSchema("update_pose", UpdatePoseReducer),
 );
 
 /** The schema information for all procedures in this module. This is defined the same way as the procedures would have been defined in the server. */
