@@ -125,6 +125,15 @@ export class PlayerRig {
     return this.fingertipWorld.get(`${hand}:${finger}`)?.clone() ?? new THREE.Vector3();
   }
 
+  private readonly _palmScratch = new THREE.Vector3();
+
+  getPalmWorld(hand: Handedness): THREE.Vector3 {
+    // Use the wrist node — the palm mesh's transform is post-IK and the wrist
+    // approximates the "anchor between the fingers" intuitively in this rig.
+    this.hands[hand].wristNode.getWorldPosition(this._palmScratch);
+    return this._palmScratch.clone();
+  }
+
   getAllFingertips(): THREE.Vector3[] {
     const points: THREE.Vector3[] = [];
     for (const handedness of handednesses) {
