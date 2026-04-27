@@ -3,12 +3,16 @@ import type { MultiplayerClient } from './multiplayer';
 type RemoteStreamListener = (stream: MediaStream | null) => void;
 type StreamProvider = () => MediaStream | undefined;
 type RemotePoseListener = (poseJson: string) => void;
+export type PeerState = { instrument?: string; creature?: string };
+type RemoteStateListener = (state: PeerState) => void;
+type LocalStateProvider = () => PeerState;
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
 ];
 
 const POSE_CHANNEL_LABEL = 'pose';
+const STATE_CHANNEL_LABEL = 'state';
 
 export class WebRTCClient {
   private pc?: RTCPeerConnection;
@@ -27,6 +31,9 @@ export class WebRTCClient {
   private desiredShareVideo = false;
   private poseChannel?: RTCDataChannel;
   private poseListeners = new Set<RemotePoseListener>();
+  private stateChannel?: RTCDataChannel;
+  private stateListeners = new Set<RemoteStateListener>();
+  private getLocalState: LocalStateProvider = () => ({});
 
   constructor(
     private multiplayer: MultiplayerClient,
@@ -65,6 +72,24 @@ export class WebRTCClient {
       // Send on a closing channel can throw; not fatal — next negotiation
       // will rebuild a fresh channel.
       console.warn('[webrtc] pose send failed', err);
+    }
+  }
+
+  setLocalStateProvider(provider: LocalStateProvider): void {
+    this.getLocalState = provider;
+  }
+
+  onRemoteState(listener: RemoteStateListener): void {
+    this.stateListeners.add(listener);
+  }
+
+  sendState(state: PeerState): void {
+    const ch = this.stateChannel;
+    if (!ch || ch.readyState !== 'open') return;
+    try {
+      ch.send(JSON.stringify(state));
+    } catch (err) {
+      console.warn('[webrtc] state send failed', err);
     }
   }
 
@@ -141,6 +166,10 @@ export class WebRTCClient {
         maxRetransmits: 0,
       });
       this.wirePoseChannel(channel);
+      // State channel is reliable + ordered — instrument/creature changes
+      // must not drop, and arrival order matters (last write wins).
+      const stateCh = this.pc.createDataChannel(STATE_CHANNEL_LABEL);
+      this.wireStateChannel(stateCh);
       void this.createAndSendOffer();
     }
   }
@@ -186,6 +215,9 @@ export class WebRTCClient {
       if (event.channel.label === POSE_CHANNEL_LABEL) {
         console.info('[webrtc] received pose channel');
         this.wirePoseChannel(event.channel);
+      } else if (event.channel.label === STATE_CHANNEL_LABEL) {
+        console.info('[webrtc] received state channel');
+        this.wireStateChannel(event.channel);
       }
     };
 
@@ -234,6 +266,42 @@ export class WebRTCClient {
   }
 
   private detachPoseChannel(channel: RTCDataChannel): void {
+    channel.onopen = null;
+    channel.onclose = null;
+    channel.onerror = null;
+    channel.onmessage = null;
+    try { channel.close(); } catch { /* ignore */ }
+  }
+
+  private wireStateChannel(channel: RTCDataChannel): void {
+    if (this.stateChannel && this.stateChannel !== channel) {
+      this.detachStateChannel(this.stateChannel);
+    }
+    this.stateChannel = channel;
+    channel.onopen = () => {
+      console.info('[webrtc] state channel open');
+      // Send a snapshot so the partner doesn't have to wait for the next
+      // change to learn what we're playing right now.
+      this.sendState(this.getLocalState());
+    };
+    channel.onclose = () => console.info('[webrtc] state channel closed');
+    channel.onerror = err => console.warn('[webrtc] state channel error', err);
+    channel.onmessage = event => {
+      const data = event.data;
+      if (typeof data !== 'string') return;
+      let parsed: PeerState | null = null;
+      try {
+        parsed = JSON.parse(data) as PeerState;
+      } catch (err) {
+        console.warn('[webrtc] state channel: malformed payload', err);
+        return;
+      }
+      if (!parsed || typeof parsed !== 'object') return;
+      for (const listener of this.stateListeners) listener(parsed);
+    };
+  }
+
+  private detachStateChannel(channel: RTCDataChannel): void {
     channel.onopen = null;
     channel.onclose = null;
     channel.onerror = null;
@@ -411,6 +479,10 @@ export class WebRTCClient {
         if (this.poseChannel) {
           this.detachPoseChannel(this.poseChannel);
           this.poseChannel = undefined;
+        }
+        if (this.stateChannel) {
+          this.detachStateChannel(this.stateChannel);
+          this.stateChannel = undefined;
         }
         this.pc.close();
       } catch (err) {

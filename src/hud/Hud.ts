@@ -50,6 +50,8 @@ export class Hud {
   private shareButton: HTMLButtonElement;
   private announcement: AnnouncementToast;
   private resizeHandler: () => void;
+  private sessionStart = Date.now();
+  private elapsedTimer: ReturnType<typeof setInterval>;
   // Net-row state. Tracked separately so setRoom / setConnection / setPartner
   // can each update their own slice without clobbering the others.
   private currentConnection = 'connecting';
@@ -86,10 +88,14 @@ export class Hud {
 
     this.title = new TitlePlaque({
       room: opts.room,
-      line: 'NORTHBOUND · 22:14',
+      line: `NORTHBOUND · ${this.formatElapsed()}`,
       onRoomChange: opts.callbacks.onRoomChange,
     });
     this.uiEl.appendChild(this.title.el);
+    // Tick once a second so the minute rollover lands within ~1s of true.
+    this.elapsedTimer = setInterval(() => {
+      this.title.setLine(`NORTHBOUND · ${this.formatElapsed()}`);
+    }, 1000);
 
     this.sharePopover = new SharePopover(opts.room, {
       onRoomChange: room => opts.callbacks.onRoomChange(room),
@@ -364,7 +370,15 @@ export class Hud {
     this.localCreatureListeners.add(listener);
   }
 
+  private formatElapsed(): string {
+    const totalMinutes = Math.floor((Date.now() - this.sessionStart) / 60000);
+    const hh = Math.floor(totalMinutes / 60);
+    const mm = totalMinutes % 60;
+    return `${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+  }
+
   dispose(): void {
+    clearInterval(this.elapsedTimer);
     window.removeEventListener('resize', this.resizeHandler);
     this.sharePopover.dispose();
     this.announcement.dispose();

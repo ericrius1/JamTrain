@@ -141,6 +141,17 @@ export class MultiplayerClient {
     }
   }
 
+  /**
+   * Direct push of partner instrument from a peer-to-peer transport (e.g.
+   * WebRTC state channel). Bypasses the spacetime row read so it works even
+   * when the deployed schema lags behind the client.
+   */
+  setPartnerInstrumentFromPeer(instrumentId: string): void {
+    if (instrumentId === this.partnerInstrument) return;
+    this.partnerInstrument = instrumentId;
+    for (const listener of this.partnerInstrumentListeners) listener(instrumentId);
+  }
+
   onLocalCreatureChange(listener: CreatureListener): void {
     this.localCreatureListeners.add(listener);
     listener(this.localCreature);
@@ -166,6 +177,13 @@ export class MultiplayerClient {
     // The deployed multiplayer schema does not currently include per-player
     // creature sync. Keep local creature selection local so subscriptions
     // stay compatible with maincloud.
+  }
+
+  /** Direct push from a peer-to-peer transport — see setPartnerInstrumentFromPeer. */
+  setPartnerCreatureFromPeer(creatureId: string): void {
+    if (creatureId === this.partnerCreature) return;
+    this.partnerCreature = creatureId;
+    for (const listener of this.partnerCreatureListeners) listener(creatureId);
   }
 
   async sendWebrtcSignal(recipientHex: string, kind: string, payload: string): Promise<void> {
@@ -436,17 +454,22 @@ export class MultiplayerClient {
       }
     }
 
-    if (nextIdentity !== this.partnerIdentityHex) {
+    const partnerIdentityChanged = nextIdentity !== this.partnerIdentityHex;
+    if (partnerIdentityChanged) {
       this.partnerIdentityHex = nextIdentity;
       for (const listener of this.partnerIdentityListeners) listener(nextIdentity);
     }
 
-    if (nextInstrument !== this.partnerInstrument) {
+    // Only seed instrument from the spacetime row when the partner identity
+    // changes (new partner / partner left). For the same partner, the WebRTC
+    // state channel owns ongoing updates — re-reading the row here would
+    // clobber a fresh peer-pushed value with a stale spacetime snapshot.
+    if (partnerIdentityChanged && nextInstrument !== this.partnerInstrument) {
       this.partnerInstrument = nextInstrument;
       for (const listener of this.partnerInstrumentListeners) listener(nextInstrument);
     }
 
-    if (nextCreature !== this.partnerCreature) {
+    if (partnerIdentityChanged && nextCreature !== this.partnerCreature) {
       this.partnerCreature = nextCreature;
       for (const listener of this.partnerCreatureListeners) listener(nextCreature);
     }
