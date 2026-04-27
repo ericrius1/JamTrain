@@ -12,7 +12,7 @@ import { HarmonicLoom } from './visuals/HarmonicLoom';
 import { WindChime } from './visuals/WindChime';
 import { OrbDrums } from './visuals/OrbDrums';
 import { CenterStage } from './CenterStage';
-import type { InstrumentId, PlayerVisual } from './instruments';
+import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
 import { makePlayerPose } from './pose';
@@ -61,6 +61,29 @@ type GameUi = {
 };
 
 type CameraMode = 'game' | 'orbit';
+type PlayerSlot = 'local' | 'remote';
+
+function makeHandContactPoints(): HandContactPoint[] {
+  const contacts: HandContactPoint[] = [];
+  for (const hand of handednesses) {
+    contacts.push({
+      id: `${hand}:palm`,
+      hand,
+      kind: 'palm',
+      position: new THREE.Vector3(),
+    });
+    for (const finger of fingerNames) {
+      contacts.push({
+        id: `${hand}:${finger}:tip`,
+        hand,
+        kind: 'fingertip',
+        finger,
+        position: new THREE.Vector3(),
+      });
+    }
+  }
+  return contacts;
+}
 
 export class Game {
   private renderer: THREE.WebGPURenderer;
@@ -102,8 +125,12 @@ export class Game {
   private keyLight?: THREE.DirectionalLight;
   private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
   private centerStage?: CenterStage;
-  private playerVisuals: Record<'local' | 'remote', PlayerVisual | null> = { local: null, remote: null };
-  private playerInstruments: Record<'local' | 'remote', InstrumentId> = { local: 'loom', remote: 'loom' };
+  private playerVisuals: Record<PlayerSlot, PlayerVisual | null> = { local: null, remote: null };
+  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'loom', remote: 'loom' };
+  private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
+    local: makeHandContactPoints(),
+    remote: makeHandContactPoints(),
+  };
   private musicIntensity = 0;
   private shadowsTweaks?: ReturnType<typeof registerTweaks<typeof SHADOWS_DEFS>>;
   private readonly shadowParams = makeParams(SHADOWS_DEFS);
@@ -712,7 +739,7 @@ export class Game {
     this.installPlayerVisual('remote', this.playerInstruments.remote);
   }
 
-  private installPlayerVisual(player: 'local' | 'remote', id: InstrumentId): void {
+  private installPlayerVisual(player: PlayerSlot, id: InstrumentId): void {
     this.playerVisuals[player]?.dispose();
     this.playerInstruments[player] = id;
 
@@ -745,13 +772,13 @@ export class Game {
     this.handSynth.setInstrument(player, id);
   }
 
-  setPlayerInstrument(player: 'local' | 'remote', id: string): void {
+  setPlayerInstrument(player: PlayerSlot, id: string): void {
     if (!isInstrumentId(id)) return;
     if (this.playerInstruments[player] === id) return;
     this.installPlayerVisual(player, id);
   }
 
-  setPlayerCreature(player: 'local' | 'remote', id: string): void {
+  setPlayerCreature(player: PlayerSlot, id: string): void {
     if (!isCreatureId(id)) {
       console.warn('[game] setPlayerCreature: invalid id', id);
       return;
@@ -863,11 +890,13 @@ export class Game {
     const localRight = this.localRig.getPalmWorld('right');
     const remoteLeft = this.remoteRig.getPalmWorld('left');
     const remoteRight = this.remoteRig.getPalmWorld('right');
+    const localContacts = this.updateVisualContacts('local', this.localRig);
+    const remoteContacts = this.updateVisualContacts('remote', this.remoteRig);
     const localVoice = this.handSynth.getVoiceState('local');
     const remoteVoice = this.handSynth.getVoiceState('remote');
 
-    this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta);
-    this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta);
+    this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta, localContacts);
+    this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta, remoteContacts);
 
     // Push each chime's left-hand warmth into the audio engine so the chime
     // synth's filter cutoff tracks the left-hand y position.
@@ -881,6 +910,23 @@ export class Game {
     }
 
     this.centerStage?.setInputs(localLeft, localRight, localVoice, remoteLeft, remoteRight, remoteVoice);
+  }
+
+  private updateVisualContacts(
+    player: PlayerSlot,
+    rig: HumanoidRig,
+  ): readonly HandContactPoint[] {
+    const contacts = this.visualContacts[player];
+    let cursor = 0;
+
+    for (const hand of handednesses) {
+      rig.getPalmCenterWorld(hand, contacts[cursor++].position);
+      for (const finger of fingerNames) {
+        rig.getFingertipWorld(hand, finger, contacts[cursor++].position);
+      }
+    }
+
+    return contacts;
   }
 
   private updateMusicReactivity(delta: number): void {

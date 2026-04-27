@@ -119,6 +119,7 @@ export class VideoPanel {
       icon: CAMERA_SVG,
       onClick: () => { for (const l of this.cameraListeners) l(); },
     });
+    this.cameraButton.classList.add('needs-attention');
     this.shareButton = makeToolbarButton({
       label: 'Share Video',
       title: 'Optional — let your partner see your camera feed.',
@@ -173,6 +174,7 @@ export class VideoPanel {
   setCameraEnabled(enabled: boolean): void {
     this.cameraEnabled = enabled;
     this.cameraButton?.classList.toggle('enabled', enabled);
+    this.cameraButton?.classList.toggle('needs-attention', !enabled);
     this.emptyOverlay?.classList.toggle('hidden', enabled);
     this.toolbar?.classList.toggle('share-revealed', enabled);
     if (this.hintEl) {

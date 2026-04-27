@@ -70,8 +70,12 @@ export class HumanoidRig {
     return this.skeleton.getPalmWorld(hand);
   }
 
-  getFingertipWorld(hand: Handedness, finger: FingerName): THREE.Vector3 {
-    return this.skeleton.getFingertipWorld(hand, finger);
+  getPalmCenterWorld(hand: Handedness, target?: THREE.Vector3): THREE.Vector3 {
+    return this.skeleton.getPalmCenterWorld(hand, target);
+  }
+
+  getFingertipWorld(hand: Handedness, finger: FingerName, target?: THREE.Vector3): THREE.Vector3 {
+    return this.skeleton.getFingertipWorld(hand, finger, target);
   }
 
   getAllFingertips(): THREE.Vector3[] {

@@ -10,7 +10,6 @@ const LOCAL_INSTRUMENT_KEY = 'jam-train.local-instrument';
 const PREFS_KEY = 'jam-train-av-prefs';
 
 type AvPrefs = {
-  camera: boolean;
   backingVolume: number;
   musicVolume: number;
   voiceVolume: number;
@@ -86,7 +85,6 @@ function loadPrefs(defaults: AvPrefs): AvPrefs {
     if (!raw) return defaults;
     const parsed = JSON.parse(raw) as Partial<AvPrefs>;
     return {
-      camera: !!parsed.camera,
       backingVolume: clampUnit(parsed.backingVolume, defaults.backingVolume),
       musicVolume: clampUnit(parsed.musicVolume, defaults.musicVolume),
       voiceVolume: clampUnit(parsed.voiceVolume, defaults.voiceVolume),
@@ -131,7 +129,6 @@ async function createRuntime(): Promise<RuntimeApi> {
   ]);
 
   const avPrefs = loadPrefs({
-    camera: false,
     backingVolume: DEFAULT_BACKING_VOLUME,
     musicVolume: DEFAULT_MUSIC_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
@@ -163,6 +160,7 @@ async function createRuntime(): Promise<RuntimeApi> {
 
   const initialDisplayRoom = game.getRoom();
   let started = false;
+  let cameraStarting = false;
 
   const hud = new Hud({
     room: initialDisplayRoom,
@@ -297,11 +295,34 @@ async function createRuntime(): Promise<RuntimeApi> {
   });
 
   hud.onCameraToggle(() => {
-    const next = !game.getCameraEnabled();
-    game.setCameraEnabled(next);
-    hud.setCameraEnabled(next);
-    avPrefs.camera = next;
-    savePrefs(avPrefs);
+    if (cameraStarting) return;
+    if (game.getCameraEnabled()) {
+      game.setCameraEnabled(false);
+      hud.setCameraEnabled(false);
+      return;
+    }
+
+    const stream = game.handTracker.getStream();
+    if (stream) {
+      game.setCameraEnabled(true);
+      hud.setCameraEnabled(true);
+      return;
+    }
+
+    cameraStarting = true;
+    void game.startCamera()
+      .then(() => {
+        const hasStream = !!game.handTracker.getStream();
+        game.setCameraEnabled(hasStream);
+        hud.setCameraEnabled(hasStream);
+      })
+      .catch(err => {
+        console.warn('[jam-train] camera startup failed', err);
+        hud.setCameraEnabled(false);
+      })
+      .finally(() => {
+        cameraStarting = false;
+      });
   });
   hud.onShareVideoToggle(() => {
     const next = !game.getShareVideoEnabled();
@@ -351,21 +372,10 @@ async function createRuntime(): Promise<RuntimeApi> {
     hud.setConductorName(conductorName);
     game.setDisplayName(conductorName);
 
-    const cameraStart = game.startCamera()
-      .then(() => {
-        game.setCameraEnabled(avPrefs.camera);
-        game.setMicEnabled(false);
-        game.setShareVideoEnabled(false);
-      })
-      .catch(err => {
-        console.warn('[jam-train] camera startup failed', err);
-      });
-    void cameraStart;
-
     await game.startAudio();
     game.connectMultiplayer();
 
-    hud.setCameraEnabled(avPrefs.camera);
+    hud.setCameraEnabled(false);
     hud.setMicEnabled(false);
     hud.setShareVideoEnabled(false);
 
@@ -398,16 +408,8 @@ async function createRuntime(): Promise<RuntimeApi> {
 
 function schedulePostSceneWarmup(): void {
   requestAnimationFrame(() => {
-    void import('tone')
-      .catch(err => {
-        console.warn('[jam-train] tone preload failed', err);
-      })
-      .finally(() => {
-        void import('./game/handTracking')
-          .then(({ preloadHandpose }) => preloadHandpose())
-          .catch(err => {
-            console.warn('[jam-train] handpose preload failed', err);
-          });
-      });
+    void import('tone').catch(err => {
+      console.warn('[jam-train] tone preload failed', err);
+    });
   });
 }

@@ -273,15 +273,15 @@ export class WindChime implements PlayerVisual {
     // generating hits or if collisions are silently empty.
     if (this.elapsed - this.debugStatsAt > 1.0) {
       this.debugStatsAt = this.elapsed;
-      console.debug('[chime] stats', {
-        anchor: { x: +this.anchor.x.toFixed(2), y: +this.anchor.y.toFixed(2), z: +this.anchor.z.toFixed(2) },
-        rightPalm: { x: +rightPalm.x.toFixed(2), y: +rightPalm.y.toFixed(2), z: +rightPalm.z.toFixed(2) },
-        handSpeed: +handVelMag.toFixed(3),
-        windAccum: +this.windAccum.length().toFixed(2),
-        gemHits: this.gemHitCount,
-        handHits: this.handHitCount,
-        substepDt: +this.lastSubstepDt.toFixed(4),
-      });
+      // console.debug('[chime] stats', {
+      //   anchor: { x: +this.anchor.x.toFixed(2), y: +this.anchor.y.toFixed(2), z: +this.anchor.z.toFixed(2) },
+      //   rightPalm: { x: +rightPalm.x.toFixed(2), y: +rightPalm.y.toFixed(2), z: +rightPalm.z.toFixed(2) },
+      //   handSpeed: +handVelMag.toFixed(3),
+      //   windAccum: +this.windAccum.length().toFixed(2),
+      //   gemHits: this.gemHitCount,
+      //   handHits: this.handHitCount,
+      //   substepDt: +this.lastSubstepDt.toFixed(4),
+      // });
       this.gemHitCount = 0;
       this.handHitCount = 0;
     }

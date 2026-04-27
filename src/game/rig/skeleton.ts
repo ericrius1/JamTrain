@@ -107,8 +107,14 @@ export class Skeleton {
     return v;
   }
 
-  getFingertipWorld(hand: Handedness, finger: FingerName): THREE.Vector3 {
-    return this.fingertipWorld.get(`${hand}:${finger}`)?.clone() ?? new THREE.Vector3();
+  getPalmCenterWorld(hand: Handedness, target = new THREE.Vector3()): THREE.Vector3 {
+    this.hands[hand].palm.getWorldPosition(target);
+    return target;
+  }
+
+  getFingertipWorld(hand: Handedness, finger: FingerName, target = new THREE.Vector3()): THREE.Vector3 {
+    const source = this.fingertipWorld.get(`${hand}:${finger}`);
+    return source ? target.copy(source) : target.set(0, 0, 0);
   }
 
   getAllFingertips(): THREE.Vector3[] {

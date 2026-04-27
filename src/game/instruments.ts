@@ -1,4 +1,5 @@
 import type * as THREE from 'three/webgpu';
+import type { FingerName, Handedness } from './types';
 
 export type InstrumentId = 'loom' | 'chime' | 'orbs';
 
@@ -33,6 +34,16 @@ export const voiceStateZero = (): VoiceState => ({
   noteIndex: -1,
   noteCount: 1,
 });
+
+export type HandContactPoint = {
+  /** Stable within one player visual so velocity can be derived frame-to-frame. */
+  id: string;
+  hand: Handedness;
+  kind: 'palm' | 'fingertip';
+  finger?: FingerName;
+  /** World-space contact point. */
+  position: THREE.Vector3;
+};
 
 export type InstrumentMeta = {
   id: InstrumentId;
@@ -78,7 +89,13 @@ export function isInstrumentId(value: string): value is InstrumentId {
  * Per-player visual contract. Positions are world-space THREE.Vector3.
  */
 export interface PlayerVisual {
-  update(leftPalm: THREE.Vector3, rightPalm: THREE.Vector3, voice: VoiceState, delta: number): void;
+  update(
+    leftPalm: THREE.Vector3,
+    rightPalm: THREE.Vector3,
+    voice: VoiceState,
+    delta: number,
+    contacts?: readonly HandContactPoint[],
+  ): void;
   setVisible(visible: boolean): void;
   dispose(): void;
 }
