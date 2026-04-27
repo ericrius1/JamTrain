@@ -154,7 +154,7 @@ export const request_seat = spacetimedb.reducer(
   }
 );
 
-const ALLOWED_INSTRUMENTS = new Set(['loom']);
+const ALLOWED_INSTRUMENTS = new Set(['loom', 'chime']);
 
 export const update_instrument = spacetimedb.reducer(
   { instrument: t.string() },

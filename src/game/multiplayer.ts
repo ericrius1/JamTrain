@@ -133,8 +133,12 @@ export class MultiplayerClient {
     if (this.localInstrument === instrumentId) return;
     this.localInstrument = instrumentId;
     for (const listener of this.localInstrumentListeners) listener(instrumentId);
-    // The deployed multiplayer schema does not currently carry per-player
-    // instrument, so this stays local-only — partner sees their own default.
+    if (!this.connection?.isActive) return;
+    try {
+      await this.connection.reducers.updateInstrument({ instrument: instrumentId });
+    } catch (err) {
+      console.warn('[jam-train] update_instrument failed', err);
+    }
   }
 
   onLocalCreatureChange(listener: CreatureListener): void {
@@ -351,6 +355,11 @@ export class MultiplayerClient {
         this.subscriptionApplied = true;
         // Now sync the partner plaque with whoever's actually online here.
         this.updatePartner();
+        // Push our current local instrument so the server row matches what
+        // we already chose locally (handles pre-connect picks and reconnects).
+        void conn.reducers
+          .updateInstrument({ instrument: this.localInstrument })
+          .catch(err => console.warn('[jam-train] update_instrument failed', err));
         console.info('[jam-train] subscription applied; room', this.roomId, 'partners', this.knownPlayers.size);
       })
       .onError(ctx => {
@@ -421,7 +430,7 @@ export class MultiplayerClient {
         if (!row.online) continue;
         nextName = row.displayName || 'Player';
         nextIdentity = id;
-        nextInstrument = 'loom';
+        nextInstrument = row.instrument || 'loom';
         nextCreature = 'lion';
         break;
       }
