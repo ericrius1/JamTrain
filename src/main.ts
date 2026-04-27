@@ -1,5 +1,6 @@
 import './style.css';
 import { BeginGate } from './hud/components/BeginGate';
+import { registerHandposeCacheWorker } from './game/handposeCache';
 
 window.addEventListener('vite:preloadError', () => {
   window.location.reload();
@@ -37,6 +38,7 @@ const beginGate = new BeginGate({
   },
 });
 stageWrap.appendChild(beginGate.el);
+void registerHandposeCacheWorker();
 
 // Let the intro hit the screen first, then warm the full Three/WebGPU runtime.
 requestAnimationFrame(() => {

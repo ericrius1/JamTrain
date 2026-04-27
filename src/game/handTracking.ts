@@ -1,4 +1,5 @@
 import { handDepthConfig } from './handDepth';
+import { waitForHandposeCacheWorker } from './handposeCache';
 import { HandFilter } from './handFilter';
 import { clamp, lerpVec, vec } from './math';
 import { makeSimulatedHands } from './pose';
@@ -164,6 +165,7 @@ export class HandTracker {
       document.body.appendChild(video);
       await video.play();
 
+      await waitForHandposeCacheWorker();
       await handposePreloadPromise?.catch(() => undefined);
       const { createHandpose } = await import('@svenflow/micro-handpose');
       this.detector = await createHandpose({
