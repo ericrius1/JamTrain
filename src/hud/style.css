@@ -774,9 +774,9 @@
 }
 
 /* Share-state ribbon — pinned to the top of the local preview so it always
-   tells the user whether the partner can see them. Two variants:
-   - default: danger color, "PARTNER CAN'T SEE YOU · TAP SHARE VIDEO"
-   - .is-sharing: patina color, "SHARING WITH PARTNER" */
+   tells the user whether video is private or shared. Two variants:
+   - default: soft privacy color, "Privacy mode · Partner sees video only if you share"
+   - .is-sharing: patina color, "Sharing video with partner" */
 .video-panel-share-warn {
   position: absolute;
   left: 0;
@@ -785,30 +785,40 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 4px 10px;
+  padding: 5px 12px 6px;
   text-align: center;
-  background: rgba(0, 0, 0, 0.62);
-  border-bottom: 1px solid var(--danger);
+  background:
+    linear-gradient(180deg, rgba(10, 26, 23, 0.86), rgba(5, 8, 8, 0.70));
+  border-bottom: 1px solid rgba(155, 216, 198, 0.78);
+  box-shadow:
+    inset 0 1px 0 rgba(225, 255, 248, 0.08),
+    0 2px 8px rgba(0, 0, 0, 0.24);
   pointer-events: none;
   z-index: 4;
   opacity: 1;
-  transition: opacity 0.2s ease, border-color 0.2s ease;
+  transition: opacity 0.2s ease, border-color 0.2s ease, background 0.2s ease;
 }
 .video-panel-share-warn.hidden {
   opacity: 0;
   pointer-events: none;
 }
 .video-panel-share-warn .heading {
-  font-family: 'IM Fell English SC', serif;
-  font-size: 10px;
-  letter-spacing: 0.18em;
-  color: var(--danger);
+  max-width: 100%;
+  font-family: 'IM Fell English', 'Fraunces', serif;
+  font-size: 12px;
+  line-height: 1.18;
+  letter-spacing: 0.08em;
+  color: #b8eadf;
+  text-wrap: balance;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 }
 .video-panel-share-warn.is-sharing {
   border-bottom-color: var(--patina);
+  background:
+    linear-gradient(180deg, rgba(12, 36, 29, 0.88), rgba(6, 14, 12, 0.72));
 }
 .video-panel-share-warn.is-sharing .heading {
-  color: var(--patina);
+  color: #c8f5e6;
 }
 
 /* Share button + popover ------------------------------------------------- */

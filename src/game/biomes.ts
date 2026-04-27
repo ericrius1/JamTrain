@@ -2,7 +2,7 @@ import { streamFor } from './seedRandom';
 import type { AtlasId } from './spriteAtlas';
 
 export type ForegroundBiomeId =
-  | 'hills' | 'forest' | 'meadow' | 'lake' | 'coast' | 'snowfield' | 'farmland';
+  | 'hills' | 'forest' | 'meadow' | 'lake' | 'coast' | 'snowfield' | 'farmland' | 'undersea';
 
 export type BackgroundBiomeId =
   | 'distantHills' | 'alpinePeaks' | 'lakePlains'
@@ -175,6 +175,23 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     birdBias: 1.0,
     birdPalette: 'default',
     timeOfDayBias: { dawn: 1.0, day: 1.2, dusk: 1.1, night: 0.8 },
+  },
+  undersea: {
+    id: 'undersea',
+    groundColor: { day: 0x0b6f70, night: 0x03141d },
+    ridge: { amplitude: 0.04, frequency: 0.7, baseY: 0.24 },
+    sprites: [
+      { atlas: 'kelp',     density: 0.78, yJitter: 0.020, sizeRange: [0.44, 0.78], layer: 'foreground' },
+      { atlas: 'seaGrass', density: 1.55, yJitter: 0.018, sizeRange: [0.22, 0.44], layer: 'foreground' },
+      { atlas: 'coralFan', density: 0.58, yJitter: 0.014, sizeRange: [0.24, 0.42], layer: 'foreground' },
+      { atlas: 'kelp',     density: 0.38, yJitter: 0.025, sizeRange: [0.34, 0.58], layer: 'midground' },
+      { atlas: 'coralFan', density: 0.72, yJitter: 0.018, sizeRange: [0.16, 0.32], layer: 'midground' },
+      { atlas: 'seaGrass', density: 0.95, yJitter: 0.016, sizeRange: [0.16, 0.30], layer: 'midground' },
+    ],
+    weatherBias: { rain: 0, snow: 0 },
+    birdBias: 0,
+    birdPalette: 'default',
+    timeOfDayBias: { dawn: 1.1, day: 1.25, dusk: 1.15, night: 0.85 },
   },
 };
 

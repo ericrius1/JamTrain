@@ -15,20 +15,22 @@ const HANDPOSE_WEIGHT_FILES = [
   'palm_detection_weights.bin',
 ] as const;
 
-// Fire the JS chunk import + the weight downloads once the scene is already
-// rendering. The returned promise tracks actual body consumption so startCamera
-// can wait on an in-flight warmup instead of duplicating the large requests.
+// Fire the JS chunk import + the weight downloads after the player starts the
+// game. The returned promise tracks actual body consumption so startCamera can
+// wait on an in-flight warmup instead of duplicating the large requests.
 let handposePreloadPromise: Promise<void> | undefined;
 export function preloadHandpose(): Promise<void> {
   if (handposePreloadPromise) return handposePreloadPromise;
-  handposePreloadPromise = Promise.all([
-    import('@svenflow/micro-handpose').then(() => undefined),
-    ...HANDPOSE_WEIGHT_FILES.map(async file => {
-      const res = await fetch(HANDPOSE_WEIGHTS_URL + file, { credentials: 'omit' });
-      if (!res.ok) throw new Error(`Failed to preload ${file}: ${res.status}`);
-      await res.arrayBuffer();
-    }),
-  ]).then(() => undefined);
+  handposePreloadPromise = waitForHandposeCacheWorker().then(() =>
+    Promise.all([
+      import('@svenflow/micro-handpose').then(() => undefined),
+      ...HANDPOSE_WEIGHT_FILES.map(async file => {
+        const res = await fetch(HANDPOSE_WEIGHTS_URL + file, { credentials: 'omit' });
+        if (!res.ok) throw new Error(`Failed to preload ${file}: ${res.status}`);
+        await res.arrayBuffer();
+      }),
+    ]).then(() => undefined)
+  );
   handposePreloadPromise.catch(() => {
     handposePreloadPromise = undefined;
   });

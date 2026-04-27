@@ -1,8 +1,10 @@
 export type Handedness = 'left' | 'right';
 
 export type FingerName = 'thumb' | 'index' | 'middle' | 'ring' | 'pinky';
+export type FingerJointName = 'base' | 'mid' | 'tip';
 
 export const fingerNames: FingerName[] = ['thumb', 'index', 'middle', 'ring', 'pinky'];
+export const fingerJointNames: FingerJointName[] = ['base', 'mid', 'tip'];
 export const handednesses: Handedness[] = ['left', 'right'];
 
 export type Vec3Data = {

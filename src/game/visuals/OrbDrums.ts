@@ -32,9 +32,9 @@ export const ORB_DRUMS_DEFS = {
   rippleDecay:     { default: 1.35,  min: 0.2,  max: 4,    step: 0.05,  label: 'ripple decay s' },
   rippleSigma:     { default: 0.42,  min: 0.05, max: 1.5,  step: 0.01,  label: 'ripple sharpness' },
   rippleGlow:      { default: 1.45,  min: 0,    max: 4,    step: 0.05,  label: 'ripple glow' },
-  hitDistance:     { default: 0.040, min: 0,    max: 0.12, step: 0.001, label: 'hit margin' },
-  palmRadius:      { default: 0.060, min: 0.02, max: 0.12, step: 0.001, label: 'palm radius' },
-  fingerRadius:    { default: 0.026, min: 0.01, max: 0.08, step: 0.001, label: 'finger radius' },
+  hitDistance:     { default: 0.055, min: 0,    max: 0.14, step: 0.001, label: 'hit margin' },
+  palmRadius:      { default: 0.080, min: 0.02, max: 0.14, step: 0.001, label: 'palm radius' },
+  fingerRadius:    { default: 0.038, min: 0.01, max: 0.10, step: 0.001, label: 'finger radius' },
   hitCooldown:     { default: 0.10,  min: 0.03, max: 0.6,  step: 0.005, label: 'hit cooldown s' },
   hitVelMin:       { default: 0.02,  min: 0,    max: 1,    step: 0.005, label: 'hit vel min m/s' },
   anchorSmoothing: { default: 4.0,   min: 0.2,  max: 12,   step: 0.1,   label: 'anchor smoothing s' },
@@ -131,6 +131,7 @@ type Orb = {
 
 type OrbHitCandidate = {
   contact: HandContactPoint;
+  point: THREE.Vector3;
   speed: number;
 };
 
@@ -138,6 +139,9 @@ const _palmTmp = new THREE.Vector3();
 const _hitDir = new THREE.Vector3();
 const _contactDelta = new THREE.Vector3();
 const _orbCenter = new THREE.Vector3();
+const _strikePoint = new THREE.Vector3();
+const _segment = new THREE.Vector3();
+const _pointToStart = new THREE.Vector3();
 
 export class OrbDrums implements PlayerVisual {
   readonly mesh: THREE.Group;
@@ -152,7 +156,10 @@ export class OrbDrums implements PlayerVisual {
   private collisionBVH = new OrbCollisionBVH(ORB_COUNT);
   private previousContacts = new Map<string, THREE.Vector3>();
   private contactHits: number[] = [];
+  private currentContactHits: number[] = [];
   private hitCandidates: (OrbHitCandidate | null)[] = Array.from({ length: ORB_COUNT }, () => null);
+  private activeContactKeys = new Set<string>();
+  private currentContactKeys = new Set<string>();
   private fallbackContacts: HandContactPoint[] = [
     { id: 'left:palm', hand: 'left', kind: 'palm', position: new THREE.Vector3() },
     { id: 'right:palm', hand: 'right', kind: 'palm', position: new THREE.Vector3() },
@@ -262,7 +269,7 @@ export class OrbDrums implements PlayerVisual {
     this.smoothedEnergy += (voice.energy - this.smoothedEnergy) * (1 - Math.exp(-delta * 5));
 
     // Per-orb update: bob and BVH sync. Hit detection runs once after all
-    // centers are current so both palms and fingertips query the same tree.
+    // centers are current so palms and finger joints query the same tree.
     for (let i = 0; i < ORB_COUNT; i += 1) {
       const orb = this.orbs[i];
       // Subtle bob — each orb has its own phase.
@@ -319,32 +326,43 @@ export class OrbDrums implements PlayerVisual {
 
   private processContactHits(contacts: readonly HandContactPoint[], delta: number): void {
     this.hitCandidates.fill(null);
+    this.currentContactKeys.clear();
 
     for (const contact of contacts) {
-      const previous = this.previousContacts.get(contact.id);
+      let previous = this.previousContacts.get(contact.id);
       if (!previous) {
-        this.previousContacts.set(contact.id, contact.position.clone());
-        continue;
+        previous = contact.position.clone();
+        this.previousContacts.set(contact.id, previous);
       }
 
       const travel = _contactDelta.copy(contact.position).sub(previous).length();
       const speed = travel / delta;
       this.contactHits.length = 0;
+      this.currentContactHits.length = 0;
 
       const contactRadius = contact.kind === 'palm' ? this.params.palmRadius : this.params.fingerRadius;
-      this.collisionBVH.collectSweptPointHits(
-        previous,
-        contact.position,
-        this.params.orbRadius + contactRadius + this.params.hitDistance,
-        this.contactHits,
-      );
-      previous.copy(contact.position);
+      const hitRadius = this.params.orbRadius + contactRadius + this.params.hitDistance;
+      this.collisionBVH.collectPointHits(contact.position, hitRadius, this.currentContactHits);
+      this.collisionBVH.collectSweptPointHits(previous, contact.position, hitRadius, this.contactHits);
 
-      if (speed <= this.params.hitVelMin) continue;
-
-      for (const orbIndex of this.contactHits) {
-        this.registerHitCandidate(orbIndex, contact, speed);
+      for (const orbIndex of this.currentContactHits) {
+        this.currentContactKeys.add(this.contactKey(contact.id, orbIndex));
       }
+
+      const fastEnough = speed > this.params.hitVelMin;
+      for (const orbIndex of this.contactHits) {
+        const key = this.contactKey(contact.id, orbIndex);
+        const currentlyOverlapping = this.currentContactHits.includes(orbIndex);
+        const entered = currentlyOverlapping && !this.activeContactKeys.has(key);
+        if (!entered && !fastEnough) continue;
+
+        const point = currentlyOverlapping
+          ? contact.position
+          : this.closestSweepPoint(orbIndex, previous, contact.position, _strikePoint);
+        this.registerHitCandidate(orbIndex, contact, speed, point);
+      }
+
+      previous.copy(contact.position);
     }
 
     for (let i = 0; i < ORB_COUNT; i += 1) {
@@ -354,11 +372,14 @@ export class OrbDrums implements PlayerVisual {
       if (this.elapsed - orb.lastHitAt <= this.params.hitCooldown) continue;
       this.fireHit(i, candidate.contact, candidate.speed);
     }
+
+    this.activeContactKeys.clear();
+    for (const key of this.currentContactKeys) this.activeContactKeys.add(key);
   }
 
-  private registerHitCandidate(orbIndex: number, contact: HandContactPoint, speed: number): void {
+  private registerHitCandidate(orbIndex: number, contact: HandContactPoint, speed: number, point: THREE.Vector3): void {
     const existing = this.hitCandidates[orbIndex];
-    if (!existing || speed > existing.speed) this.hitCandidates[orbIndex] = { contact, speed };
+    if (!existing || speed > existing.speed) this.hitCandidates[orbIndex] = { contact, point: point.clone(), speed };
   }
 
   private fireHit(orbIndex: number, contact: HandContactPoint, speed: number): void {
@@ -366,7 +387,8 @@ export class OrbDrums implements PlayerVisual {
     orb.lastHitAt = this.elapsed;
 
     this.collisionBVH.getPoint(orbIndex, _orbCenter);
-    _hitDir.copy(contact.position).sub(_orbCenter).normalize();
+    const candidate = this.hitCandidates[orbIndex];
+    _hitDir.copy(candidate?.point ?? contact.position).sub(_orbCenter).normalize();
     if (!Number.isFinite(_hitDir.x) || _hitDir.lengthSq() < 1e-6) _hitDir.set(0, 1, 0);
 
     const slot = orb.rippleCursor % MAX_RIPPLES;
@@ -378,6 +400,25 @@ export class OrbDrums implements PlayerVisual {
     if (this.onHitCallback) {
       this.onHitCallback({ orbIndex, frequency: ORB_HZ[orbIndex], velocity });
     }
+  }
+
+  private contactKey(contactId: string, orbIndex: number): string {
+    return `${contactId}:${orbIndex}`;
+  }
+
+  private closestSweepPoint(
+    orbIndex: number,
+    from: THREE.Vector3,
+    to: THREE.Vector3,
+    out: THREE.Vector3,
+  ): THREE.Vector3 {
+    this.collisionBVH.getPoint(orbIndex, _orbCenter);
+    _segment.copy(to).sub(from);
+    const lenSq = _segment.lengthSq();
+    if (lenSq <= 1e-8) return out.copy(to);
+    _pointToStart.copy(_orbCenter).sub(from);
+    const t = THREE.MathUtils.clamp(_pointToStart.dot(_segment) / lenSq, 0, 1);
+    return out.copy(from).addScaledVector(_segment, t);
   }
 
   private makeOrbColorNode(

@@ -15,6 +15,7 @@ import { SkyLife } from './skyLife';
 import { timeOfDayPhase } from './biomes';
 import { Weather } from './weather';
 import { CloudCanopy } from './cloudCanopy';
+import { UnderwaterRealm } from './underwaterRealm';
 
 const FG_OPTIONS: Record<string, string> = (() => {
   const o: Record<string, string> = { auto: 'auto' };
@@ -47,6 +48,7 @@ type Atmosphere = {
   background: THREE.Color;
   daylight: number;
   night: number;
+  underwater: number;
 };
 
 export type SceneryOptions = {
@@ -107,12 +109,14 @@ export class ScenerySystem {
   private skyLife!: SkyLife;
   private weather!: Weather;
   private cloudCanopy!: CloudCanopy;
+  private underwater!: UnderwaterRealm;
   private onThunder?: (delay: number) => void;
   private lastCycle = 0;
   private atmosphere = {
     background: new THREE.Color(0x10202d),
     daylight: 1,
     night: 0,
+    underwater: 0,
   };
   private roomSeed: number;
 
@@ -166,6 +170,8 @@ export class ScenerySystem {
     this.layers.build();
     this.water = new WaterStrip(this.scene);
     this.water.build();
+    this.underwater = new UnderwaterRealm(this.scene, this.roomSeed);
+    this.underwater.build();
     this.skyLife = new SkyLife(
       this.scene,
       this.atlas,
@@ -201,6 +207,7 @@ export class ScenerySystem {
     this.scheduler.setSeed(seed);
     this.layers?.setSeed(seed);
     this.skyLife?.setSeed(seed);
+    this.underwater?.setSeed(seed);
   }
 
   getRoomSeed(): number {
@@ -242,14 +249,16 @@ export class ScenerySystem {
     this.moonRadiusInv.value = 1 / this.moonRadius.value;
     this.skyTravel.value += delta * speed;
 
+    const fg = this.scheduler.foreground();
+    const underwater = biomeWindowWeight(fg, 'undersea');
+
     this.updateBackground(delta, speed, daylight);
     this.layers?.update(delta, speed, { daylight, nightAmount: night });
     if (this.water) {
-      const fg = this.scheduler.foreground();
       this.water.update(fg.t < 0.5 ? fg.from : fg.to, delta);
     }
+    this.underwater?.update(delta, { presence: underwater, daylight, trainSpeed: speed });
     if (this.skyLife) {
-      const fg = this.scheduler.foreground();
       const bg = this.scheduler.background();
       const currentFg = fg.t < 0.5 ? fg.from : fg.to;
       const currentBg = bg.t < 0.5 ? bg.from : bg.to;
@@ -269,13 +278,16 @@ export class ScenerySystem {
     const duskColor = new THREE.Color(0x7a3f2e);
     const nightColor = new THREE.Color(0x070503);
     this.atmosphere.background.copy(nightColor).lerp(dayColor, daylight).lerp(duskColor, goldenHour * 0.35);
+    this.atmosphere.background.lerp(new THREE.Color(0x031b2a), underwater * 0.82);
     this.atmosphere.daylight = daylight;
     this.atmosphere.night = night;
+    this.atmosphere.underwater = underwater;
     return this.atmosphere;
   }
 
   dispose(): void {
     this.registered?.dispose();
+    this.underwater?.dispose();
   }
 
   private createSky(): void {
@@ -607,6 +619,13 @@ function lerpHexInto(out: THREE.Color, fromHex: number, toHex: number, t: number
   const tg = ((toHex >> 8) & 0xff) / 255;
   const tb = (toHex & 0xff) / 255;
   out.setRGB(fr + (tr - fr) * t, fg + (tg - fg) * t, fb + (tb - fb) * t);
+}
+
+function biomeWindowWeight(
+  window: { from: { id: ForegroundBiomeId }; to: { id: ForegroundBiomeId }; t: number },
+  id: ForegroundBiomeId,
+): number {
+  return (window.from.id === id ? 1 - window.t : 0) + (window.to.id === id ? window.t : 0);
 }
 
 function getMoonPhase(date: Date): { phase: number; name: string } {

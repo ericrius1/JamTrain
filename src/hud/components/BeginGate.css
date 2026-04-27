@@ -116,12 +116,15 @@
 }
 
 /* Title block — anchored at bottom center of the stage so the artwork above
-   stays unoccluded and the call-to-action sits on the natural reading axis. */
+   stays unoccluded and the call-to-action sits on the natural reading axis.
+   Stretches across the stage and centers its children with flexbox so the
+   `begin-fade-down` animation (which writes to `transform`) doesn't fight a
+   `translateX(-50%)` for horizontal centering. */
 .begin-title-block {
   position: absolute;
-  left: 50%;
+  left: 0;
+  right: 0;
   bottom: 60px;
-  transform: translateX(-50%);
   text-align: center;
   display: flex;
   flex-direction: column;

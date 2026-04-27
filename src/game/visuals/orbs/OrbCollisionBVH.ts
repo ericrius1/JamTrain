@@ -45,10 +45,28 @@ export class OrbCollisionBVH {
     const r2 = radius * radius;
     this.bvh.shapecast({
       intersectsBounds: box => box.intersectsSphere(_querySphere),
-      intersectsPoint: pointIndex => {
+      intersectsPoint: this.makePointVisitor(pointIndex => {
         if (this.distanceSqToSegment(pointIndex, from, to) <= r2) out.push(pointIndex);
         return false;
-      },
+      }),
+    });
+  }
+
+  collectPointHits(point: THREE.Vector3, radius: number, out: number[]): void {
+    const r2 = radius * radius;
+    _querySphere.center.copy(point);
+    _querySphere.radius = radius;
+
+    this.bvh.shapecast({
+      intersectsBounds: box => box.intersectsSphere(_querySphere),
+      intersectsPoint: this.makePointVisitor(pointIndex => {
+        const k = pointIndex * 3;
+        const dx = this.positions[k] - point.x;
+        const dy = this.positions[k + 1] - point.y;
+        const dz = this.positions[k + 2] - point.z;
+        if (dx * dx + dy * dy + dz * dz <= r2) out.push(pointIndex);
+        return false;
+      }),
     });
   }
 
@@ -74,5 +92,19 @@ export class OrbCollisionBVH {
     const dy = this.positions[k + 1] - _closest.y;
     const dz = this.positions[k + 2] - _closest.z;
     return dx * dx + dy * dy + dz * dz;
+  }
+
+  private makePointVisitor(
+    visit: (pointIndex: number) => boolean | void,
+  ): (pointIndex: number, contained: boolean, depth: number) => boolean | void {
+    return ((first: number | THREE.Vector3, second?: number | boolean) => {
+      const pointIndex = typeof first === 'number'
+        ? first
+        : typeof second === 'number'
+          ? second
+          : -1;
+      if (pointIndex < 0 || pointIndex >= this.count) return false;
+      return visit(pointIndex);
+    }) as (pointIndex: number, contained: boolean, depth: number) => boolean | void;
   }
 }

@@ -472,9 +472,13 @@ function colorFromBiomeBand(groundDay: THREE.Color, band: SpriteBand, rand: () =
     c.lerp(new THREE.Color(0x5f7f47), 0.24);
   } else if (band.atlas === 'reeds' || band.atlas === 'cattail') {
     c.lerp(new THREE.Color(0x8f8650), 0.35);
+  } else if (band.atlas === 'kelp' || band.atlas === 'seaGrass') {
+    c.set(0x1d8f78).lerp(new THREE.Color(0x62e2b6), 0.30 + rand() * 0.25);
+  } else if (band.atlas === 'coralFan') {
+    c.set(rand() < 0.5 ? 0xd66c70 : 0xce8f4f).lerp(new THREE.Color(0x76e1da), rand() * 0.18);
   }
   c.offsetHSL((rand() - 0.5) * 0.035, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.08);
-  const baseMul = band.layer === 'foreground' ? 0.50 : 0.66;
+  const baseMul = isUnderwaterAtlas(band.atlas) ? (band.layer === 'foreground' ? 0.74 : 0.58) : band.layer === 'foreground' ? 0.50 : 0.66;
   const v = 0.86 + rand() * 0.30;
   return c.multiplyScalar(baseMul * v);
 }
@@ -645,6 +649,15 @@ function scaleProfileFor(atlas: AtlasId, rand: () => number): { width: number; h
   if (atlas === 'reeds' || atlas === 'cattail') {
     return { width: 0.84 + rand() * 0.32, height: 0.90 + rand() * 0.24 };
   }
+  if (atlas === 'kelp') {
+    return { width: 0.62 + rand() * 0.22, height: 1.16 + rand() * 0.42 };
+  }
+  if (atlas === 'seaGrass') {
+    return { width: 0.92 + rand() * 0.28, height: 0.84 + rand() * 0.22 };
+  }
+  if (atlas === 'coralFan') {
+    return { width: 1.00 + rand() * 0.30, height: 0.82 + rand() * 0.24 };
+  }
   return { width: 0.94 + rand() * 0.12, height: 0.96 + rand() * 0.10 };
 }
 
@@ -664,6 +677,14 @@ function spriteVertexShade(atlas: AtlasId, localX: number, localY: number): numb
   if (atlas === 'reeds' || atlas === 'cattail') {
     return 0.82 + clamp01(localY) * 0.24;
   }
+  if (atlas === 'kelp' || atlas === 'seaGrass') {
+    const waterLift = 0.70 + clamp01(localY) * 0.36;
+    const edgeShade = 0.92 + Math.sin(localX * 18) * 0.04;
+    return waterLift * edgeShade;
+  }
+  if (atlas === 'coralFan') {
+    return 0.78 + clamp01(localY) * 0.18 + Math.abs(localX) * 0.04;
+  }
   return 1;
 }
 
@@ -671,6 +692,9 @@ function vegetationWindFactor(atlas: AtlasId): number {
   if (isEvergreen(atlas)) return 0.65;
   if (isBroadleaf(atlas)) return 1.0;
   if (atlas === 'reeds' || atlas === 'cattail') return 1.25;
+  if (atlas === 'kelp') return 1.55;
+  if (atlas === 'seaGrass') return 1.35;
+  if (atlas === 'coralFan') return 0.45;
   return 0;
 }
 
@@ -684,6 +708,10 @@ function isBroadleaf(atlas: AtlasId): boolean {
 
 function isTreeAtlas(atlas: AtlasId): boolean {
   return isEvergreen(atlas) || isBroadleaf(atlas);
+}
+
+function isUnderwaterAtlas(atlas: AtlasId): boolean {
+  return atlas === 'kelp' || atlas === 'seaGrass' || atlas === 'coralFan';
 }
 
 function clamp01(v: number): number {

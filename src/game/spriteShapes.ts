@@ -173,6 +173,64 @@ function spritePolygons(id: AtlasId): Polygon[] {
         ellipse(0.42, 0.62, 0.035, 0.10, 8),
         ellipse(0.58, 0.52, 0.030, 0.09, 8),
       ];
+    case 'kelp':
+      return [
+        reed(0.34, 0.00, 0.88),
+        reed(0.49, 0.00, 0.96),
+        reed(0.64, 0.00, 0.82),
+        ellipse(0.28, 0.27, 0.08, 0.030, 8),
+        ellipse(0.43, 0.45, 0.09, 0.032, 8),
+        ellipse(0.57, 0.35, 0.08, 0.030, 8),
+        ellipse(0.71, 0.54, 0.08, 0.030, 8),
+        ellipse(0.42, 0.70, 0.07, 0.028, 8),
+        ellipse(0.61, 0.76, 0.07, 0.028, 8),
+      ];
+    case 'seaGrass':
+      return [
+        reed(0.18, 0.00, 0.42),
+        reed(0.26, 0.00, 0.58),
+        reed(0.34, 0.00, 0.48),
+        reed(0.43, 0.00, 0.68),
+        reed(0.52, 0.00, 0.56),
+        reed(0.61, 0.00, 0.72),
+        reed(0.70, 0.00, 0.50),
+        reed(0.80, 0.00, 0.38),
+      ];
+    case 'coralFan':
+      return [
+        reed(0.50, 0.00, 0.72),
+        branch(0.50, 0.28, 0.28, 0.56, 0.018),
+        branch(0.50, 0.34, 0.72, 0.60, 0.018),
+        branch(0.48, 0.47, 0.34, 0.78, 0.014),
+        branch(0.52, 0.45, 0.70, 0.84, 0.014),
+        branch(0.42, 0.38, 0.18, 0.70, 0.012),
+        branch(0.58, 0.38, 0.84, 0.74, 0.012),
+        ellipse(0.28, 0.56, 0.040, 0.040, 8),
+        ellipse(0.72, 0.60, 0.040, 0.040, 8),
+        ellipse(0.34, 0.78, 0.034, 0.034, 8),
+        ellipse(0.70, 0.84, 0.034, 0.034, 8),
+        ellipse(0.18, 0.70, 0.030, 0.030, 8),
+        ellipse(0.84, 0.74, 0.030, 0.030, 8),
+      ];
+    case 'fishTiny':
+      return [
+        ellipse(0.52, 0.50, 0.22, 0.11, 12),
+        tri(0.31, 0.50, 0.13, 0.36, 0.15, 0.64),
+        tri(0.56, 0.43, 0.46, 0.25, 0.66, 0.39),
+      ];
+    case 'rayFish':
+      return [
+        poly([0.10, 0.50], [0.38, 0.28], [0.88, 0.44], [0.52, 0.58], [0.12, 0.72]),
+        tri(0.82, 0.48, 0.98, 0.42, 0.90, 0.55),
+      ];
+    case 'jellyfish':
+      return [
+        halfEllipse(0.50, 0.45, 0.23, 0.22, 12),
+        reed(0.36, 0.08, 0.45),
+        reed(0.45, 0.00, 0.45),
+        reed(0.54, 0.03, 0.45),
+        reed(0.63, 0.10, 0.45),
+      ];
     case 'birdA':
     case 'seabirdA':
       return [
@@ -263,4 +321,18 @@ function halfEllipse(cx: number, y0: number, rx: number, ry: number, steps: numb
 function reed(x: number, y0: number, y1: number): Polygon {
   const w = 0.012;
   return poly([x - w, y0], [x + w, y0], [x + w * 0.5, y1], [x - w * 0.5, y1]);
+}
+
+function branch(x0: number, y0: number, x1: number, y1: number, w: number): Polygon {
+  const dx = x1 - x0;
+  const dy = y1 - y0;
+  const len = Math.max(0.0001, Math.hypot(dx, dy));
+  const nx = -dy / len * w;
+  const ny = dx / len * w;
+  return poly(
+    [x0 - nx, y0 - ny],
+    [x0 + nx, y0 + ny],
+    [x1 + nx * 0.6, y1 + ny * 0.6],
+    [x1 - nx * 0.6, y1 - ny * 0.6],
+  );
 }

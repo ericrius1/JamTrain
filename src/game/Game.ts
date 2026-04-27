@@ -23,7 +23,7 @@ import { HumanoidRig } from './rig/HumanoidRig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { hashString } from './seedRandom';
-import { fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
+import { fingerJointNames, fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 
@@ -73,13 +73,16 @@ function makeHandContactPoints(): HandContactPoint[] {
       position: new THREE.Vector3(),
     });
     for (const finger of fingerNames) {
-      contacts.push({
-        id: `${hand}:${finger}:tip`,
-        hand,
-        kind: 'fingertip',
-        finger,
-        position: new THREE.Vector3(),
-      });
+      for (const joint of fingerJointNames) {
+        contacts.push({
+          id: `${hand}:${finger}:${joint}`,
+          hand,
+          kind: 'finger',
+          finger,
+          joint,
+          position: new THREE.Vector3(),
+        });
+      }
     }
   }
   return contacts;
@@ -922,7 +925,9 @@ export class Game {
     for (const hand of handednesses) {
       rig.getPalmCenterWorld(hand, contacts[cursor++].position);
       for (const finger of fingerNames) {
-        rig.getFingertipWorld(hand, finger, contacts[cursor++].position);
+        for (const joint of fingerJointNames) {
+          rig.getFingerJointWorld(hand, finger, joint, contacts[cursor++].position);
+        }
       }
     }
 
@@ -955,18 +960,25 @@ export class Game {
     }
   }
 
-  private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number }): void {
+  private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number; underwater?: number }): void {
+    const underwater = atmosphere.underwater ?? 0;
     this.scene.background = atmosphere.background;
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(atmosphere.background);
 
     if (this.ambientLight) {
-      this.ambientLight.color.set(0x3f2a1d).lerp(new THREE.Color(0xffc37a), atmosphere.daylight * 0.62);
-      this.ambientLight.intensity = 0.38 + atmosphere.daylight * 0.48 + atmosphere.night * 0.14;
+      this.ambientLight.color
+        .set(0x3f2a1d)
+        .lerp(new THREE.Color(0xffc37a), atmosphere.daylight * 0.62)
+        .lerp(new THREE.Color(0x2ac9d3), underwater * 0.82);
+      this.ambientLight.intensity = 0.38 + atmosphere.daylight * 0.48 + atmosphere.night * 0.14 + underwater * 0.16;
     }
     if (this.keyLight) {
-      this.keyLight.color.set(0x9d5f2f).lerp(new THREE.Color(0xffc05a), atmosphere.daylight);
-      this.keyLight.intensity = 0.58 + atmosphere.daylight * 1.35 + atmosphere.night * 0.18;
-      this.keyLight.position.set(-2.8, 3.1 + atmosphere.daylight * 1.5, 3.5);
+      this.keyLight.color
+        .set(0x9d5f2f)
+        .lerp(new THREE.Color(0xffc05a), atmosphere.daylight)
+        .lerp(new THREE.Color(0x8dfcff), underwater * 0.78);
+      this.keyLight.intensity = 0.58 + atmosphere.daylight * 1.35 + atmosphere.night * 0.18 - underwater * 0.34;
+      this.keyLight.position.set(-2.8, 3.1 + atmosphere.daylight * 1.5 + underwater * 0.55, 3.5);
     }
   }
 

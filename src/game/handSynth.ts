@@ -390,10 +390,15 @@ export class HandSynthEngine {
     if (this.pendingInstruments[player] !== 'chime') return;
     const chime = this.chimeVoices[player];
     if (!chime) return;
+    if (!Number.isFinite(frequency) || frequency <= 0) return;
     const v = clamp(velocity, 0, 1);
     // Velocity floor at 0.4 so a soft brush still gives an audible bell.
     const synthVel = 0.4 + v * 0.6;
     try {
+      const now = this.tone.now();
+      chime.dryGain.gain.cancelScheduledValues?.(now);
+      chime.dryGain.gain.setValueAtTime?.(0.95, now);
+      chime.wetSend.gain.rampTo(clamp(0.22 + chime.energy * 0.6, 0, 1) * this.params.reverbWetMax, 0.02);
       chime.synth.triggerAttackRelease(frequency, '4n', undefined, synthVel);
     } catch (err) {
       console.warn('[handSynth] chime trigger failed', err);

@@ -121,6 +121,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     },
     { isCreatureId },
     { isInstrumentId },
+    { preloadHandpose },
   ] = await Promise.all([
     import('./game/Game'),
     import('./hud/Hud'),
@@ -128,6 +129,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     import('./game/router'),
     import('./game/creatures'),
     import('./game/instruments'),
+    import('./game/handTracking'),
   ]);
 
   const avPrefs = loadPrefs({
@@ -373,6 +375,9 @@ async function createRuntime(): Promise<RuntimeApi> {
   async function begin(conductorName: string): Promise<void> {
     hud.setConductorName(conductorName);
     game.setDisplayName(conductorName);
+    void preloadHandpose().catch(err => {
+      console.warn('[jam-train] handpose preload failed', err);
+    });
 
     await game.startAudio();
     game.connectMultiplayer();

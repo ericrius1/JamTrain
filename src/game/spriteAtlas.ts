@@ -14,7 +14,9 @@ export type AtlasId =
   | 'cloudSmall' | 'cloudMed' | 'cloudLarge'
   | 'hotAirBalloon'
   | 'shootingStarTrail'
-  | 'whaleSpout' | 'whaleTail';
+  | 'whaleSpout' | 'whaleTail'
+  | 'kelp' | 'seaGrass' | 'coralFan'
+  | 'fishTiny' | 'rayFish' | 'jellyfish';
 
 export interface AtlasEntry {
   rect: THREE.Vector4;       // u0, v0, u1, v1 in [0,1]
@@ -81,6 +83,12 @@ export class SpriteAtlas {
       { id: 'shootingStarTrail', draw: drawShootingStarTrail, anchor: [0.5, 0.5] },
       { id: 'whaleSpout',        draw: drawWhaleSpout, anchor: [0.5, 1.0] },
       { id: 'whaleTail',         draw: drawWhaleTail, anchor: [0.5, 1.0] },
+      { id: 'kelp',              draw: drawKelp },
+      { id: 'seaGrass',          draw: drawSeaGrass },
+      { id: 'coralFan',          draw: drawCoralFan },
+      { id: 'fishTiny',          draw: drawFishTiny, anchor: [0.5, 0.5] },
+      { id: 'rayFish',           draw: drawRayFish, anchor: [0.5, 0.5] },
+      { id: 'jellyfish',         draw: drawJellyfish, anchor: [0.5, 0.5] },
     ];
 
     const entries = {} as Record<AtlasId, AtlasEntry>;
@@ -495,4 +503,120 @@ function drawWhaleTail(ctx: CanvasRenderingContext2D, w: number, h: number): voi
   ctx.quadraticCurveTo(w * 0.80, h * 0.70, w * 0.50, h * 1.00);
   ctx.closePath();
   ctx.fill();
+}
+
+function drawKelp(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = w * 0.05;
+  for (const x of [0.34, 0.48, 0.63]) {
+    ctx.beginPath();
+    ctx.moveTo(w * x, h);
+    ctx.bezierCurveTo(w * (x - 0.10), h * 0.72, w * (x + 0.10), h * 0.44, w * (x - 0.02), h * 0.12);
+    ctx.stroke();
+    for (let i = 0; i < 4; i += 1) {
+      const yy = 0.20 + i * 0.17;
+      ctx.beginPath();
+      ctx.ellipse(w * (x + (i % 2 === 0 ? 0.08 : -0.08)), h * yy, w * 0.07, h * 0.025, (i % 2 === 0 ? -0.65 : 0.65), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawSeaGrass(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  const blades = 11;
+  for (let i = 0; i < blades; i += 1) {
+    const x = 0.14 + (i / (blades - 1)) * 0.72;
+    const lean = Math.sin(i * 1.9) * 0.08;
+    const top = 0.34 + Math.abs(Math.sin(i * 2.7)) * 0.30;
+    ctx.beginPath();
+    ctx.moveTo(w * (x - 0.018), h);
+    ctx.lineTo(w * (x + 0.018), h);
+    ctx.lineTo(w * (x + lean), h * top);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+function drawCoralFan(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = w * 0.035;
+  const baseX = w * 0.5;
+  const baseY = h * 0.96;
+  const branches: Array<[number, number, number, number]> = [
+    [0.50, 0.94, 0.50, 0.28],
+    [0.50, 0.70, 0.26, 0.42],
+    [0.50, 0.66, 0.74, 0.38],
+    [0.48, 0.52, 0.32, 0.22],
+    [0.52, 0.52, 0.70, 0.18],
+    [0.42, 0.43, 0.18, 0.24],
+    [0.58, 0.40, 0.84, 0.28],
+  ];
+  for (const [x0, y0, x1, y1] of branches) {
+    ctx.beginPath();
+    ctx.moveTo(w * x0, h * y0);
+    ctx.quadraticCurveTo(baseX * 0.96 + w * (x1 - 0.5) * 0.22, baseY * 0.55 + h * y1 * 0.25, w * x1, h * y1);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(w * x1, h * y1, w * 0.038, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawFishTiny(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.ellipse(w * 0.52, h * 0.50, w * 0.22, h * 0.11, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(w * 0.30, h * 0.50);
+  ctx.lineTo(w * 0.12, h * 0.36);
+  ctx.lineTo(w * 0.15, h * 0.64);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(w * 0.56, h * 0.42);
+  ctx.lineTo(w * 0.46, h * 0.25);
+  ctx.lineTo(w * 0.66, h * 0.39);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawRayFish(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(w * 0.10, h * 0.50);
+  ctx.quadraticCurveTo(w * 0.42, h * 0.20, w * 0.88, h * 0.44);
+  ctx.quadraticCurveTo(w * 0.50, h * 0.58, w * 0.12, h * 0.72);
+  ctx.quadraticCurveTo(w * 0.24, h * 0.58, w * 0.10, h * 0.50);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(w * 0.82, h * 0.48);
+  ctx.lineTo(w * 0.98, h * 0.42);
+  ctx.lineTo(w * 0.90, h * 0.55);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawJellyfish(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.ellipse(w * 0.50, h * 0.35, w * 0.23, h * 0.18, 0, Math.PI, 0);
+  ctx.lineTo(w * 0.73, h * 0.45);
+  ctx.quadraticCurveTo(w * 0.58, h * 0.58, w * 0.27, h * 0.45);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = w * 0.024;
+  ctx.lineCap = 'round';
+  for (const [x, phase] of [[0.36, 0], [0.45, 1], [0.54, 2], [0.63, 3]] as const) {
+    ctx.beginPath();
+    ctx.moveTo(w * x, h * 0.48);
+    ctx.bezierCurveTo(w * (x - 0.05), h * 0.64, w * (x + 0.06), h * 0.76, w * (x + Math.sin(phase) * 0.06), h * 0.92);
+    ctx.stroke();
+  }
 }

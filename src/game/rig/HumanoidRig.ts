@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import type { FingerName, Handedness, PlayerPose } from '../types';
+import type { FingerJointName, FingerName, Handedness, PlayerPose } from '../types';
 import type { CreatureId } from '../creatures';
 import { createCreatureLighting, makeAccentMaterial, type CreatureLighting } from '../creatureShading';
 import { Skeleton } from './skeleton';
@@ -76,6 +76,15 @@ export class HumanoidRig {
 
   getFingertipWorld(hand: Handedness, finger: FingerName, target?: THREE.Vector3): THREE.Vector3 {
     return this.skeleton.getFingertipWorld(hand, finger, target);
+  }
+
+  getFingerJointWorld(
+    hand: Handedness,
+    finger: FingerName,
+    joint: FingerJointName,
+    target?: THREE.Vector3,
+  ): THREE.Vector3 {
+    return this.skeleton.getFingerJointWorld(hand, finger, joint, target);
   }
 
   getAllFingertips(): THREE.Vector3[] {

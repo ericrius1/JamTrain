@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { handDepthConfig } from '../handDepth';
-import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PlayerPose, type Vec3Data } from '../types';
+import { fingerNames, handednesses, type FingerJointName, type FingerName, type HandPose, type Handedness, type PlayerPose, type Vec3Data } from '../types';
 
 type Segment = { mesh: THREE.Mesh; radius: number };
 
@@ -50,6 +50,7 @@ export class Skeleton {
   private seatZ: number;
   private facing: number;
   private fingertipWorld = new Map<string, THREE.Vector3>();
+  private fingerJointWorld = new Map<string, THREE.Vector3>();
 
   constructor(opts: SkeletonOptions, seatIndex: number) {
     this.seatIndex = seatIndex;
@@ -113,7 +114,16 @@ export class Skeleton {
   }
 
   getFingertipWorld(hand: Handedness, finger: FingerName, target = new THREE.Vector3()): THREE.Vector3 {
-    const source = this.fingertipWorld.get(`${hand}:${finger}`);
+    return this.getFingerJointWorld(hand, finger, 'tip', target);
+  }
+
+  getFingerJointWorld(
+    hand: Handedness,
+    finger: FingerName,
+    joint: FingerJointName,
+    target = new THREE.Vector3(),
+  ): THREE.Vector3 {
+    const source = this.fingerJointWorld.get(`${hand}:${finger}:${joint}`);
     return source ? target.copy(source) : target.set(0, 0, 0);
   }
 
@@ -205,10 +215,27 @@ export class Skeleton {
       this.placeSegment(fingerRig.tip, mid, tip);
       fingerRig.node.position.copy(tip);
 
-      const world = tip.clone();
-      this.root.localToWorld(world);
-      this.fingertipWorld.set(`${handedness}:${finger}`, world);
+      this.setFingerJointWorld(handedness, finger, 'base', base);
+      this.setFingerJointWorld(handedness, finger, 'mid', mid);
+      this.setFingerJointWorld(handedness, finger, 'tip', tip);
     }
+  }
+
+  private setFingerJointWorld(
+    handedness: Handedness,
+    finger: FingerName,
+    joint: FingerJointName,
+    point: THREE.Vector3,
+  ): void {
+    const jointKey = `${handedness}:${finger}:${joint}`;
+    let world = this.fingerJointWorld.get(jointKey);
+    if (!world) {
+      world = new THREE.Vector3();
+      this.fingerJointWorld.set(jointKey, world);
+      if (joint === 'tip') this.fingertipWorld.set(`${handedness}:${finger}`, world);
+    }
+    world.copy(point);
+    this.root.localToWorld(world);
   }
 
   private posePointToRig(point: Vec3Data, side: number): THREE.Vector3 {

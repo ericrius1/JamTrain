@@ -1,5 +1,5 @@
 import type * as THREE from 'three/webgpu';
-import type { FingerName, Handedness } from './types';
+import type { FingerJointName, FingerName, Handedness } from './types';
 
 export type InstrumentId = 'loom' | 'chime' | 'orbs';
 
@@ -39,8 +39,9 @@ export type HandContactPoint = {
   /** Stable within one player visual so velocity can be derived frame-to-frame. */
   id: string;
   hand: Handedness;
-  kind: 'palm' | 'fingertip';
+  kind: 'palm' | 'finger';
   finger?: FingerName;
+  joint?: FingerJointName;
   /** World-space contact point. */
   position: THREE.Vector3;
 };

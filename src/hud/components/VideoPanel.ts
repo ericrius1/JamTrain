@@ -204,8 +204,8 @@ export class VideoPanel {
     this.shareWarnOverlay.classList.toggle('hidden', !visible);
     this.shareWarnOverlay.classList.toggle('is-sharing', this.shareVideoEnabled);
     this.shareWarnHeading.textContent = this.shareVideoEnabled
-      ? "SHARING WITH PARTNER"
-      : "PARTNER CAN'T SEE YOU · TAP SHARE VIDEO";
+      ? "Sharing video with partner"
+      : "Privacy mode · Partner sees video only if you share";
   }
 
   setMicEnabled(enabled: boolean): void {

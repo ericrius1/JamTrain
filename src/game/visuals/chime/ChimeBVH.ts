@@ -8,6 +8,9 @@ import { PointsBVH } from 'three-mesh-bvh';
 
 const _scratchPoint = new THREE.Vector3();
 const _scratchSphere = new THREE.Sphere();
+const _segment = new THREE.Vector3();
+const _pointToStart = new THREE.Vector3();
+const _closest = new THREE.Vector3();
 
 export type GemPair = {
   /** Lower index — owner. */
@@ -67,7 +70,7 @@ export class ChimeBVH {
 
       this.bvh.shapecast({
         intersectsBounds: box => box.intersectsSphere(_scratchSphere),
-        intersectsPoint: pointIndex => {
+        intersectsPoint: this.makePointVisitor(pointIndex => {
           if (pointIndex <= i) return false;
           const o = pointIndex * 3;
           const dx = this.positions[o] - _scratchSphere.center.x;
@@ -76,7 +79,7 @@ export class ChimeBVH {
           const d2 = dx * dx + dy * dy + dz * dz;
           if (d2 < r2) out.push({ a: i, b: pointIndex, distSq: d2 });
           return false;
-        },
+        }),
       });
     }
   }
@@ -88,19 +91,69 @@ export class ChimeBVH {
     _scratchSphere.radius = radius;
     this.bvh.shapecast({
       intersectsBounds: box => box.intersectsSphere(_scratchSphere),
-      intersectsPoint: pointIndex => {
+      intersectsPoint: this.makePointVisitor(pointIndex => {
         const o = pointIndex * 3;
         const dx = this.positions[o] - point.x;
         const dy = this.positions[o + 1] - point.y;
         const dz = this.positions[o + 2] - point.z;
         if (dx * dx + dy * dy + dz * dz < r2) out.push(pointIndex);
         return false;
-      },
+      }),
+    });
+  }
+
+  /** Return every gem intersected by a swept sphere from `from` to `to`. */
+  collectSweptPointHits(from: THREE.Vector3, to: THREE.Vector3, radius: number, out: number[]): void {
+    const sweepRadius = radius + from.distanceTo(to) * 0.5;
+    _scratchSphere.center.copy(from).lerp(to, 0.5);
+    _scratchSphere.radius = sweepRadius;
+
+    const r2 = radius * radius;
+    this.bvh.shapecast({
+      intersectsBounds: box => box.intersectsSphere(_scratchSphere),
+      intersectsPoint: this.makePointVisitor(pointIndex => {
+        if (this.distanceSqToSegment(pointIndex, from, to) <= r2) out.push(pointIndex);
+        return false;
+      }),
     });
   }
 
   dispose(): void {
     this.geometry.dispose();
+  }
+
+  private makePointVisitor(
+    visit: (pointIndex: number) => boolean | void,
+  ): (pointIndex: number, contained: boolean, depth: number) => boolean | void {
+    return ((first: number | THREE.Vector3, second?: number | boolean) => {
+      const pointIndex = typeof first === 'number'
+        ? first
+        : typeof second === 'number'
+          ? second
+          : -1;
+      if (pointIndex < 0 || pointIndex >= this.count) return false;
+      return visit(pointIndex);
+    }) as (pointIndex: number, contained: boolean, depth: number) => boolean | void;
+  }
+
+  private distanceSqToSegment(pointIndex: number, from: THREE.Vector3, to: THREE.Vector3): number {
+    const k = pointIndex * 3;
+    _segment.copy(to).sub(from);
+    const lenSq = _segment.lengthSq();
+    if (lenSq <= 1e-8) {
+      const dx = this.positions[k] - to.x;
+      const dy = this.positions[k + 1] - to.y;
+      const dz = this.positions[k + 2] - to.z;
+      return dx * dx + dy * dy + dz * dz;
+    }
+
+    _pointToStart.set(this.positions[k], this.positions[k + 1], this.positions[k + 2]).sub(from);
+    const t = THREE.MathUtils.clamp(_pointToStart.dot(_segment) / lenSq, 0, 1);
+    _closest.copy(from).addScaledVector(_segment, t);
+    const dx = this.positions[k] - _closest.x;
+    const dy = this.positions[k + 1] - _closest.y;
+    const dz = this.positions[k + 2] - _closest.z;
+    return dx * dx + dy * dy + dz * dz;
   }
 }
 

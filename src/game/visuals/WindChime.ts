@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
-import type { PlayerVisual, VoiceState } from '../instruments';
+import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments';
 import { clamp } from '../math';
 import { VerletChain } from './chime/VerletChain';
 import { ChimeBVH, type GemPair } from './chime/ChimeBVH';
@@ -72,6 +72,8 @@ const _tmpVec2 = new THREE.Vector3();
 const _tmpMat = new THREE.Matrix4();
 const _tmpQuat = new THREE.Quaternion();
 const _scaleVec = new THREE.Vector3();
+const _contactVelocity = new THREE.Vector3();
+const _contactImpulse = new THREE.Vector3();
 const TAU = Math.PI * 2;
 
 export class WindChime implements PlayerVisual {
@@ -118,6 +120,11 @@ export class WindChime implements PlayerVisual {
   private onHitCallback?: (e: ChimeHit) => void;
   private gemPairs: GemPair[] = [];
   private handHits: number[] = [];
+  private previousContacts = new Map<string, THREE.Vector3>();
+  private fallbackContacts: HandContactPoint[] = [
+    { id: 'fallback:left:palm', hand: 'left', kind: 'palm', position: new THREE.Vector3() },
+    { id: 'fallback:right:palm', hand: 'right', kind: 'palm', position: new THREE.Vector3() },
+  ];
 
   private registered?: ReturnType<typeof registerTweaks<typeof WIND_CHIME_DEFS>>;
 
@@ -211,6 +218,7 @@ export class WindChime implements PlayerVisual {
   setVisible(visible: boolean): void {
     this.active = visible;
     this.mesh.visible = visible;
+    if (!visible) this.previousContacts.clear();
   }
 
   /** Drives the audio side: filter cutoff for this player's chime synth. */
@@ -223,7 +231,13 @@ export class WindChime implements PlayerVisual {
     return this.smoothedWindStrength;
   }
 
-  update(leftPalm: THREE.Vector3, rightPalm: THREE.Vector3, voice: VoiceState, delta: number): void {
+  update(
+    leftPalm: THREE.Vector3,
+    rightPalm: THREE.Vector3,
+    voice: VoiceState,
+    delta: number,
+    contacts?: readonly HandContactPoint[],
+  ): void {
     if (!this.active) return;
     if (delta <= 0) return;
 
@@ -265,7 +279,7 @@ export class WindChime implements PlayerVisual {
     this.stepPhysics(delta);
     this.writeGemsAndStrings();
     this.runCollisions();
-    this.handlePoke(rightPalm);
+    this.processHandContacts(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
     this.decayHitPulse(delta);
     this.writeGemColors();
 
@@ -498,38 +512,83 @@ export class WindChime implements PlayerVisual {
     }
   }
 
-  private handlePoke(rightPalm: THREE.Vector3): void {
-    this.handHits.length = 0;
-    this.chimeBVH.collectHandHits(rightPalm, this.params.contactRadius, this.handHits);
-    if (this.handHits.length === 0) return;
+  private resolveContacts(
+    leftPalm: THREE.Vector3,
+    rightPalm: THREE.Vector3,
+    contacts?: readonly HandContactPoint[],
+  ): readonly HandContactPoint[] {
+    if (contacts && contacts.length > 0) return contacts;
+    this.fallbackContacts[0].position.copy(leftPalm);
+    this.fallbackContacts[1].position.copy(rightPalm);
+    return this.fallbackContacts;
+  }
 
+  private processHandContacts(contacts: readonly HandContactPoint[], delta: number): void {
+    const safeDelta = Math.max(delta, 1e-4);
     const cooldown = this.params.hitCooldown * 1.4;
     const now = this.elapsed;
-    const handSpeed = this.rightVel.length();
-    const velNorm = clamp(handSpeed / 1.6, 0, 1);
     const minPokeSpeed = this.params.hitVelMin * 0.8;
 
-    for (const gemIdx of this.handHits) {
-      const s = Math.floor(gemIdx / GEMS_PER_STRING);
-      const k = gemIdx % GEMS_PER_STRING;
-      const nodeIdx = FIRST_GEM_NODE + k;
-      // Push the gem along the hand velocity direction.
-      const push = this.params.contactPush;
-      this.chains[s].addImpulse(nodeIdx,
-        this.rightVel.x * push * 0.012,
-        this.rightVel.y * push * 0.012,
-        this.rightVel.z * push * 0.012);
-
-      if (handSpeed < minPokeSpeed) continue;
-      if (now - this.gemHitAt[gemIdx] < cooldown) continue;
-      this.gemHitAt[gemIdx] = now;
-      this.gemHitPulse[gemIdx] = Math.min(1, this.gemHitPulse[gemIdx] + 0.5 + velNorm * 0.5);
-
-      if (this.onHitCallback) {
-        this.onHitCallback({ gemIndex: gemIdx, frequency: this.gemFrequencies[gemIdx], velocity: velNorm });
+    for (const contact of contacts) {
+      let previous = this.previousContacts.get(contact.id);
+      if (!previous) {
+        previous = contact.position.clone();
+        this.previousContacts.set(contact.id, previous);
+        continue;
       }
-      this.handHitCount += 1;
+
+      _contactVelocity.copy(contact.position).sub(previous);
+      const travel = _contactVelocity.length();
+      const speed = travel / safeDelta;
+      const contactRadius = contact.kind === 'palm'
+        ? this.params.contactRadius
+        : this.params.contactRadius * 0.45;
+
+      this.handHits.length = 0;
+      this.chimeBVH.collectSweptPointHits(
+        previous,
+        contact.position,
+        this.params.gemRadius + contactRadius,
+        this.handHits,
+      );
+      previous.copy(contact.position);
+
+      if (this.handHits.length === 0) continue;
+
+      _contactVelocity.divideScalar(safeDelta);
+      const velNorm = clamp(speed / 1.6, 0.12, 1);
+
+      for (const gemIdx of this.handHits) {
+        this.applyContactImpulse(gemIdx, _contactVelocity, contact.kind);
+
+        if (speed < minPokeSpeed) continue;
+        if (now - this.gemHitAt[gemIdx] < cooldown) continue;
+        this.gemHitAt[gemIdx] = now;
+        this.gemHitPulse[gemIdx] = Math.min(1, this.gemHitPulse[gemIdx] + 0.5 + velNorm * 0.5);
+
+        if (this.onHitCallback) {
+          this.onHitCallback({ gemIndex: gemIdx, frequency: this.gemFrequencies[gemIdx], velocity: velNorm });
+        }
+        this.handHitCount += 1;
+      }
     }
+  }
+
+  private applyContactImpulse(
+    gemIdx: number,
+    contactVelocity: THREE.Vector3,
+    kind: HandContactPoint['kind'],
+  ): void {
+    const s = Math.floor(gemIdx / GEMS_PER_STRING);
+    const k = gemIdx % GEMS_PER_STRING;
+    const nodeIdx = FIRST_GEM_NODE + k;
+    const contactScale = kind === 'palm' ? 1 : 0.65;
+    const maxImpulse = kind === 'palm' ? 0.075 : 0.052;
+
+    _contactImpulse.copy(contactVelocity).multiplyScalar(this.params.contactPush * 0.012 * contactScale);
+    if (_contactImpulse.lengthSq() > maxImpulse * maxImpulse) _contactImpulse.setLength(maxImpulse);
+
+    this.chains[s].addImpulse(nodeIdx, _contactImpulse.x, _contactImpulse.y, _contactImpulse.z);
   }
 
   private separateGems(a: number, b: number, contactR: number): void {
