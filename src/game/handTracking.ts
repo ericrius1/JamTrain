@@ -4,6 +4,36 @@ import { clamp, lerpVec, vec } from './math';
 import { makeSimulatedHands } from './pose';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type Vec3Data } from './types';
 
+// Self-hosted weights live under /public/handpose/. Avoids the cross-origin
+// jsdelivr hop and lets us cache them with `immutable` headers (vercel.json).
+const HANDPOSE_WEIGHTS_URL = '/handpose/';
+const HANDPOSE_WEIGHT_FILES = [
+  'weights_f16_full.json',
+  'weights_f16_full.bin',
+  'palm_detection_weights.json',
+  'palm_detection_weights.bin',
+] as const;
+
+// Fire the JS chunk import + the weight downloads once the scene is already
+// rendering. The returned promise tracks actual body consumption so startCamera
+// can wait on an in-flight warmup instead of duplicating the large requests.
+let handposePreloadPromise: Promise<void> | undefined;
+export function preloadHandpose(): Promise<void> {
+  if (handposePreloadPromise) return handposePreloadPromise;
+  handposePreloadPromise = Promise.all([
+    import('@svenflow/micro-handpose').then(() => undefined),
+    ...HANDPOSE_WEIGHT_FILES.map(async file => {
+      const res = await fetch(HANDPOSE_WEIGHTS_URL + file, { credentials: 'omit' });
+      if (!res.ok) throw new Error(`Failed to preload ${file}: ${res.status}`);
+      await res.arrayBuffer();
+    }),
+  ]).then(() => undefined);
+  handposePreloadPromise.catch(() => {
+    handposePreloadPromise = undefined;
+  });
+  return handposePreloadPromise;
+}
+
 type HandposeInput =
   | HTMLCanvasElement
   | OffscreenCanvas
@@ -134,8 +164,13 @@ export class HandTracker {
       document.body.appendChild(video);
       await video.play();
 
+      await handposePreloadPromise?.catch(() => undefined);
       const { createHandpose } = await import('@svenflow/micro-handpose');
-      this.detector = await createHandpose({ maxHands: 2, scoreThreshold: 0.45 });
+      this.detector = await createHandpose({
+        maxHands: 2,
+        scoreThreshold: 0.45,
+        weightsUrl: HANDPOSE_WEIGHTS_URL,
+      });
       this.video = video;
       this.mode = 'camera';
       this.status = 'hands: camera';

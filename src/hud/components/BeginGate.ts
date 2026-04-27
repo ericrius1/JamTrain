@@ -96,6 +96,9 @@ export class BeginGate {
       this.input.focus();
       this.input.select();
     });
+
+    // Runtime prewarming is coordinated by main.ts so the intro can paint
+    // before the Three/WebGPU graph starts loading.
   }
 
   private fit(): void {

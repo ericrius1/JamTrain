@@ -5,7 +5,6 @@ import type { CameraMode } from './components/EngineRoomDrawer';
 import { VideoPanel } from './components/VideoPanel';
 import type { HandTracker } from '../game/handTracking';
 import { createCornerFiligree } from './components/CornerFiligree';
-import { BeginGate } from './components/BeginGate';
 import { SharePopover } from './components/SharePopover';
 import { AnnouncementToast } from './components/AnnouncementToast';
 import { MixerPanel } from './components/MixerPanel';
@@ -22,7 +21,6 @@ export const DEFAULT_MUSIC_VOLUME = 0.55;
 export const DEFAULT_VOICE_VOLUME = 1.0;
 
 export type HudCallbacks = {
-  onBegin: (conductorName: string) => Promise<void> | void;
   onRoomChange: (room: string) => void;
   onRecalibrate: () => void;
   onDisembark: () => void;
@@ -45,7 +43,6 @@ export class Hud {
   private partnerInstrument: InstrumentId = 'loom';
   private localCreaturePicker: CreaturePicker;
   private localCreatureListeners = new Set<(id: CreatureId) => void>();
-  private beginGate?: BeginGate;
   private sharePopover: SharePopover;
   private shareButton: HTMLButtonElement;
   private announcement: AnnouncementToast;
@@ -173,14 +170,6 @@ export class Hud {
 
     this.currentRoom = opts.room;
     this.renderNetRow();
-
-    this.beginGate = new BeginGate({
-      onBegin: async name => {
-        this.setConductorName(name);
-        await opts.callbacks.onBegin(name);
-      },
-    });
-    stageWrap.appendChild(this.beginGate.el);
 
     // Initial plaque render attaches the picker to the local plaque.
     this.applyPlaques();

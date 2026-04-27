@@ -571,11 +571,32 @@ export class ScenerySystem {
 
 function silhouetteHeight(x: number, p: SilhouetteParams): number {
   const xs = p.mesa > 0.5 ? Math.floor(x * 0.8 + 0.5) / 0.8 : x;
-  const primary = Math.sin(xs * p.freq) * p.amp;
+  if (p.style === 'peaks') {
+    const broad = Math.pow(Math.abs(Math.sin(xs * p.freq + 0.24)), 1.85) * p.amp;
+    const needles = Math.pow(Math.abs(Math.sin(xs * p.freq2 + 1.15)), 4.2) * p.amp2;
+    const saddles = Math.sin(xs * p.freq * 0.43 - 0.55) * p.amp * 0.10;
+    return p.base + broad + needles + saddles;
+  }
+  if (p.style === 'flatLake') {
+    const shore = Math.sin(xs * p.freq + 0.8) * p.amp;
+    const lowIslands = Math.pow(Math.max(0, Math.sin(xs * p.freq2 + 1.35)), 2.8) * p.amp2;
+    return p.base + shore + lowIslands;
+  }
+  if (p.style === 'mesa') {
+    const shelves = Math.sin(xs * p.freq + 0.35) * p.amp;
+    const smallBreaks = Math.sin(x * p.freq2 + 0.7) * p.amp2;
+    return p.base + Math.max(0.02, shelves) + smallBreaks;
+  }
+  if (p.style === 'forest') {
+    const rolling = Math.sin(xs * p.freq + 0.4) * p.amp;
+    const canopy = Math.pow(Math.max(0, Math.sin(xs * p.freq2 + 0.2)), 2.4) * p.amp2;
+    const softNoise = Math.sin(xs * 7.3 + 1.9) * p.amp2 * 0.18;
+    return p.base + rolling + canopy + softNoise;
+  }
+  const primary = Math.sin(xs * p.freq + 0.15) * p.amp;
   const secondary = Math.sin(xs * p.freq2 + 1.2) * p.amp2;
-  // For mountain-style biomes, fold to give peakier ridges.
-  const folded = p.amp > 0.2 ? Math.abs(primary) : primary;
-  return p.base + folded + secondary;
+  const detail = Math.sin(xs * 4.9 - 0.8) * p.amp * 0.06;
+  return p.base + primary + secondary + detail;
 }
 
 function lerpHexInto(out: THREE.Color, fromHex: number, toHex: number, t: number): void {

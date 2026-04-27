@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 
 export type AtlasId =
   | 'pineTall' | 'pineShort'
+  | 'cedarSweep' | 'birchGrove' | 'windsweptOak'
   | 'deciduousRound' | 'deciduousTall'
   | 'barn' | 'silo' | 'fencePost' | 'haystack'
   | 'cottage' | 'cottageLit'
@@ -51,6 +52,9 @@ export class SpriteAtlas {
     const specs: Spec[] = [
       { id: 'pineTall',          draw: drawPineTall },
       { id: 'pineShort',         draw: drawPineShort },
+      { id: 'cedarSweep',        draw: drawCedarSweep },
+      { id: 'birchGrove',        draw: drawBirchGrove },
+      { id: 'windsweptOak',      draw: drawWindsweptOak },
       { id: 'deciduousRound',    draw: drawDeciduousRound },
       { id: 'deciduousTall',    draw: drawDeciduousTall },
       { id: 'barn',              draw: drawBarn },
@@ -102,59 +106,159 @@ export class SpriteAtlas {
 
 function drawPineTall(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(w * 0.46, h * 0.78, w * 0.08, h * 0.22);
-  for (let i = 0; i < 4; i += 1) {
-    const yTop = h * (0.06 + i * 0.18);
-    const yBot = h * (0.30 + i * 0.18);
-    const halfW = w * (0.10 + i * 0.07);
-    ctx.beginPath();
-    ctx.moveTo(w * 0.5, yTop);
-    ctx.lineTo(w * 0.5 - halfW, yBot);
-    ctx.lineTo(w * 0.5 + halfW, yBot);
-    ctx.closePath();
-    ctx.fill();
-  }
+  ctx.fillRect(w * 0.465, h * 0.76, w * 0.075, h * 0.24);
+  drawNeedleBough(ctx, w, h, 0.50, 0.06, 0.13, 0.70, 0.27);
+  drawNeedleBough(ctx, w, h, 0.49, 0.19, 0.24, 0.59, 0.43);
+  drawNeedleBough(ctx, w, h, 0.52, 0.35, 0.32, 0.42, 0.58);
+  drawNeedleBough(ctx, w, h, 0.48, 0.53, 0.38, 0.24, 0.75);
+  drawNeedleBough(ctx, w, h, 0.51, 0.70, 0.28, 0.08, 0.92);
 }
 
 function drawPineShort(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(w * 0.46, h * 0.84, w * 0.08, h * 0.16);
-  for (let i = 0; i < 2; i += 1) {
-    const yTop = h * (0.30 + i * 0.22);
-    const yBot = h * (0.58 + i * 0.22);
-    const halfW = w * (0.16 + i * 0.06);
+  ctx.fillRect(w * 0.465, h * 0.78, w * 0.07, h * 0.22);
+  drawNeedleBough(ctx, w, h, 0.50, 0.24, 0.18, 0.55, 0.47);
+  drawNeedleBough(ctx, w, h, 0.48, 0.45, 0.30, 0.30, 0.72);
+  drawNeedleBough(ctx, w, h, 0.52, 0.65, 0.25, 0.12, 0.91);
+}
+
+function drawCedarSweep(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(w * 0.47, h * 1.00);
+  ctx.lineTo(w * 0.53, h * 1.00);
+  ctx.lineTo(w * 0.56, h * 0.20);
+  ctx.lineTo(w * 0.50, h * 0.04);
+  ctx.lineTo(w * 0.45, h * 0.22);
+  ctx.closePath();
+  ctx.fill();
+  drawNeedleBough(ctx, w, h, 0.49, 0.13, 0.16, 0.67, 0.27);
+  drawNeedleBough(ctx, w, h, 0.52, 0.28, 0.30, 0.50, 0.45);
+  drawNeedleBough(ctx, w, h, 0.47, 0.46, 0.36, 0.35, 0.65);
+  drawNeedleBough(ctx, w, h, 0.54, 0.62, 0.31, 0.18, 0.84);
+}
+
+function drawBirchGrove(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  const trunks: Array<[number, number, number]> = [
+    [0.34, 0.42, 0.050],
+    [0.50, 0.34, 0.060],
+    [0.66, 0.45, 0.045],
+  ];
+  for (const [x, top, width] of trunks) {
     ctx.beginPath();
-    ctx.moveTo(w * 0.5, yTop);
-    ctx.lineTo(w * 0.5 - halfW, yBot);
-    ctx.lineTo(w * 0.5 + halfW, yBot);
+    ctx.moveTo(w * (x - width), h);
+    ctx.lineTo(w * (x + width), h);
+    ctx.lineTo(w * (x + width * 0.55), h * top);
+    ctx.lineTo(w * (x - width * 0.55), h * top);
     ctx.closePath();
+    ctx.fill();
+  }
+  const blobs: Array<[number, number, number, number]> = [
+    [0.34, 0.37, 0.18, 0.18],
+    [0.48, 0.25, 0.20, 0.22],
+    [0.62, 0.35, 0.17, 0.19],
+    [0.43, 0.47, 0.22, 0.17],
+    [0.60, 0.50, 0.21, 0.16],
+  ];
+  for (const [cx, cy, rx, ry] of blobs) {
+    ctx.beginPath();
+    ctx.ellipse(w * cx, h * cy, w * rx, h * ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawWindsweptOak(ctx: CanvasRenderingContext2D, w: number, h: number): void {
+  ctx.fillStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(w * 0.43, h);
+  ctx.bezierCurveTo(w * 0.48, h * 0.72, w * 0.54, h * 0.58, w * 0.59, h * 0.39);
+  ctx.lineTo(w * 0.52, h * 0.36);
+  ctx.bezierCurveTo(w * 0.46, h * 0.60, w * 0.42, h * 0.76, w * 0.37, h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(w * 0.54, h * 0.55);
+  ctx.lineTo(w * 0.77, h * 0.34);
+  ctx.lineTo(w * 0.73, h * 0.29);
+  ctx.lineTo(w * 0.50, h * 0.49);
+  ctx.closePath();
+  ctx.fill();
+  const blobs: Array<[number, number, number, number]> = [
+    [0.58, 0.28, 0.24, 0.20],
+    [0.76, 0.31, 0.23, 0.17],
+    [0.46, 0.34, 0.20, 0.18],
+    [0.66, 0.18, 0.18, 0.15],
+    [0.34, 0.45, 0.16, 0.15],
+  ];
+  for (const [cx, cy, rx, ry] of blobs) {
+    ctx.beginPath();
+    ctx.ellipse(w * cx, h * cy, w * rx, h * ry, -0.12, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
 function drawDeciduousRound(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(w * 0.46, h * 0.74, w * 0.08, h * 0.26);
-  // overlapping circles for canopy
-  const blobs: Array<[number, number, number]> = [
-    [0.50, 0.42, 0.30],
-    [0.36, 0.50, 0.22],
-    [0.64, 0.50, 0.22],
-    [0.46, 0.30, 0.18],
-    [0.58, 0.32, 0.18],
+  ctx.beginPath();
+  ctx.moveTo(w * 0.45, h);
+  ctx.lineTo(w * 0.55, h);
+  ctx.lineTo(w * 0.53, h * 0.64);
+  ctx.lineTo(w * 0.50, h * 0.55);
+  ctx.lineTo(w * 0.47, h * 0.64);
+  ctx.closePath();
+  ctx.fill();
+  const blobs: Array<[number, number, number, number]> = [
+    [0.50, 0.42, 0.30, 0.25],
+    [0.34, 0.48, 0.19, 0.18],
+    [0.68, 0.50, 0.20, 0.19],
+    [0.45, 0.29, 0.17, 0.15],
+    [0.60, 0.31, 0.19, 0.16],
+    [0.50, 0.58, 0.24, 0.14],
   ];
-  for (const [cx, cy, r] of blobs) {
+  for (const [cx, cy, rx, ry] of blobs) {
     ctx.beginPath();
-    ctx.arc(w * cx, h * cy, w * r, 0, Math.PI * 2);
+    ctx.ellipse(w * cx, h * cy, w * rx, h * ry, 0, 0, Math.PI * 2);
     ctx.fill();
   }
 }
 
 function drawDeciduousTall(ctx: CanvasRenderingContext2D, w: number, h: number): void {
   ctx.fillStyle = '#ffffff';
-  ctx.fillRect(w * 0.47, h * 0.66, w * 0.06, h * 0.34);
   ctx.beginPath();
-  ctx.ellipse(w * 0.5, h * 0.40, w * 0.20, h * 0.36, 0, 0, Math.PI * 2);
+  ctx.moveTo(w * 0.46, h);
+  ctx.lineTo(w * 0.54, h);
+  ctx.lineTo(w * 0.53, h * 0.62);
+  ctx.lineTo(w * 0.48, h * 0.58);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(w * 0.50, h * 0.38, w * 0.18, h * 0.34, -0.08, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(w * 0.42, h * 0.47, w * 0.13, h * 0.18, -0.20, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(w * 0.59, h * 0.48, w * 0.14, h * 0.20, 0.16, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawNeedleBough(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  cx: number,
+  yTop: number,
+  halfW: number,
+  leftBot: number,
+  rightBot: number,
+): void {
+  ctx.beginPath();
+  ctx.moveTo(w * cx, h * yTop);
+  ctx.lineTo(w * (cx - halfW), h * leftBot);
+  ctx.lineTo(w * (cx - halfW * 0.10), h * (leftBot - 0.02));
+  ctx.lineTo(w * (cx + halfW), h * rightBot);
+  ctx.closePath();
   ctx.fill();
 }
 

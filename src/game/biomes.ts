@@ -5,7 +5,8 @@ export type ForegroundBiomeId =
   | 'hills' | 'forest' | 'meadow' | 'lake' | 'coast' | 'snowfield' | 'farmland';
 
 export type BackgroundBiomeId =
-  | 'distantHills' | 'snowMountains' | 'oceanHorizon' | 'mesa' | 'fogForest';
+  | 'distantHills' | 'alpinePeaks' | 'lakePlains'
+  | 'snowMountains' | 'oceanHorizon' | 'mesa' | 'fogForest';
 
 export type TimeOfDay = 'dawn' | 'day' | 'dusk' | 'night';
 
@@ -77,8 +78,9 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x4a7d4d, night: 0x132018 },
     ridge: { amplitude: 0.18, frequency: 1.3, baseY: 0.42 },
     sprites: [
-      { atlas: 'deciduousRound', density: 0.85, yJitter: 0.02, sizeRange: [0.18, 0.30], layer: 'midground' },
-      { atlas: 'deciduousTall', density: 0.40, yJitter: 0.02, sizeRange: [0.20, 0.34], layer: 'foreground' },
+      { atlas: 'windsweptOak', density: 0.58, yJitter: 0.025, sizeRange: [0.28, 0.46], layer: 'midground' },
+      { atlas: 'birchGrove',   density: 0.46, yJitter: 0.020, sizeRange: [0.22, 0.36], layer: 'midground' },
+      { atlas: 'deciduousTall', density: 0.36, yJitter: 0.025, sizeRange: [0.26, 0.42], layer: 'foreground' },
     ],
     weatherBias: { rain: 0.4, snow: 0.05 },
     birdBias: 1.0,
@@ -90,8 +92,10 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x1f3a26, night: 0x0a1410 },
     ridge: { amplitude: 0.12, frequency: 1.6, baseY: 0.40 },
     sprites: [
-      { atlas: 'pineTall',  density: 2.25, yJitter: 0.03, sizeRange: [0.32, 0.62], layer: 'foreground' },
-      { atlas: 'pineShort', density: 1.65, yJitter: 0.02, sizeRange: [0.22, 0.38], layer: 'midground' },
+      { atlas: 'cedarSweep', density: 1.05, yJitter: 0.035, sizeRange: [0.34, 0.64], layer: 'foreground' },
+      { atlas: 'pineTall',    density: 1.20, yJitter: 0.030, sizeRange: [0.32, 0.60], layer: 'foreground' },
+      { atlas: 'pineShort',   density: 1.25, yJitter: 0.025, sizeRange: [0.22, 0.40], layer: 'midground' },
+      { atlas: 'birchGrove',  density: 0.28, yJitter: 0.025, sizeRange: [0.22, 0.36], layer: 'midground' },
     ],
     weatherBias: { rain: 0.7, snow: 0.10 },
     birdBias: 1.4,
@@ -103,7 +107,8 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0x6da55a, night: 0x16241a },
     ridge: { amplitude: 0.10, frequency: 1.0, baseY: 0.38 },
     sprites: [
-      { atlas: 'deciduousRound', density: 0.55, yJitter: 0.02, sizeRange: [0.22, 0.38], layer: 'midground' },
+      { atlas: 'windsweptOak',   density: 0.42, yJitter: 0.020, sizeRange: [0.30, 0.46], layer: 'midground' },
+      { atlas: 'deciduousRound', density: 0.34, yJitter: 0.020, sizeRange: [0.24, 0.38], layer: 'midground' },
       { atlas: 'cottage',        density: 0.24, yJitter: 0.0,  sizeRange: [0.22, 0.32], layer: 'foreground' },
     ],
     villageLights: { density: 0.55, clusterTightness: 0.18 },
@@ -119,7 +124,8 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     sprites: [
       { atlas: 'reeds',     density: 1.25, yJitter: 0.01, sizeRange: [0.14, 0.24], layer: 'foreground' },
       { atlas: 'cattail',   density: 0.70, yJitter: 0.01, sizeRange: [0.14, 0.22], layer: 'foreground' },
-      { atlas: 'pineShort', density: 0.85, yJitter: 0.02, sizeRange: [0.24, 0.40], layer: 'midground' },
+      { atlas: 'birchGrove', density: 0.68, yJitter: 0.02, sizeRange: [0.28, 0.46], layer: 'midground' },
+      { atlas: 'cedarSweep', density: 0.50, yJitter: 0.02, sizeRange: [0.30, 0.52], layer: 'midground' },
     ],
     water: { coverage: 0.7, reflectionTint: 0xb6d6e6 },
     weatherBias: { rain: 0.55, snow: 0.05 },
@@ -146,8 +152,9 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
     groundColor: { day: 0xe5edf0, night: 0x182028 },
     ridge: { amplitude: 0.14, frequency: 1.2, baseY: 0.40 },
     sprites: [
-      { atlas: 'pineTall',  density: 0.7, yJitter: 0.02, sizeRange: [0.28, 0.48], layer: 'foreground' },
-      { atlas: 'pineShort', density: 0.5, yJitter: 0.02, sizeRange: [0.20, 0.32], layer: 'midground' },
+      { atlas: 'cedarSweep', density: 0.48, yJitter: 0.02, sizeRange: [0.30, 0.52], layer: 'foreground' },
+      { atlas: 'pineTall',    density: 0.38, yJitter: 0.02, sizeRange: [0.28, 0.46], layer: 'foreground' },
+      { atlas: 'pineShort',   density: 0.48, yJitter: 0.02, sizeRange: [0.20, 0.32], layer: 'midground' },
     ],
     weatherBias: { rain: 0.05, snow: 0.95 },
     birdBias: 0.4,
@@ -174,9 +181,23 @@ export const FOREGROUND_BIOMES: Record<ForegroundBiomeId, ForegroundBiome> = {
 export const BACKGROUND_BIOMES: Record<BackgroundBiomeId, BackgroundBiome> = {
   distantHills: {
     id: 'distantHills',
-    color: { day: 0x3d654a, night: 0x101920 },
-    fogStrength: 0.35,
+    color: { day: 0x466b52, night: 0x101920 },
+    fogStrength: 0.42,
     timeOfDayBias: { dawn: 1.0, day: 1.0, dusk: 1.0, night: 1.0 },
+  },
+  alpinePeaks: {
+    id: 'alpinePeaks',
+    color: { day: 0x5c7080, night: 0x0d141d },
+    fogStrength: 0.52,
+    snowCap: { threshold: 0.50, tint: 0xf4f0dc },
+    timeOfDayBias: { dawn: 1.5, day: 1.0, dusk: 1.2, night: 1.0 },
+  },
+  lakePlains: {
+    id: 'lakePlains',
+    color: { day: 0x4f7861, night: 0x0b1514 },
+    fogStrength: 0.62,
+    shimmer: { amount: 0.42 },
+    timeOfDayBias: { dawn: 1.35, day: 0.9, dusk: 1.55, night: 0.95 },
   },
   snowMountains: {
     id: 'snowMountains',
@@ -213,15 +234,18 @@ export interface SilhouetteParams {
   amp2: number;
   freq2: number;
   mesa: number;     // 0/1 flag — quantize x to step buckets
+  style: 'rolling' | 'peaks' | 'flatLake' | 'mesa' | 'forest';
 }
 
 export function silhouetteParams(b: BackgroundBiome): SilhouetteParams {
   switch (b.id) {
-    case 'distantHills':  return { amp: 0.28, freq: 1.0, base: 0.50, amp2: 0.10, freq2: 2.5, mesa: 0 };
-    case 'snowMountains': return { amp: 0.55, freq: 0.7, base: 0.60, amp2: 0.20, freq2: 1.7, mesa: 0 };
-    case 'oceanHorizon':  return { amp: 0.02, freq: 1.0, base: 0.42, amp2: 0.0,  freq2: 1.0, mesa: 0 };
-    case 'mesa':          return { amp: 0.35, freq: 0.7, base: 0.50, amp2: 0.0,  freq2: 1.0, mesa: 1 };
-    case 'fogForest':     return { amp: 0.20, freq: 2.0, base: 0.55, amp2: 0.08, freq2: 4.5, mesa: 0 };
+    case 'distantHills':  return { amp: 0.22, freq: 1.0, base: 0.48, amp2: 0.08, freq2: 2.6, mesa: 0, style: 'rolling' };
+    case 'alpinePeaks':   return { amp: 0.56, freq: 0.82, base: 0.58, amp2: 0.20, freq2: 2.15, mesa: 0, style: 'peaks' };
+    case 'lakePlains':    return { amp: 0.035, freq: 0.72, base: 0.39, amp2: 0.09, freq2: 0.42, mesa: 0, style: 'flatLake' };
+    case 'snowMountains': return { amp: 0.50, freq: 0.74, base: 0.58, amp2: 0.18, freq2: 1.9, mesa: 0, style: 'peaks' };
+    case 'oceanHorizon':  return { amp: 0.02, freq: 1.0, base: 0.42, amp2: 0.0,  freq2: 1.0, mesa: 0, style: 'flatLake' };
+    case 'mesa':          return { amp: 0.35, freq: 0.7, base: 0.50, amp2: 0.05, freq2: 2.0, mesa: 1, style: 'mesa' };
+    case 'fogForest':     return { amp: 0.18, freq: 1.7, base: 0.54, amp2: 0.10, freq2: 5.0, mesa: 0, style: 'forest' };
   }
 }
 
