@@ -1,12 +1,45 @@
 import * as THREE from 'three/webgpu';
-import { Fn, color, float, fract, sin, smoothstep, texture, time, uniform, uv, vec3 } from 'three/tsl';
+import {
+  Fn,
+  color,
+  float,
+  fract,
+  smoothstep as smoothstep_typed,
+  texture,
+  time,
+  uniform,
+  uv,
+  vec3 as vec3_typed,
+} from 'three/tsl';
 import type { BiomeScheduler, ForegroundBiome, BackgroundBiome, LightningEvent } from './biomes';
 import { generateBolt, rasterizeBolt } from './lightning';
+
+type AnyNode = any;
+const smoothstep: AnyNode = smoothstep_typed;
+const vec3: AnyNode = vec3_typed;
 
 const QUAD_WIDTH = 11.6;
 const QUAD_HEIGHT = 2.6;
 const BOLT_W = 256;
 const BOLT_H = 128;
+
+const RAIN_COUNT = 600;
+const RAIN_QUAD_W = 0.012;
+const RAIN_QUAD_H = 0.16;
+const RAIN_AREA_HALF_W = QUAD_WIDTH * 0.5;
+const RAIN_AREA_HALF_H = QUAD_HEIGHT * 0.5;
+const RAIN_PANEL_X = -2.46;
+const RAIN_PANEL_Y = 1.6;
+const RAIN_FALL_MIN = 2.4;
+const RAIN_FALL_MAX = 4.6;
+
+interface RainParticle {
+  x: number;
+  y: number;
+  vy: number;
+  scaleX: number;
+  scaleY: number;
+}
 
 export class Weather {
   private root = new THREE.Group();
@@ -16,10 +49,16 @@ export class Weather {
   lightningFlash = uniform(0);
   boltOpacity = uniform(0);
 
+  private rainAlphaMul = uniform(0);
+
   private boltCanvas: HTMLCanvasElement;
   private boltCtx: CanvasRenderingContext2D;
   private boltTexture: THREE.CanvasTexture;
   private mesh!: THREE.Mesh;
+
+  private rainMesh!: THREE.InstancedMesh;
+  private rainParticles: RainParticle[] = [];
+  private rainMatrix = new THREE.Matrix4();
 
   private activeBolts: Array<{ startTime: number }> = [];
   private firedBolts = new Set<number>();
@@ -49,17 +88,7 @@ export class Weather {
       const u = uv();
       const result = vec3(0, 0, 0).toVar('weatherOut');
 
-      // Rain streaks: hashed grid scrolled diagonally; tight streak masks
-      const rainGrid = u.mul(120).add(time.mul(8)).add(vec3(u.y.mul(40), u.y.mul(40), 0).xy);
-      const cellX = rainGrid.x.floor();
-      const cellY = rainGrid.y.floor();
-      const fy = fract(rainGrid.y);
-      const cellHash = fract(cellX.mul(127.1).add(cellY.mul(311.7)).sin().mul(43758.5453));
-      const streak = smoothstep(float(0.0), float(0.06), float(1).sub(fy)).mul(smoothstep(float(0.985), float(1.0), cellHash));
-      const rainColor = color(0xc6d4e6);
-      result.assign(result.add(vec3(rainColor.r, rainColor.g, rainColor.b).mul(streak.mul(this.rainAmount).mul(0.85))));
-
-      // Snow flakes: bigger softer dots, slow drift
+      // Snow flakes: bigger softer dots, slow drift.
       const snowGrid = u.mul(80).add(time.mul(0.6));
       const sCellX = snowGrid.x.floor();
       const sCellY = snowGrid.y.floor();
@@ -82,24 +111,77 @@ export class Weather {
     })();
 
     material.opacityNode = Fn(() => {
-      // Be visible only where we're contributing.
-      const r = this.rainAmount;
       const s = this.snowAmount;
       const b = this.boltOpacity;
-      return r.add(s).add(b).clamp(0, 1).mul(0.95);
+      return s.add(b).clamp(0, 1).mul(0.95);
     })();
 
-    for (const side of [-1]) {
-      this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(QUAD_WIDTH, QUAD_HEIGHT), material);
-      this.mesh.rotation.y = Math.PI / 2;
-      this.mesh.position.set(side * 2.50, 1.6, 0);
-      this.mesh.renderOrder = -22;
-      this.root.add(this.mesh);
-    }
+    this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(QUAD_WIDTH, QUAD_HEIGHT), material);
+    this.mesh.rotation.y = Math.PI / 2;
+    this.mesh.position.set(-2.50, 1.6, 0);
+    this.mesh.renderOrder = -22;
+    this.root.add(this.mesh);
+
+    this.buildRain();
+
     this.scene.add(this.root);
   }
 
-  update(_delta: number, ctx: { fgBiome: ForegroundBiome; bgBiome: BackgroundBiome }): void {
+  private buildRain(): void {
+    const geo = new THREE.PlaneGeometry(RAIN_QUAD_W, RAIN_QUAD_H);
+    const mat = new THREE.MeshBasicNodeMaterial();
+    mat.transparent = true;
+    mat.depthWrite = false;
+    mat.fog = false;
+
+    // Stretched gradient drop: an elongated soft ellipse with a brighter
+    // head and a tapered tail.
+    const dropShape = Fn(() => {
+      const u = uv();
+      const cx = u.x.sub(0.5).mul(2.0);   // -1..1 horizontally
+      const cy = u.y.sub(0.5).mul(2.0);   // -1..1 vertically
+      // Squash y to make the drop a vertical ellipse.
+      const ellipse = cx.mul(cx).mul(1.4).add(cy.mul(cy).mul(0.4)).sqrt();
+      const shape = float(1).sub(smoothstep(0.55, 1.0, ellipse)).clamp(0, 1);
+      // Trail fade — bottom of the quad is more transparent (motion-blur tail).
+      const trail = smoothstep(0.05, 0.55, u.y);
+      return shape.mul(trail);
+    });
+
+    mat.colorNode = Fn(() => {
+      const u = uv();
+      // Brighten the top half of each drop slightly so the head reads as a wet specular highlight.
+      const head = smoothstep(0.55, 0.95, u.y);
+      const body = vec3(0.62, 0.74, 0.92);
+      const headTint = vec3(0.94, 0.97, 1.0);
+      return body.add(headTint.sub(body).mul(head.mul(0.75)));
+    })();
+
+    mat.opacityNode = Fn(() => {
+      const a = dropShape();
+      return a.mul(this.rainAlphaMul).mul(0.95);
+    })();
+
+    this.rainMesh = new THREE.InstancedMesh(geo, mat, RAIN_COUNT);
+    this.rainMesh.frustumCulled = false;
+    this.rainMesh.rotation.y = Math.PI / 2;
+    this.rainMesh.position.set(RAIN_PANEL_X, RAIN_PANEL_Y, 0);
+    this.rainMesh.renderOrder = -21;
+    this.root.add(this.rainMesh);
+
+    for (let i = 0; i < RAIN_COUNT; i += 1) {
+      this.rainParticles.push({
+        x: (Math.random() - 0.5) * QUAD_WIDTH,
+        y: (Math.random() - 0.5) * QUAD_HEIGHT,
+        vy: RAIN_FALL_MIN + Math.random() * (RAIN_FALL_MAX - RAIN_FALL_MIN),
+        scaleX: 0.7 + Math.random() * 0.6,
+        scaleY: 0.7 + Math.random() * 0.9,
+      });
+    }
+    this.writeAllRainMatrices();
+  }
+
+  update(delta: number, ctx: { fgBiome: ForegroundBiome; bgBiome: BackgroundBiome }): void {
     const now = this.getEpochSeconds();
     const w = this.scheduler.weatherAt(now);
 
@@ -111,6 +193,8 @@ export class Weather {
     this.rainAmount.value = lerp(this.rainAmount.value, targetRain, 0.04);
     this.snowAmount.value = lerp(this.snowAmount.value, targetSnow, 0.04);
     this.cloudCover.value = lerp(this.cloudCover.value, w.cloudCover, 0.04);
+    // Rain particles use a punchier alpha curve than the raw rainAmount.
+    this.rainAlphaMul.value = clamp01(this.rainAmount.value * 1.6);
 
     // Process lightning events (deterministic — both clients see the same).
     for (const ev of w.lightning) {
@@ -126,17 +210,14 @@ export class Weather {
       }
     }
 
-    // Decay envelopes for active bolts.
     let boltOpacity = 0;
     let flash = 0;
     for (const b of this.activeBolts) {
       const age = now - b.startTime;
       if (age < 0) continue;
-      // Bolt: 60ms ramp up, 250ms decay
       let bo = 0;
       if (age < 0.06) bo = age / 0.06;
       else if (age < 0.31) bo = Math.exp(-(age - 0.06) * 12);
-      // Flash: 80ms ramp, 600ms decay, peak 0.18 (muted/cozy)
       let fl = 0;
       if (age < 0.08) fl = age / 0.08;
       else if (age < 0.68) fl = Math.exp(-(age - 0.08) * 5);
@@ -147,6 +228,46 @@ export class Weather {
     this.lightningFlash.value = flash;
 
     this.activeBolts = this.activeBolts.filter(b => now - b.startTime < 1.5);
+
+    this.updateRain(delta);
+  }
+
+  private updateRain(delta: number): void {
+    if (this.rainAlphaMul.value < 0.005 && this.rainAmount.value < 0.005) {
+      // Hide entirely when no rain — but still tick particles slowly so they
+      // resume from a natural distribution when rain returns.
+      this.rainMesh.visible = false;
+      return;
+    }
+    this.rainMesh.visible = true;
+
+    const speedMul = 1.0;
+    for (let i = 0; i < this.rainParticles.length; i += 1) {
+      const p = this.rainParticles[i];
+      p.y -= p.vy * delta * speedMul;
+      if (p.y < -RAIN_AREA_HALF_H - 0.15) {
+        p.y = RAIN_AREA_HALF_H + Math.random() * 0.4;
+        p.x = (Math.random() - 0.5) * QUAD_WIDTH;
+        p.vy = RAIN_FALL_MIN + Math.random() * (RAIN_FALL_MAX - RAIN_FALL_MIN);
+        p.scaleX = 0.7 + Math.random() * 0.6;
+        p.scaleY = 0.7 + Math.random() * 0.9;
+      }
+      this.writeRainMatrix(i, p);
+    }
+    this.rainMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private writeAllRainMatrices(): void {
+    for (let i = 0; i < this.rainParticles.length; i += 1) {
+      this.writeRainMatrix(i, this.rainParticles[i]);
+    }
+    this.rainMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  private writeRainMatrix(index: number, p: RainParticle): void {
+    this.rainMatrix.makeScale(p.scaleX, p.scaleY, 1);
+    this.rainMatrix.setPosition(p.x, p.y, 0);
+    this.rainMesh.setMatrixAt(index, this.rainMatrix);
   }
 
   private fireBolt(ev: LightningEvent): void {
@@ -194,6 +315,8 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-// (rasterizeBolt remains exported from lightning.ts but Weather rasterizes
-//  in-place to avoid creating a new CanvasTexture per strike.)
+function clamp01(v: number): number {
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
 void rasterizeBolt;

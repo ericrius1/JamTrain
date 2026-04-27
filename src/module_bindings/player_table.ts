@@ -17,7 +17,6 @@ export default __t.row({
   seatIndex: __t.i32().name("seat_index"),
   online: __t.bool(),
   instrument: __t.string(),
-  creature: __t.string(),
   connectedAt: __t.timestamp().name("connected_at"),
   updatedAt: __t.timestamp().name("updated_at"),
 });

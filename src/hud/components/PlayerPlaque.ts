@@ -3,11 +3,13 @@ import { createMedallion } from './Medallion';
 
 export type PlayerSide = 'left' | 'right';
 export type PlayerKind = 'conductor' | 'passenger' | 'automaton';
+export type PlayerRole = 'you' | 'friend' | null;
 
 export class PlayerPlaque {
   readonly el: HTMLElement;
   private side: PlayerSide;
   private medallionWrap: HTMLElement;
+  private roleBadgeEl: HTMLElement;
   private stampEl: HTMLElement;
   private nameEl: HTMLElement;
   private voiceEl: HTMLElement;
@@ -27,6 +29,10 @@ export class PlayerPlaque {
     this.el = document.createElement('div');
     this.el.className = `plaque player-plaque ${opts.side}`;
     appendRivets(this.el);
+
+    this.roleBadgeEl = document.createElement('div');
+    this.roleBadgeEl.className = 'role-badge hidden';
+    this.el.appendChild(this.roleBadgeEl);
 
     this.medallionWrap = document.createElement('div');
     this.medallionWrap.className = 'medallion';
@@ -68,10 +74,8 @@ export class PlayerPlaque {
     }
   }
 
-  // Hosts an arbitrary element (currently the InstrumentPicker chip) inside
-  // the plaque body. Pass null to clear. Used so the local player's plaque
-  // gets the picker and the partner's doesn't — and so it follows the local
-  // plaque as seats swap.
+  // Hosts an arbitrary element inside the plaque body. Pass null to clear.
+  // Used so local-only controls follow the local plaque as seats swap.
   setPicker(el: HTMLElement | null): void {
     this.pickerSlot.replaceChildren();
     if (el) this.pickerSlot.appendChild(el);
@@ -81,6 +85,18 @@ export class PlayerPlaque {
   setCreaturePicker(el: HTMLElement | null): void {
     this.creaturePickerSlot.replaceChildren();
     if (el) this.creaturePickerSlot.appendChild(el);
+  }
+
+  setRole(role: PlayerRole): void {
+    this.roleBadgeEl.classList.remove('you', 'friend');
+    if (role === null) {
+      this.roleBadgeEl.classList.add('hidden');
+      this.roleBadgeEl.textContent = '';
+      return;
+    }
+    this.roleBadgeEl.classList.remove('hidden');
+    this.roleBadgeEl.classList.add(role);
+    this.roleBadgeEl.textContent = role === 'you' ? 'You' : 'Friend';
   }
 }
 

@@ -14,6 +14,7 @@ import { WaterStrip } from './waterStrip';
 import { SkyLife } from './skyLife';
 import { timeOfDayPhase } from './biomes';
 import { Weather } from './weather';
+import { CloudCanopy } from './cloudCanopy';
 
 const FG_OPTIONS: Record<string, string> = (() => {
   const o: Record<string, string> = { auto: 'auto' };
@@ -105,6 +106,7 @@ export class ScenerySystem {
   private water!: WaterStrip;
   private skyLife!: SkyLife;
   private weather!: Weather;
+  private cloudCanopy!: CloudCanopy;
   private onThunder?: (delay: number) => void;
   private lastCycle = 0;
   private atmosphere = {
@@ -179,6 +181,14 @@ export class ScenerySystem {
       delay => this.onThunder?.(delay),
     );
     this.weather.build();
+    this.cloudCanopy = new CloudCanopy(this.scene, {
+      cloudCover: this.weather.cloudCover,
+      rainAmount: this.weather.rainAmount,
+      skyTravel: this.skyTravel,
+      goldenHour: this.skySunset,
+      skyNight: this.skyNight,
+    });
+    this.cloudCanopy.build();
     this.scene.add(this.root);
   }
 
@@ -445,8 +455,8 @@ export class ScenerySystem {
 
       const starMask = smoothstep(0.30, 0.50, u.y);
 
-      const starX = u.x.add(this.skyTravel.mul(0.004)).mul(140.0);
-      const starY = u.y.mul(58.0);
+      const starX = u.x.add(this.skyTravel.mul(0.004)).mul(110.0);
+      const starY = u.y.mul(46.0);
       const cellX = floor(starX);
       const cellY = floor(starY);
       const fracX = fract(starX);
@@ -454,15 +464,24 @@ export class ScenerySystem {
       const starHashBase = cellX.mul(12.9898).add(cellY.mul(78.233));
       const starHash = fract(starHashBase.sin().mul(43758.5453));
       const starBright = fract(starHashBase.mul(1.91).sin().mul(23421.631));
-      const starDistX = fracX.sub(0.5);
-      const starDistY = fracY.sub(0.5);
+      const starJitterX = fract(starHashBase.mul(3.71).sin().mul(11971.123)).mul(0.7).add(0.15);
+      const starJitterY = fract(starHashBase.mul(5.13).sin().mul(28371.221)).mul(0.7).add(0.15);
+      const starSizeH = fract(starHashBase.mul(11.31).sin().mul(74121.871));
+      const starHueH = fract(starHashBase.mul(7.13).sin().mul(91421.731));
+      const starDistX = fracX.sub(starJitterX);
+      const starDistY = fracY.sub(starJitterY);
       const starDist = starDistX.mul(starDistX).add(starDistY.mul(starDistY)).sqrt();
-      const starThreshold = float(1.004).sub(this.starStrength.mul(0.18));
+      const starThreshold = float(1.004).sub(this.starStrength.mul(0.20));
       const starOn = smoothstep(starThreshold, starThreshold.add(0.004), starHash);
-      const starCircle = float(1).sub(smoothstep(0.045, 0.16, starDist));
+      const innerR = float(0.02).add(starSizeH.mul(0.04));
+      const outerR = innerR.add(float(0.07).add(starSizeH.mul(0.06)));
+      const starCircle = float(1).sub(smoothstep(innerR, outerR, starDist));
       const twinkle = starHash.mul(160.0).add(time.mul(0.65)).sin().mul(0.22).add(0.78);
+      const starColA = mix(color(0x8fb6ff), color(0xfff4e2), smoothstep(0.0, 0.55, starHueH));
+      const starColor = mix(starColA, color(0xffb060), smoothstep(0.55, 1.0, starHueH));
       sky.addAssign(
-        mix(color(0xe8efff), color(0xffdfa4), starBright.mul(0.45))
+        starColor
+          .mul(float(0.85).add(starBright.mul(0.35)))
           .mul(starOn)
           .mul(starCircle)
           .mul(twinkle)
@@ -471,8 +490,8 @@ export class ScenerySystem {
           .mul(1.15)
       );
 
-      const starX2 = u.x.add(this.skyTravel.mul(0.006)).mul(280.0);
-      const starY2 = u.y.mul(112.0);
+      const starX2 = u.x.add(this.skyTravel.mul(0.006)).mul(230.0);
+      const starY2 = u.y.mul(95.0);
       const cellX2 = floor(starX2);
       const cellY2 = floor(starY2);
       const fracX2 = fract(starX2);
@@ -480,15 +499,21 @@ export class ScenerySystem {
       const starHashBase2 = cellX2.mul(45.678).add(cellY2.mul(98.765));
       const starHash2 = fract(starHashBase2.sin().mul(17853.321));
       const starBright2 = fract(starHashBase2.mul(2.71).sin().mul(31247.159));
-      const starDistX2 = fracX2.sub(0.5);
-      const starDistY2 = fracY2.sub(0.5);
+      const starJitterX2 = fract(starHashBase2.mul(4.27).sin().mul(13297.557)).mul(0.7).add(0.15);
+      const starJitterY2 = fract(starHashBase2.mul(6.91).sin().mul(38713.117)).mul(0.7).add(0.15);
+      const starHueH2 = fract(starHashBase2.mul(8.47).sin().mul(55217.443));
+      const starDistX2 = fracX2.sub(starJitterX2);
+      const starDistY2 = fracY2.sub(starJitterY2);
       const starDist2 = starDistX2.mul(starDistX2).add(starDistY2.mul(starDistY2)).sqrt();
       const starThreshold2 = float(1.005).sub(this.starStrength.mul(0.14));
       const starOn2 = smoothstep(starThreshold2, starThreshold2.add(0.005), starHash2);
-      const starCircle2 = float(1).sub(smoothstep(0.07, 0.18, starDist2));
+      const starCircle2 = float(1).sub(smoothstep(0.04, 0.16, starDist2));
       const twinkle2 = starHash2.mul(120.0).add(time.mul(0.42)).sin().mul(0.18).add(0.82);
+      const starColA2 = mix(color(0x7ea8ff), color(0xffe9c8), smoothstep(0.0, 0.55, starHueH2));
+      const starColor2 = mix(starColA2, color(0xff9a55), smoothstep(0.55, 1.0, starHueH2));
       sky.addAssign(
-        mix(color(0xb8c8ff), color(0xffe2b0), starBright2.mul(0.4))
+        starColor2
+          .mul(float(0.8).add(starBright2.mul(0.4)))
           .mul(starOn2)
           .mul(starCircle2)
           .mul(twinkle2)

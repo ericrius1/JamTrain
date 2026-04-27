@@ -9,8 +9,8 @@ import { BeginGate } from './components/BeginGate';
 import { SharePopover } from './components/SharePopover';
 import { AnnouncementToast } from './components/AnnouncementToast';
 import { MixerPanel } from './components/MixerPanel';
-import { InstrumentPicker } from './components/InstrumentPicker';
 import { INSTRUMENTS, type InstrumentId } from '../game/instruments';
+import { InstrumentPicker } from './components/InstrumentPicker';
 import { CreaturePicker } from './components/CreaturePicker';
 import { type CreatureId } from '../game/creatures';
 
@@ -39,9 +39,10 @@ export class Hud {
   private localPanel: VideoPanel;
   private remotePanel: VideoPanel;
   private mixerPanel: MixerPanel;
-  private localInstrumentPicker: InstrumentPicker;
   private localInstrumentListeners = new Set<(id: InstrumentId) => void>();
-  private partnerInstrument: InstrumentId = 'bell';
+  private localInstrumentPicker: InstrumentPicker;
+  private localInstrument: InstrumentId = 'loom';
+  private partnerInstrument: InstrumentId = 'loom';
   private localCreaturePicker: CreaturePicker;
   private localCreatureListeners = new Set<(id: CreatureId) => void>();
   private beginGate?: BeginGate;
@@ -110,7 +111,7 @@ export class Hud {
     this.playerLeft = new PlayerPlaque({
       side: 'left',
       name: 'AVA',
-      voice: INSTRUMENTS['flute'].label,
+      voice: INSTRUMENTS.loom.label,
       kind: 'conductor',
     });
     this.uiEl.appendChild(this.playerLeft.el);
@@ -118,7 +119,7 @@ export class Hud {
     this.playerRight = new PlayerPlaque({
       side: 'right',
       name: 'KORO·v3',
-      voice: INSTRUMENTS['bell'].label,
+      voice: INSTRUMENTS.loom.label,
       kind: 'automaton',
     });
     this.uiEl.appendChild(this.playerRight.el);
@@ -146,16 +147,13 @@ export class Hud {
     this.remotePanel.setRemoteVolume(DEFAULT_VOICE_VOLUME);
     this.uiEl.appendChild(this.mixerPanel.el);
 
-    // The picker lives inside the local player's plaque (so it appears as
-    // part of the same brass placard as their name/instrument label). The
-    // partner's plaque just shows the voice label as text — no picker.
-    // applyPlaques() (called below + on every seat/partner change) handles
-    // routing the picker to whichever plaque is currently "local".
     this.localInstrumentPicker = new InstrumentPicker({
-      side: 'left', // placeholder; .player-plaque overrides positioning
-      initial: 'flute',
+      side: 'left',
+      initial: this.localInstrument,
     });
     this.localInstrumentPicker.onSelect(id => {
+      this.localInstrument = id;
+      this.applyPlaques();
       for (const l of this.localInstrumentListeners) l(id);
     });
 
@@ -280,37 +278,39 @@ export class Hud {
     const localPlaque = this.localSeat === 0 ? this.playerLeft : this.playerRight;
     const partnerPlaque = this.localSeat === 0 ? this.playerRight : this.playerLeft;
 
-    const localLabel = INSTRUMENTS[this.getLocalInstrumentId()].label;
-    const partnerLabel = INSTRUMENTS[this.partnerInstrument].label;
+    const localVoice = INSTRUMENTS[this.localInstrument].label;
+    const partnerVoice = INSTRUMENTS[this.partnerInstrument].label;
 
     localPlaque.set({
       name: this.conductorName,
-      voice: localLabel,
+      voice: localVoice,
       kind: 'conductor',
     });
-    // Pickers follow the local plaque as seats swap; partner plaque stays clean.
     localPlaque.setPicker(this.localInstrumentPicker.el);
     partnerPlaque.setPicker(null);
     localPlaque.setCreaturePicker(this.localCreaturePicker.el);
     partnerPlaque.setCreaturePicker(null);
+    localPlaque.setRole('you');
 
     if (this.partnerName) {
       partnerPlaque.set({
         name: this.partnerName.toUpperCase(),
-        voice: partnerLabel,
+        voice: partnerVoice,
         kind: 'conductor',
       });
+      partnerPlaque.setRole('friend');
     } else {
       partnerPlaque.set({
         name: 'KORO·v3',
-        voice: partnerLabel,
+        voice: partnerVoice,
         kind: 'automaton',
       });
+      partnerPlaque.setRole(null);
     }
   }
 
   private getLocalInstrumentId(): InstrumentId {
-    return this.localInstrumentPicker.getSelected();
+    return this.localInstrument;
   }
 
   setConnection(state: string): void {
@@ -342,12 +342,12 @@ export class Hud {
   }
 
   setLocalInstrument(id: InstrumentId): void {
+    this.localInstrument = id;
     this.localInstrumentPicker.setSelected(id, false);
     this.applyPlaques();
   }
 
   setPartnerInstrument(id: InstrumentId): void {
-    if (this.partnerInstrument === id) return;
     this.partnerInstrument = id;
     this.applyPlaques();
   }

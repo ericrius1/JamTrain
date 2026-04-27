@@ -45,7 +45,7 @@ export class BeginGate {
     // Lion painting full-bleed — the world the rest of the UI sits on top of.
     const lion = document.createElement('img');
     lion.className = 'begin-lion';
-    lion.src = '/lion.webp';
+    lion.src = '/jamz.webp';
     lion.alt = '';
     lion.draggable = false;
     this.stage.appendChild(lion);

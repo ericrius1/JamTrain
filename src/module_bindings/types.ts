@@ -17,7 +17,6 @@ export const Player = __t.object("Player", {
   seatIndex: __t.i32(),
   online: __t.bool(),
   instrument: __t.string(),
-  creature: __t.string(),
   connectedAt: __t.timestamp(),
   updatedAt: __t.timestamp(),
 });

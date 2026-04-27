@@ -6,7 +6,6 @@ import { appendSpriteShape, type ShapeBuffers } from './spriteShapes';
 
 const SKY_WIDTH = 12.4;
 const HALF_WIDTH = SKY_WIDTH * 0.5;
-const CLOUDS_PER_SIDE = 22;
 const FIREFLIES_PER_SIDE = 48;
 
 const BIRD_LAYER_CAPACITY = 24;
@@ -25,14 +24,6 @@ interface SpriteLayer {
   side: number;
   capacity: number;
   buffers: ShapeBuffers;
-}
-
-interface CloudData {
-  baseX: number;
-  baseY: number;
-  scale: number;
-  speed: number;
-  variant: 0 | 1 | 2;
 }
 
 interface Maneuver {
@@ -65,11 +56,9 @@ interface Flock {
 
 export class SkyLife {
   private root = new THREE.Group();
-  private cloudLayer!: SpriteLayer;
   private birdLayer!: SpriteLayer;
   private magicLayer!: SpriteLayer;
   private fireflyPoints!: { points: THREE.Points; geometry: THREE.BufferGeometry; material: THREE.PointsMaterial; positions: Float32Array; velocities: Float32Array };
-  private clouds: CloudData[] = [];
   private flocks: Flock[] = [];
   private nextFlockAt = FLOCK_FIRST_SPAWN_S;
   private elapsedSeconds = 0;
@@ -85,18 +74,15 @@ export class SkyLife {
   build(): void {
     this.root.name = 'sky-life';
     for (const side of [-1]) {
-      this.cloudLayer = this.createSpriteLayer(side, CLOUDS_PER_SIDE, side * 2.42, -25);
       this.birdLayer = this.createSpriteLayer(side, BIRD_LAYER_CAPACITY, side * 2.36, -24);
       this.magicLayer = this.createSpriteLayer(side, 4, side * 2.40, -23);
       this.fireflyPoints = this.createFireflies(side);
     }
-    this.spawnClouds();
     this.scene.add(this.root);
   }
 
   setSeed(seed: number): void {
     this.seed = seed;
-    this.spawnClouds();
     this.flocks = [];
     this.nextFlockAt = this.elapsedSeconds + FLOCK_FIRST_SPAWN_S;
   }
@@ -113,7 +99,6 @@ export class SkyLife {
     },
   ): void {
     this.elapsedSeconds += delta;
-    this.updateClouds(ctx);
     this.updateBirds(ctx);
     this.updateFireflies(delta, ctx);
     this.updateMagic(ctx);
@@ -144,20 +129,6 @@ export class SkyLife {
     this.root.add(mesh);
 
     return { mesh, geometry, material, side, capacity, buffers: emptyBuffers() };
-  }
-
-  private spawnClouds(): void {
-    this.clouds = [];
-    const rand = mulberry32(this.seed ^ 0xc10ddd);
-    for (let i = 0; i < CLOUDS_PER_SIDE; i += 1) {
-      this.clouds.push({
-        baseX: (rand() - 0.5) * SKY_WIDTH,
-        baseY: 1.7 + rand() * 0.7,
-        scale: 0.7 + rand() * 0.7,
-        speed: 0.08 + rand() * 0.12,
-        variant: Math.floor(rand() * 3) as 0 | 1 | 2,
-      });
-    }
   }
 
   private createFlock(palette: 'default' | 'seabird'): Flock {
@@ -208,28 +179,6 @@ export class SkyLife {
     }
 
     return { formX, formY, flapHz, scale, swayAmp, swayFreq, swayPhase, maneuvers };
-  }
-
-  private updateClouds(ctx: { daylight: number; goldenHour: number; cloudCover: number; rainAmount: number }): void {
-    const cloudIds: AtlasId[] = ['cloudSmall', 'cloudMed', 'cloudLarge'];
-    const baseTint = new THREE.Color();
-    const sunsetTint = new THREE.Color(0xffc59a);
-    const greyTint = new THREE.Color(0x808898);
-    const whiteTint = new THREE.Color(0xffffff);
-    const opacityMul = Math.min(1, 0.30 + ctx.cloudCover * 1.0);
-
-    this.beginLayer(this.cloudLayer);
-    for (let i = 0; i < this.cloudLayer.capacity; i += 1) {
-      const cloud = this.clouds[i];
-      if (!cloud) continue;
-      let x = cloud.baseX + cloud.speed * this.elapsedSeconds;
-      x = ((x + HALF_WIDTH) % SKY_WIDTH + SKY_WIDTH) % SKY_WIDTH - HALF_WIDTH;
-      baseTint.copy(whiteTint).lerp(sunsetTint, ctx.goldenHour * 0.7);
-      baseTint.lerp(greyTint, Math.min(1, ctx.rainAmount * 1.4));
-      baseTint.multiplyScalar((0.6 + ctx.daylight * 0.4) * opacityMul);
-      this.writeSprite(this.cloudLayer, x, cloud.baseY, cloud.scale, cloudIds[cloud.variant], baseTint, 'center');
-    }
-    this.endLayer(this.cloudLayer);
   }
 
   private updateBirds(ctx: { daylight: number; currentForegroundId: string; phase: TimeOfDay }): void {

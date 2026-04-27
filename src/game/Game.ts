@@ -8,11 +8,11 @@ import { HandTracker } from './handTracking';
 import { clamp, distance, fromThree } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
-import { Bloom } from './visuals/Bloom';
-import { Ribbon } from './visuals/Ribbon';
-import { Sparks } from './visuals/Sparks';
+import { HarmonicLoom } from './visuals/HarmonicLoom';
+import { WindChime } from './visuals/WindChime';
 import { CenterStage } from './CenterStage';
-import { isInstrumentId, type InstrumentId, type PlayerVisual } from './instruments';
+import type { InstrumentId, PlayerVisual } from './instruments';
+import { isInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
 import { makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
@@ -102,8 +102,7 @@ export class Game {
   private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
   private centerStage?: CenterStage;
   private playerVisuals: Record<'local' | 'remote', PlayerVisual | null> = { local: null, remote: null };
-  private playerInstruments: Record<'local' | 'remote', InstrumentId> = { local: 'flute', remote: 'bell' };
-  private sparksToInitialize: Sparks[] = [];
+  private playerInstruments: Record<'local' | 'remote', InstrumentId> = { local: 'loom', remote: 'loom' };
   private musicIntensity = 0;
   private shadowsTweaks?: ReturnType<typeof registerTweaks<typeof SHADOWS_DEFS>>;
   private readonly shadowParams = makeParams(SHADOWS_DEFS);
@@ -207,41 +206,29 @@ export class Game {
     await this.renderer.init();
     this.setupOrbitControls();
     this.particles.initialize(this.renderer);
-    this.centerStage = new CenterStage(
-      this.scene,
-      this.sculptureTarget,
-      this.paneDock,
-      sparks => {
-        if (this.renderer) sparks.initialize(this.renderer);
-        else this.sparksToInitialize.push(sparks);
-      }
-    );
-    this.installPlayerVisual('local', this.playerInstruments.local);
-    this.installPlayerVisual('remote', this.playerInstruments.remote);
-    this.centerStage.setSlotInstrument(0, this.playerInstruments.local);
-    this.centerStage.setSlotInstrument(1, this.playerInstruments.remote);
-
-    // Initialize any Sparks compute kernels that were created during
-    // CenterStage / per-player visual construction.
-    for (const sparks of this.sparksToInitialize) sparks.initialize(this.renderer);
-    this.sparksToInitialize.length = 0;
+    this.centerStage = new CenterStage(this.scene, this.sculptureTarget, this.paneDock);
+    this.installLoomVisuals();
     this.setupShadowsPane();
     this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
     attachHandDepthPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    window.addEventListener('blur', this.handleVisibilityChange);
+    window.addEventListener('focus', this.handleVisibilityChange);
     this.resize();
     this.renderer.setAnimationLoop(() => this.update());
   }
 
-  // Tab-hide handler. Suspends the shared Tone audio context so the bed,
-  // drums, and synth all go silent in the background; releases any held
+  // Suspends the shared Tone audio context whenever the tab is hidden or the
+  // window loses focus, so switching to another app silences the bed, drums,
+  // and synth — otherwise the camera keeps tracking and a hand near the face
+  // (e.g. while thinking in an editor) starts playing notes. Releases held
   // synth voices first so the user doesn't return to a stuck note.
   private handleVisibilityChange = (): void => {
-    const hidden = document.hidden;
-    if (hidden) this.handSynth.silenceAll();
-    void this.audio.setSuspended(hidden);
+    const inactive = document.hidden || !document.hasFocus();
+    if (inactive) this.handSynth.silenceAll();
+    void this.audio.setSuspended(inactive);
   };
 
   async startCamera(): Promise<void> {
@@ -323,7 +310,7 @@ export class Game {
     this.audio.setMasterGain(value);
   }
 
-  // Player synth (flute + rhodes).
+  // Player synth (Aurora Loom).
   setMusicVolume(value: number): void {
     this.handSynth.setMasterGain(value);
   }
@@ -370,6 +357,8 @@ export class Game {
 
   dispose(): void {
     document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    window.removeEventListener('blur', this.handleVisibilityChange);
+    window.removeEventListener('focus', this.handleVisibilityChange);
     this.handTracker.dispose();
     this.multiplayer.dispose();
     this.poseSession.dispose();
@@ -695,35 +684,39 @@ export class Game {
     });
   }
 
+  private installLoomVisuals(): void {
+    this.installPlayerVisual('local', this.playerInstruments.local);
+    this.installPlayerVisual('remote', this.playerInstruments.remote);
+  }
+
   private installPlayerVisual(player: 'local' | 'remote', id: InstrumentId): void {
-    const existing = this.playerVisuals[player];
-    if (existing) {
-      existing.dispose();
-      this.playerVisuals[player] = null;
+    this.playerVisuals[player]?.dispose();
+    this.playerInstruments[player] = id;
+
+    if (id === 'chime') {
+      const chime = new WindChime(this.scene, this.paneDock, `chime-${player}`, {
+        palette: player,
+        title: `Wind Chime (${player === 'local' ? 'Local' : 'Partner'})`,
+        onHit: hit => {
+          // Forward gem-on-gem and hand-on-gem hits straight to the chime
+          // synth voice for this player.
+          this.handSynth.triggerChimeHit(player, hit.frequency, hit.velocity);
+        },
+      });
+      this.playerVisuals[player] = chime;
+    } else {
+      this.playerVisuals[player] = new HarmonicLoom(this.scene, this.paneDock, `loom-${player}`, {
+        palette: player,
+        title: `Aurora Loom (${player === 'local' ? 'Local' : 'Partner'})`,
+      });
     }
-    const paneKey = `playerVisual-${player}-${id}`;
-    let visual: PlayerVisual;
-    if (id === 'flute') visual = new Ribbon(this.scene, this.paneDock, paneKey);
-    else if (id === 'bell') visual = new Bloom(this.scene, this.paneDock, paneKey);
-    else {
-      const sparks = new Sparks(this.scene, this.paneDock, paneKey);
-      if (this.renderer) sparks.initialize(this.renderer);
-      else this.sparksToInitialize.push(sparks);
-      visual = sparks;
-    }
-    this.playerVisuals[player] = visual;
+    this.handSynth.setInstrument(player, id);
   }
 
   setPlayerInstrument(player: 'local' | 'remote', id: string): void {
-    if (!isInstrumentId(id)) {
-      console.warn('[game] setPlayerInstrument: invalid id', id);
-      return;
-    }
+    if (!isInstrumentId(id)) return;
     if (this.playerInstruments[player] === id) return;
-    this.playerInstruments[player] = id;
     this.installPlayerVisual(player, id);
-    this.handSynth.setInstrument(player, id);
-    this.centerStage?.setSlotInstrument(player === 'local' ? 0 : 1, id);
   }
 
   setPlayerCreature(player: 'local' | 'remote', id: string): void {
@@ -733,9 +726,6 @@ export class Game {
     }
     const rig = player === 'local' ? this.localRig : this.remoteRig;
     rig.setCreature(id);
-    // Re-install the player's instrument visual since it anchors between the
-    // new palms — palm geometry/material lives on the rebuilt skeleton.
-    this.installPlayerVisual(player, this.playerInstruments[player]);
   }
 
   private setupCabinPane(): void {
@@ -847,8 +837,18 @@ export class Game {
     this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta);
     this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta);
 
-    this.centerStage?.setSlotVoice(0, localVoice);
-    this.centerStage?.setSlotVoice(1, remoteVoice);
+    // Push each chime's left-hand warmth into the audio engine so the chime
+    // synth's filter cutoff tracks the left-hand y position.
+    const localVisual = this.playerVisuals.local;
+    if (localVisual instanceof WindChime) {
+      this.handSynth.setChimeWarmth('local', localVisual.getWarmth());
+    }
+    const remoteVisual = this.playerVisuals.remote;
+    if (remoteVisual instanceof WindChime) {
+      this.handSynth.setChimeWarmth('remote', remoteVisual.getWarmth());
+    }
+
+    this.centerStage?.setInputs(localLeft, localRight, localVoice, remoteLeft, remoteRight, remoteVoice);
   }
 
   private updateMusicReactivity(delta: number): void {

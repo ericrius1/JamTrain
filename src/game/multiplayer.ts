@@ -40,8 +40,8 @@ export class MultiplayerClient {
   private partnerIdentityHex: string | null = null;
   private signalListeners = new Set<SignalListener>();
   private partnerIdentityListeners = new Set<PartnerIdentityListener>();
-  private localInstrument: string = 'flute';
-  private partnerInstrument: string = 'flute';
+  private localInstrument: string = 'loom';
+  private partnerInstrument: string = 'loom';
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
   private localCreature: string = 'lion';
@@ -133,12 +133,8 @@ export class MultiplayerClient {
     if (this.localInstrument === instrumentId) return;
     this.localInstrument = instrumentId;
     for (const listener of this.localInstrumentListeners) listener(instrumentId);
-    if (!this.connection?.isActive) return;
-    try {
-      await this.connection.reducers.updateInstrument({ instrument: instrumentId });
-    } catch (err) {
-      console.warn('[jam-train] update_instrument failed', err);
-    }
+    // The deployed multiplayer schema does not currently carry per-player
+    // instrument, so this stays local-only — partner sees their own default.
   }
 
   onLocalCreatureChange(listener: CreatureListener): void {
@@ -163,12 +159,9 @@ export class MultiplayerClient {
     if (this.localCreature === creatureId) return;
     this.localCreature = creatureId;
     for (const listener of this.localCreatureListeners) listener(creatureId);
-    if (!this.connection?.isActive) return;
-    try {
-      await this.connection.reducers.updateCreature({ creature: creatureId });
-    } catch (err) {
-      console.warn('[jam-train] update_creature failed', err);
-    }
+    // The deployed multiplayer schema does not currently include per-player
+    // creature sync. Keep local creature selection local so subscriptions
+    // stay compatible with maincloud.
   }
 
   async sendWebrtcSignal(recipientHex: string, kind: string, payload: string): Promise<void> {
@@ -253,9 +246,9 @@ export class MultiplayerClient {
             this.partnerIdentityHex = null;
             for (const listener of this.partnerIdentityListeners) listener(null);
           }
-          if (this.partnerInstrument !== 'flute') {
-            this.partnerInstrument = 'flute';
-            for (const listener of this.partnerInstrumentListeners) listener('flute');
+          if (this.partnerInstrument !== 'loom') {
+            this.partnerInstrument = 'loom';
+            for (const listener of this.partnerInstrumentListeners) listener('loom');
           }
           if (this.partnerCreature !== 'lion') {
             this.partnerCreature = 'lion';
@@ -418,7 +411,7 @@ export class MultiplayerClient {
     // ONLINE partner in our cabin. Stale/offline rows don't count.
     let nextName: string | null = null;
     let nextIdentity: string | null = null;
-    let nextInstrument: string = 'flute';
+    let nextInstrument: string = 'loom';
     let nextCreature: string = 'lion';
     if (this.connection) {
       for (const row of this.connection.db.player.iter()) {
@@ -428,8 +421,8 @@ export class MultiplayerClient {
         if (!row.online) continue;
         nextName = row.displayName || 'Player';
         nextIdentity = id;
-        nextInstrument = row.instrument || 'flute';
-        nextCreature = row.creature || 'lion';
+        nextInstrument = 'loom';
+        nextCreature = 'lion';
         break;
       }
     }
@@ -475,14 +468,6 @@ export class MultiplayerClient {
     if (row.identity.toHexString() !== this.localId) return;
     this.setRoomId(row.roomId);
     this.setLocalSeat(row.seatIndex);
-    if (row.instrument && row.instrument !== this.localInstrument) {
-      this.localInstrument = row.instrument;
-      for (const listener of this.localInstrumentListeners) listener(row.instrument);
-    }
-    if (row.creature && row.creature !== this.localCreature) {
-      this.localCreature = row.creature;
-      for (const listener of this.localCreatureListeners) listener(row.creature);
-    }
   }
 
   private setLocalSeat(seatIndex: number): void {

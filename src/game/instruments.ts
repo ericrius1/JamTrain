@@ -1,8 +1,8 @@
 import type * as THREE from 'three/webgpu';
 
-export type InstrumentId = 'flute' | 'bell' | 'sparks';
+export type InstrumentId = 'loom' | 'chime';
 
-export const INSTRUMENT_IDS: readonly InstrumentId[] = ['flute', 'bell', 'sparks'];
+export const INSTRUMENT_IDS: readonly InstrumentId[] = ['loom', 'chime'];
 
 export type VoiceState = {
   /** True between attack and release for at least one held note. */
@@ -11,9 +11,28 @@ export type VoiceState = {
   energy: number;
   /** 0..1 — short-decay spike on note attacks. */
   pulse: number;
+  /** 0..1 — vertical playing-hand position mapped to pitch. */
+  pitch: number;
+  /** 0..1 — expression-hand position mapped to color/filter/resonance. */
+  expression: number;
+  /** 0..1 — distance between hands, mapped to string tension. */
+  tension: number;
+  /** Current scale index, or -1 when silent. */
+  noteIndex: number;
+  /** Number of notes available in the current scale. */
+  noteCount: number;
 };
 
-export const voiceStateZero = (): VoiceState => ({ active: false, energy: 0, pulse: 0 });
+export const voiceStateZero = (): VoiceState => ({
+  active: false,
+  energy: 0,
+  pulse: 0,
+  pitch: 0.5,
+  expression: 0.5,
+  tension: 0.35,
+  noteIndex: -1,
+  noteCount: 1,
+});
 
 export type InstrumentMeta = {
   id: InstrumentId;
@@ -28,50 +47,31 @@ export type InstrumentMeta = {
 };
 
 export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
-  flute: {
-    id: 'flute',
-    label: 'Cedar Flute',
-    subtitle: 'ribbon · airy',
-    color: '#52e2ff',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 12 Q 8 6 12 12 T 21 12"/></svg>`,
+  loom: {
+    id: 'loom',
+    label: 'Aurora Loom',
+    subtitle: 'strings · waves · resonance',
+    color: '#68f4ff',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c4.4 3.8 11.6 3.8 16 0"/><path d="M4 12c4.4-3.8 11.6-3.8 16 0"/><path d="M4 17c4.4 3.8 11.6 3.8 16 0"/><path d="M7 4v16M17 4v16"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/></svg>`,
   },
-  bell: {
-    id: 'bell',
-    label: 'Velvet Bell',
-    subtitle: 'bloom · warm',
-    color: '#ff7ad6',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="9" opacity="0.4"/></svg>`,
-  },
-  sparks: {
-    id: 'sparks',
-    label: 'Golden Sigil',
-    subtitle: 'filigree · radiant',
-    color: '#f6bd4b',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none"/><ellipse cx="12" cy="12" rx="8" ry="3.4"/><ellipse cx="12" cy="12" rx="8" ry="3.4" transform="rotate(58 12 12)"/><ellipse cx="12" cy="12" rx="8" ry="3.4" transform="rotate(-58 12 12)"/></svg>`,
+  chime: {
+    id: 'chime',
+    label: 'Wind Chime',
+    subtitle: 'ring · gems · wind',
+    color: '#ffd166',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="1.8"/><path d="M6.4 6.6v6.5M9.4 6.9v9.2M12 7v11M14.6 6.9v9.2M17.6 6.6v6.5"/><circle cx="6.4" cy="13.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="9.4" cy="16.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="12" cy="18.4" r="1.05" fill="currentColor" stroke="none"/><circle cx="14.6" cy="16.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="17.6" cy="13.6" r="1.05" fill="currentColor" stroke="none"/></svg>`,
   },
 };
 
 export function isInstrumentId(value: string): value is InstrumentId {
-  return value === 'flute' || value === 'bell' || value === 'sparks';
+  return value === 'loom' || value === 'chime';
 }
 
 /**
- * Per-player visual contract: each instrument's between-hands renderer
- * implements this. Positions are world-space THREE.Vector3.
+ * Per-player visual contract. Positions are world-space THREE.Vector3.
  */
 export interface PlayerVisual {
   update(leftPalm: THREE.Vector3, rightPalm: THREE.Vector3, voice: VoiceState, delta: number): void;
-  setVisible(visible: boolean): void;
-  dispose(): void;
-}
-
-/**
- * Center-stage contribution contract: each instrument's center renderer
- * implements this. CenterStage drives them with the smoothed voice state of
- * the player who selected this instrument.
- */
-export interface CenterContribution {
-  update(voice: VoiceState, delta: number, elapsed: number): void;
   setVisible(visible: boolean): void;
   dispose(): void;
 }

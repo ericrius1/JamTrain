@@ -180,6 +180,16 @@ export class HandTracker {
     const tick = (): void => {
       if (!this.detectLoopRunning || !this.video || !this.detector) return;
 
+      // Skip detection when the tab is hidden or the window is unfocused.
+      // Without this, putting a hand near the camera while the user is in a
+      // different app would still trigger the synth.
+      if (document.hidden || !document.hasFocus()) {
+        this.cameraHands = undefined;
+        this.rawDetections = [];
+        this.detectRafHandle = requestAnimationFrame(tick);
+        return;
+      }
+
       const w = this.video.videoWidth;
       const h = this.video.videoHeight;
       let source: HandposeInput = this.video;
