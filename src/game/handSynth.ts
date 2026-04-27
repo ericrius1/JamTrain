@@ -1,4 +1,5 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
+import { JamAudioGraph } from './audioGraph';
 import { clamp } from './math';
 import type { HandPose, PlayerPose } from './types';
 import type { InstrumentId, VoiceState } from './instruments';
@@ -40,6 +41,11 @@ const HAND_X_RANGE = 0.6;
 const HAND_Y_LOW = 0.4;
 const HAND_Y_HIGH = 1.8;
 const NOTE_HYSTERESIS = 0.18;
+const HIT_BUDGET_WINDOW = 0.2;
+const CHIME_MAX_HITS_PER_WINDOW = 6;
+const CHIME_MAX_ACTIVE_VOICES = 12;
+const ORB_MAX_HITS_PER_WINDOW = 5;
+const ORB_MAX_ACTIVE_VOICES = 8;
 
 type PlayerKey = 'local' | 'remote';
 const PLAYER_KEYS: PlayerKey[] = ['local', 'remote'];
@@ -50,6 +56,12 @@ type Input = {
   expression: Coords | null;
   handDistance: number;
   bothHands: boolean;
+};
+
+type HitBudget = {
+  windowStart: number;
+  used: number;
+  dropped: number;
 };
 
 type Voice = {
@@ -113,10 +125,17 @@ export class HandSynthEngine {
   private running = false;
 
   private master?: any;
-  private limiter?: any;
   private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
   private chimeVoices: Record<PlayerKey, ChimeVoice | null> = { local: null, remote: null };
   private orbVoices: Record<PlayerKey, OrbVoice | null> = { local: null, remote: null };
+  private chimeBudgets: Record<PlayerKey, HitBudget> = {
+    local: { windowStart: 0, used: 0, dropped: 0 },
+    remote: { windowStart: 0, used: 0, dropped: 0 },
+  };
+  private orbBudgets: Record<PlayerKey, HitBudget> = {
+    local: { windowStart: 0, used: 0, dropped: 0 },
+    remote: { windowStart: 0, used: 0, dropped: 0 },
+  };
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'loom', remote: 'loom' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
   private duetSynth?: any;
@@ -128,6 +147,7 @@ export class HandSynthEngine {
   private mouseXN = 0.5;
   private mouseYN = 0.5;
   private elapsed = 0;
+  private hitBudgetLogAt = 0;
   private mouseLastAtMs = -Infinity;
   private mouseListener?: (e: PointerEvent) => void;
 
@@ -155,6 +175,7 @@ export class HandSynthEngine {
   private registered?: ReturnType<typeof registerTweaks<typeof HAND_SYNTH_DEFS>>;
 
   constructor(
+    private audioGraph: JamAudioGraph,
     private canvas: HTMLCanvasElement,
     private paneDock?: HTMLElement
   ) {
@@ -229,28 +250,24 @@ export class HandSynthEngine {
 
   async start(): Promise<void> {
     if (this.running) return;
-    const Tone = await import('tone');
+    const Tone = await this.audioGraph.start();
     this.tone = Tone;
-    await Tone.start();
 
-    this.limiter = new Tone.Limiter(-6).toDestination();
-    this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).connect(this.limiter);
+    this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).connect(this.audioGraph.getBus('instruments'));
 
-    this.voices.local = this.createVoice('local', SCALE_NOTES_LOCAL);
-    this.voices.remote = this.createVoice('remote', SCALE_NOTES_REMOTE);
-    this.chimeVoices.local = this.createChimeVoice('local');
-    this.chimeVoices.remote = this.createChimeVoice('remote');
-    this.orbVoices.local = this.createOrbVoice('local');
-    this.orbVoices.remote = this.createOrbVoice('remote');
+    for (const key of PLAYER_KEYS) this.ensureInstrumentVoice(key);
     this.createDuetResonator();
-    // Apply initial instrument routing — we created both voice chains active,
-    // so silence the inactive one to avoid double output.
+    // Apply initial instrument routing so a stored non-loom instrument starts
+    // with only its selected chain audible.
     this.applyInstrumentRouting('local');
     this.applyInstrumentRouting('remote');
 
     await Promise.all(
-      PLAYER_KEYS
-        .map(key => this.voices[key]?.reverb?.ready)
+      [
+        ...PLAYER_KEYS.map(key => this.voices[key]?.reverb?.ready),
+        ...PLAYER_KEYS.map(key => this.chimeVoices[key]?.reverb?.ready),
+        ...PLAYER_KEYS.map(key => this.orbVoices[key]?.reverb?.ready),
+      ]
         .filter(Boolean)
     );
 
@@ -263,7 +280,11 @@ export class HandSynthEngine {
     this.elapsed += delta;
 
     if (!this.params.enabled) {
-      for (const key of PLAYER_KEYS) this.silenceVoice(key);
+      for (const key of PLAYER_KEYS) {
+        this.silenceVoice(key);
+        this.silenceChime(key);
+        this.silenceOrb(key);
+      }
       this.updateDuetResonator(delta);
       return;
     }
@@ -277,12 +298,15 @@ export class HandSynthEngine {
       const instrument = this.pendingInstruments[key];
       if (instrument === 'chime') {
         // Loom voice held silent; chime updates only the filter/wet from warmth.
+        this.ensureChimeVoice(key);
         this.silenceVoice(key);
         this.updateChimeVoice(key, delta);
       } else if (instrument === 'orbs') {
+        this.ensureOrbVoice(key);
         this.silenceVoice(key);
         this.updateOrbVoice(key, delta);
       } else {
+        this.ensureLoomVoice(key);
         const input = key === 'local' ? localInput : remoteInput;
         this.updateVoice(key, input, delta);
       }
@@ -290,6 +314,7 @@ export class HandSynthEngine {
     this.updateDuetResonator(delta);
 
     this.master.gain.rampTo(this.tone.dbToGain(this.params.volumeDb), PARAM_RAMP);
+    this.reportHitBudgetDrops();
   }
 
   getNotePulse(): number {
@@ -334,6 +359,7 @@ export class HandSynthEngine {
     this.silenceVoice(player);
     this.silenceChime(player);
     this.silenceOrb(player);
+    if (this.running) this.ensureInstrumentVoice(player);
     this.applyInstrumentRouting(player);
 
     // Audible confirmation when switching to chime — fires one bell so the
@@ -374,9 +400,64 @@ export class HandSynthEngine {
     }
   }
 
+  private ensureInstrumentVoice(player: PlayerKey): void {
+    const instrument = this.pendingInstruments[player];
+    if (instrument === 'chime') this.ensureChimeVoice(player);
+    else if (instrument === 'orbs') this.ensureOrbVoice(player);
+    else this.ensureLoomVoice(player);
+  }
+
+  private ensureLoomVoice(player: PlayerKey): Voice | null {
+    if (!this.tone || !this.master) return null;
+    if (!this.voices[player]) {
+      this.voices[player] = this.createVoice(player, player === 'local' ? SCALE_NOTES_LOCAL : SCALE_NOTES_REMOTE);
+    }
+    return this.voices[player];
+  }
+
+  private ensureChimeVoice(player: PlayerKey): ChimeVoice | null {
+    if (!this.tone || !this.master) return null;
+    if (!this.chimeVoices[player]) this.chimeVoices[player] = this.createChimeVoice(player);
+    return this.chimeVoices[player];
+  }
+
+  private ensureOrbVoice(player: PlayerKey): OrbVoice | null {
+    if (!this.tone || !this.master) return null;
+    if (!this.orbVoices[player]) this.orbVoices[player] = this.createOrbVoice(player);
+    return this.orbVoices[player];
+  }
+
+  private allowHit(budget: HitBudget, maxHits: number, activeVoices: number, maxActiveVoices: number): boolean {
+    const now = this.elapsed;
+    if (now - budget.windowStart >= HIT_BUDGET_WINDOW) {
+      budget.windowStart = now;
+      budget.used = 0;
+    }
+    if (budget.used >= maxHits || activeVoices >= maxActiveVoices) {
+      budget.dropped += 1;
+      return false;
+    }
+    budget.used += 1;
+    return true;
+  }
+
+  private reportHitBudgetDrops(): void {
+    if (this.elapsed - this.hitBudgetLogAt < 4) return;
+    const chimeDropped = this.chimeBudgets.local.dropped + this.chimeBudgets.remote.dropped;
+    const orbDropped = this.orbBudgets.local.dropped + this.orbBudgets.remote.dropped;
+    if (chimeDropped > 0 || orbDropped > 0) {
+      console.debug('[handSynth] dropped excess hit events', { chimeDropped, orbDropped });
+      for (const key of PLAYER_KEYS) {
+        this.chimeBudgets[key].dropped = 0;
+        this.orbBudgets[key].dropped = 0;
+      }
+    }
+    this.hitBudgetLogAt = this.elapsed;
+  }
+
   /** Called by the WindChime visual when two gems collide or a gem is poked.
    *  Triggers a brief bell on the chime voice for the given player. */
-  triggerChimeHit(player: PlayerKey, frequency: number, velocity: number): void {
+  triggerChimeHit(player: PlayerKey, frequency: number, velocity: number, gemIndex = -1): void {
     if (!this.running || !this.tone) {
       // Surface this once so it's debuggable from devtools — silent failures
       // here are the most common reason a player reports "no sound".
@@ -388,9 +469,12 @@ export class HandSynthEngine {
     }
     if (this.muted[player]) return;
     if (this.pendingInstruments[player] !== 'chime') return;
-    const chime = this.chimeVoices[player];
+    const chime = this.ensureChimeVoice(player);
     if (!chime) return;
     if (!Number.isFinite(frequency) || frequency <= 0) return;
+    if (!this.allowHit(this.chimeBudgets[player], CHIME_MAX_HITS_PER_WINDOW, chime.synth?.activeVoices ?? 0, CHIME_MAX_ACTIVE_VOICES)) {
+      return;
+    }
     const v = clamp(velocity, 0, 1);
     // Velocity floor at 0.4 so a soft brush still gives an audible bell.
     const synthVel = 0.4 + v * 0.6;
@@ -410,7 +494,7 @@ export class HandSynthEngine {
     }
     chime.pulse = Math.min(1, chime.pulse + 0.55 + v * 0.45);
     chime.energy = Math.min(1, chime.energy + 0.14 + v * 0.18);
-    chime.lastNoteIdx = chime.lastHitCount % 32;
+    chime.lastNoteIdx = gemIndex >= 0 ? gemIndex % 32 : chime.lastHitCount % 32;
     chime.lastHitCount += 1;
   }
   private _loggedChimeFirstHit = false;
@@ -436,8 +520,12 @@ export class HandSynthEngine {
     }
     if (this.muted[player]) return;
     if (this.pendingInstruments[player] !== 'orbs') return;
-    const orb = this.orbVoices[player];
+    const orb = this.ensureOrbVoice(player);
     if (!orb) return;
+    const activeVoices = Math.max(orb.fund?.activeVoices ?? 0, orb.fifth?.activeVoices ?? 0);
+    if (!this.allowHit(this.orbBudgets[player], ORB_MAX_HITS_PER_WINDOW, activeVoices, ORB_MAX_ACTIVE_VOICES)) {
+      return;
+    }
     const v = clamp(velocity, 0, 1);
     this.fireOrbHit(orb, frequency, v);
     if (!this._loggedOrbFirstHit) {
@@ -491,7 +579,6 @@ export class HandSynthEngine {
     this.duetFilter?.dispose?.();
     this.duetGain?.dispose?.();
     this.master?.dispose?.();
-    this.limiter?.dispose?.();
     this.registered?.dispose();
   }
 
@@ -605,6 +692,7 @@ export class HandSynthEngine {
       modulationEnvelope: { attack: 0.002, decay: 0.18, sustain: 0, release: 0.2 },
       volume: this.params.chimeDb,
     }).connect(filter);
+    synth.maxPolyphony = CHIME_MAX_ACTIVE_VOICES;
 
     return {
       synth,
@@ -723,6 +811,7 @@ export class HandSynthEngine {
       modulationEnvelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0.5 },
       volume: this.params.orbDb,
     }).connect(filter);
+    fund.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
 
     // Compound-fifth partial — sine voice +19 semitones (octave + perfect
     // fifth) at lower volume, scaled by the harmonics knob. This is the
@@ -732,6 +821,7 @@ export class HandSynthEngine {
       envelope: { attack: 0.003, decay: this.params.orbDecay * 0.7, sustain: 0, release: this.params.orbDecay * 0.4 },
       volume: this.params.orbDb - 14,
     }).connect(filter);
+    fifth.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
 
     return {
       fund,

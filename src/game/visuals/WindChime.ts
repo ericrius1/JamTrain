@@ -49,6 +49,7 @@ export type ChimeHit = {
 const STRING_COUNT = 8;
 const GEMS_PER_STRING = 4;
 const GEM_COUNT = STRING_COUNT * GEMS_PER_STRING;
+const MAX_AUDIO_HITS_PER_FRAME = 8;
 // 1 root + 1 top hanger + 4 gem nodes — the hanger gives a visible neck
 // between the ring and the first gem so strings don't look fused to the ring.
 const NODES_PER_STRING = 1 + 1 + GEMS_PER_STRING;
@@ -481,6 +482,7 @@ export class WindChime implements PlayerVisual {
 
     const minVel = this.params.hitVelMin;
     const cooldown = this.params.hitCooldown;
+    let emittedAudioHits = 0;
 
     for (const pair of this.gemPairs) {
       const a = pair.a;
@@ -496,7 +498,7 @@ export class WindChime implements PlayerVisual {
 
       if (relSpeed < minVel) continue;
       const now = this.elapsed;
-      if (now - this.gemHitAt[a] < cooldown && now - this.gemHitAt[b] < cooldown) continue;
+      if (now - this.gemHitAt[a] < cooldown || now - this.gemHitAt[b] < cooldown) continue;
       this.gemHitAt[a] = now;
       this.gemHitAt[b] = now;
 
@@ -504,9 +506,13 @@ export class WindChime implements PlayerVisual {
       this.gemHitPulse[a] = Math.min(1, this.gemHitPulse[a] + 0.4 + velocity * 0.6);
       this.gemHitPulse[b] = Math.min(1, this.gemHitPulse[b] + 0.4 + velocity * 0.6);
 
-      if (this.onHitCallback) {
+      if (this.onHitCallback && emittedAudioHits < MAX_AUDIO_HITS_PER_FRAME) {
         this.onHitCallback({ gemIndex: a, frequency: this.gemFrequencies[a], velocity });
-        this.onHitCallback({ gemIndex: b, frequency: this.gemFrequencies[b], velocity });
+        emittedAudioHits += 1;
+        if (emittedAudioHits < MAX_AUDIO_HITS_PER_FRAME) {
+          this.onHitCallback({ gemIndex: b, frequency: this.gemFrequencies[b], velocity });
+          emittedAudioHits += 1;
+        }
       }
       this.gemHitCount += 1;
     }
@@ -528,6 +534,7 @@ export class WindChime implements PlayerVisual {
     const cooldown = this.params.hitCooldown * 1.4;
     const now = this.elapsed;
     const minPokeSpeed = this.params.hitVelMin * 0.8;
+    let emittedAudioHits = 0;
 
     for (const contact of contacts) {
       let previous = this.previousContacts.get(contact.id);
@@ -566,8 +573,9 @@ export class WindChime implements PlayerVisual {
         this.gemHitAt[gemIdx] = now;
         this.gemHitPulse[gemIdx] = Math.min(1, this.gemHitPulse[gemIdx] + 0.5 + velNorm * 0.5);
 
-        if (this.onHitCallback) {
+        if (this.onHitCallback && emittedAudioHits < MAX_AUDIO_HITS_PER_FRAME) {
           this.onHitCallback({ gemIndex: gemIdx, frequency: this.gemFrequencies[gemIdx], velocity: velNorm });
+          emittedAudioHits += 1;
         }
         this.handHitCount += 1;
       }

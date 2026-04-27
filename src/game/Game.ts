@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { JamAudioGraph } from './audioGraph';
 import { AudioEngine } from './audio';
 import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
@@ -109,6 +110,7 @@ export class Game {
   private startedAt = performance.now();
   private lastFrameAt = this.startedAt;
   readonly handTracker: HandTracker;
+  private audioGraph: JamAudioGraph;
   private audio: AudioEngine;
   private handSynth: HandSynthEngine;
   readonly multiplayer: MultiplayerClient;
@@ -159,8 +161,9 @@ export class Game {
     this.renderer.setPixelRatio(1)
     this.paneDock = this.createPaneDock();
     this.handTracker = new HandTracker(ui.inputStatus);
-    this.audio = new AudioEngine(ui.musicStatus, this.paneDock);
-    this.handSynth = new HandSynthEngine(canvas, this.paneDock);
+    this.audioGraph = new JamAudioGraph();
+    this.audio = new AudioEngine(this.audioGraph, ui.musicStatus, this.paneDock);
+    this.handSynth = new HandSynthEngine(this.audioGraph, canvas, this.paneDock);
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
@@ -281,7 +284,7 @@ export class Game {
   private handleVisibilityChange = (): void => {
     const inactive = document.hidden || !document.hasFocus();
     if (inactive) this.handSynth.silenceAll();
-    void this.audio.setSuspended(inactive);
+    void this.audioGraph.setSuspended(inactive);
   };
 
   async startCamera(): Promise<void> {
@@ -290,6 +293,7 @@ export class Game {
   }
 
   async startAudio(): Promise<void> {
+    await this.audioGraph.start();
     await this.audio.start();
     await this.handSynth.start();
   }
@@ -423,6 +427,7 @@ export class Game {
     this.playerVisuals.remote?.dispose();
     this.audio.dispose();
     this.handSynth.dispose();
+    this.audioGraph.dispose();
     this.cameraTweaks?.dispose();
     this.shadowsTweaks?.dispose();
     this.cabinTweaks?.dispose();
@@ -753,7 +758,7 @@ export class Game {
         onHit: hit => {
           // Forward gem-on-gem and hand-on-gem hits straight to the chime
           // synth voice for this player.
-          this.handSynth.triggerChimeHit(player, hit.frequency, hit.velocity);
+          this.handSynth.triggerChimeHit(player, hit.frequency, hit.velocity, hit.gemIndex);
         },
       });
       this.playerVisuals[player] = chime;

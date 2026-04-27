@@ -1,4 +1,5 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
+import { JamAudioGraph } from './audioGraph';
 import { clamp, distance } from './math';
 import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Data } from './types';
 
@@ -79,7 +80,6 @@ export class AudioEngine {
   private reverb?: any;
   private panner?: any;
   private compressor?: any;
-  private limiter?: any;
 
   private chordIndex = 0;
   private chordPhase = 0;
@@ -123,6 +123,7 @@ export class AudioEngine {
   };
 
   constructor(
+    private audioGraph: JamAudioGraph,
     private statusTarget?: HTMLElement,
     private paneDock?: HTMLElement
   ) {
@@ -132,18 +133,13 @@ export class AudioEngine {
   async start(): Promise<void> {
     if (this.running) return;
 
-    const Tone = await import('tone');
+    const Tone = await this.audioGraph.start();
     this.tone = Tone;
-    await Tone.start();
 
-    // Brick-wall limiter on the way out so summed peaks (bed + drums + the
-    // hand synth which connects to its own destination) never crackle. -3 dB
-    // ceiling leaves headroom for the synth bus that lives outside this chain.
-    this.limiter = new Tone.Limiter(-3).toDestination();
-    this.master = new Tone.Gain(this.params.masterGain).connect(this.limiter);
     // Tame voice-stacking buildup before it hits the master fader. Threshold
     // is set high enough that quiet passages pass through clean and only
     // crowded chord transitions get gently squeezed.
+    this.master = new Tone.Gain(this.params.masterGain).connect(this.audioGraph.getBus('backing'));
     this.compressor = new Tone.Compressor({
       threshold: -18,
       ratio: 4,
@@ -364,20 +360,6 @@ export class AudioEngine {
     return this.params.muteDrums ? 0 : Math.pow(bell, 1.4);
   }
 
-  // Suspend the underlying audio context when the tab is hidden so nothing
-  // keeps playing in the background. Tone resumes cleanly on the next call.
-  async setSuspended(suspended: boolean): Promise<void> {
-    if (!this.tone) return;
-    const ctx = (this.tone.getContext() as unknown as { rawContext: AudioContext }).rawContext;
-    if (!ctx) return;
-    try {
-      if (suspended && ctx.state === 'running') await ctx.suspend();
-      else if (!suspended && ctx.state === 'suspended') await ctx.resume();
-    } catch (e) {
-      console.warn('audio suspend toggle failed', e);
-    }
-  }
-
   // Backing slider (bed + drums). Independent from the player synth's mix
   // slider — that lives on HandSynthEngine.
   setMasterGain(value: number): void {
@@ -416,7 +398,9 @@ export class AudioEngine {
       gain.gain.value = 0.10;
       const convolver = ctx.createConvolver();
       convolver.buffer = makeImpulseResponse(ctx, 2.4, 1.6);
-      src.connect(lp).connect(convolver).connect(gain).connect(ctx.destination);
+      const destination = this.audioGraph.getRawEffectsInput();
+      if (!destination) return;
+      src.connect(lp).connect(convolver).connect(gain).connect(destination);
       src.start(ctx.currentTime + delaySeconds);
     } catch (e) {
       console.warn('thunder failed', e);
@@ -446,7 +430,6 @@ export class AudioEngine {
     this.panner?.dispose?.();
     this.compressor?.dispose?.();
     this.master?.dispose?.();
-    this.limiter?.dispose?.();
     this.drumSeq?.dispose?.();
     this.kick?.dispose?.();
     this.snare?.dispose?.();
