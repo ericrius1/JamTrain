@@ -20,6 +20,9 @@ export const HAND_SYNTH_DEFS = {
   chimeDb:       { default: 4,     min: -30, max: 12,   step: 0.5,  label: 'chime dB' },
   chimeWarmthMin:{ default: 600,   min: 120, max: 3000, step: 10,   label: 'chime warmth min Hz' },
   chimeWarmthMax:{ default: 6800,  min: 1200, max: 12000, step: 50, label: 'chime warmth max Hz' },
+  orbDb:         { default: 2,     min: -30, max: 12,   step: 0.5,  label: 'orb dB' },
+  orbDecay:      { default: 2.4,   min: 0.4, max: 6,    step: 0.05, label: 'orb decay s' },
+  orbHarmonics:  { default: 0.55,  min: 0,   max: 1,    step: 0.01, label: 'orb partials' },
 } as const;
 
 export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
@@ -87,6 +90,24 @@ type ChimeVoice = {
   lastNoteIdx: number;
 };
 
+type OrbVoice = {
+  // Hang-drum-style additive synth: fundamental FM voice for body/octave +
+  // a parallel sine voice at the compound-fifth partial for the
+  // characteristic ringing top end.
+  fund: any;        // Tone.PolySynth(Tone.FMSynth) — fundamental + octave
+  fifth: any;       // Tone.PolySynth(Tone.Synth) — compound fifth partial (1.5x octave)
+  filter: any;      // gentle lowpass — keeps the metal warm, not glassy
+  panner: any;
+  dryGain: any;
+  wetSend: any;
+  reverb: any;
+  reverbReturn: any;
+  pulse: number;
+  energy: number;
+  lastHitCount: number;
+  lastNoteIdx: number;
+};
+
 export class HandSynthEngine {
   private tone?: typeof import('tone');
   private running = false;
@@ -95,6 +116,7 @@ export class HandSynthEngine {
   private limiter?: any;
   private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
   private chimeVoices: Record<PlayerKey, ChimeVoice | null> = { local: null, remote: null };
+  private orbVoices: Record<PlayerKey, OrbVoice | null> = { local: null, remote: null };
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'loom', remote: 'loom' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
   private duetSynth?: any;
@@ -125,6 +147,9 @@ export class HandSynthEngine {
     chimeDb: HAND_SYNTH_DEFS.chimeDb.default,
     chimeWarmthMin: HAND_SYNTH_DEFS.chimeWarmthMin.default,
     chimeWarmthMax: HAND_SYNTH_DEFS.chimeWarmthMax.default,
+    orbDb: HAND_SYNTH_DEFS.orbDb.default,
+    orbDecay: HAND_SYNTH_DEFS.orbDecay.default,
+    orbHarmonics: HAND_SYNTH_DEFS.orbHarmonics.default,
   };
 
   private registered?: ReturnType<typeof registerTweaks<typeof HAND_SYNTH_DEFS>>;
@@ -137,7 +162,10 @@ export class HandSynthEngine {
   }
 
   getProfileLabel(player: PlayerKey): string {
-    return this.pendingInstruments[player] === 'chime' ? 'Wind Chime' : 'Aurora Loom';
+    const id = this.pendingInstruments[player];
+    if (id === 'chime') return 'Wind Chime';
+    if (id === 'orbs') return 'Hang Orbs';
+    return 'Aurora Loom';
   }
 
   getInstrument(player: PlayerKey): InstrumentId {
@@ -160,6 +188,20 @@ export class HandSynthEngine {
         tension: clamp(c.energy * 1.4, 0, 1),
         noteIndex: c.lastNoteIdx,
         noteCount: 32,
+      };
+    }
+    if (instrument === 'orbs') {
+      const o = this.orbVoices[player];
+      if (!o) return voiceStateZero();
+      return {
+        active: o.energy > 0.02,
+        energy: o.energy,
+        pulse: o.pulse,
+        pitch: 0.5,
+        expression: 0.5,
+        tension: clamp(o.energy * 1.2, 0, 1),
+        noteIndex: o.lastNoteIdx,
+        noteCount: 7,
       };
     }
     const v = this.voices[player];
@@ -198,6 +240,8 @@ export class HandSynthEngine {
     this.voices.remote = this.createVoice('remote', SCALE_NOTES_REMOTE);
     this.chimeVoices.local = this.createChimeVoice('local');
     this.chimeVoices.remote = this.createChimeVoice('remote');
+    this.orbVoices.local = this.createOrbVoice('local');
+    this.orbVoices.remote = this.createOrbVoice('remote');
     this.createDuetResonator();
     // Apply initial instrument routing — we created both voice chains active,
     // so silence the inactive one to avoid double output.
@@ -235,6 +279,9 @@ export class HandSynthEngine {
         // Loom voice held silent; chime updates only the filter/wet from warmth.
         this.silenceVoice(key);
         this.updateChimeVoice(key, delta);
+      } else if (instrument === 'orbs') {
+        this.silenceVoice(key);
+        this.updateOrbVoice(key, delta);
       } else {
         const input = key === 'local' ? localInput : remoteInput;
         this.updateVoice(key, input, delta);
@@ -252,6 +299,8 @@ export class HandSynthEngine {
       if (v && v.pulse > max) max = v.pulse;
       const c = this.chimeVoices[key];
       if (c && c.pulse > max) max = c.pulse;
+      const o = this.orbVoices[key];
+      if (o && o.pulse > max) max = o.pulse;
     }
     return max;
   }
@@ -260,6 +309,7 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       this.silenceVoice(key);
       this.silenceChime(key);
+      this.silenceOrb(key);
     }
     this.releaseDuet(true);
   }
@@ -270,6 +320,7 @@ export class HandSynthEngine {
     if (muted) {
       this.silenceVoice(player);
       this.silenceChime(player);
+      this.silenceOrb(player);
     } else {
       this.applyInstrumentRouting(player);
     }
@@ -278,10 +329,11 @@ export class HandSynthEngine {
   setInstrument(player: PlayerKey, id: InstrumentId): void {
     if (this.pendingInstruments[player] === id) return;
     this.pendingInstruments[player] = id;
-    // Hard-silence the previous chain immediately; updateVoice/updateChimeVoice
-    // will bring the new chain to life on the next frame.
+    // Hard-silence the previous chain immediately; updateVoice/updateChimeVoice/
+    // updateOrbVoice will bring the new chain to life on the next frame.
     this.silenceVoice(player);
     this.silenceChime(player);
+    this.silenceOrb(player);
     this.applyInstrumentRouting(player);
 
     // Audible confirmation when switching to chime — fires one bell so the
@@ -301,6 +353,22 @@ export class HandSynthEngine {
           console.debug('[handSynth] chime test ping fired', { player });
         } catch (err) {
           console.warn('[handSynth] chime test ping failed', err);
+        }
+      }
+    }
+
+    if (id === 'orbs' && this.running && this.tone) {
+      const orb = this.orbVoices[player];
+      if (orb) {
+        try {
+          orb.dryGain.gain.cancelScheduledValues?.(this.tone.now());
+          orb.dryGain.gain.setValueAtTime?.(0.95, this.tone.now());
+        } catch { /* fallback to ramp */ }
+        try {
+          this.fireOrbHit(orb, 220, 0.7);
+          console.debug('[handSynth] orb test ping fired', { player });
+        } catch (err) {
+          console.warn('[handSynth] orb test ping failed', err);
         }
       }
     }
@@ -351,11 +419,41 @@ export class HandSynthEngine {
     chime.warmth = clamp(warmth, 0, 1);
   }
 
+  /** Called by the OrbDrums visual when an orb is struck. Rings the
+   *  hang-drum voice for the given player. */
+  triggerOrbHit(player: PlayerKey, frequency: number, velocity: number, orbIndex: number): void {
+    if (!this.running || !this.tone) {
+      if (!this._loggedOrbBlock) {
+        console.warn('[handSynth] orb hit blocked: audio not started yet');
+        this._loggedOrbBlock = true;
+      }
+      return;
+    }
+    if (this.muted[player]) return;
+    if (this.pendingInstruments[player] !== 'orbs') return;
+    const orb = this.orbVoices[player];
+    if (!orb) return;
+    const v = clamp(velocity, 0, 1);
+    this.fireOrbHit(orb, frequency, v);
+    if (!this._loggedOrbFirstHit) {
+      console.debug('[handSynth] first orb hit', { player, frequency, velocity: v });
+      this._loggedOrbFirstHit = true;
+    }
+    orb.pulse = Math.min(1, orb.pulse + 0.55 + v * 0.45);
+    orb.energy = Math.min(1, orb.energy + 0.18 + v * 0.22);
+    orb.lastNoteIdx = orbIndex;
+    orb.lastHitCount += 1;
+  }
+  private _loggedOrbFirstHit = false;
+  private _loggedOrbBlock = false;
+
   getActivity(): number {
     let local = this.voices.local?.energy ?? 0;
     let remote = this.voices.remote?.energy ?? 0;
     local = Math.max(local, this.chimeVoices.local?.energy ?? 0);
     remote = Math.max(remote, this.chimeVoices.remote?.energy ?? 0);
+    local = Math.max(local, this.orbVoices.local?.energy ?? 0);
+    remote = Math.max(remote, this.orbVoices.remote?.energy ?? 0);
     return clamp((local + remote) * 0.5, 0, 1);
   }
 
@@ -376,6 +474,11 @@ export class HandSynthEngine {
       if (c) {
         this.disposeChimeVoice(c);
         this.chimeVoices[key] = null;
+      }
+      const o = this.orbVoices[key];
+      if (o) {
+        this.disposeOrbVoice(o);
+        this.orbVoices[key] = null;
       }
     }
     this.releaseDuet(true);
@@ -571,15 +674,129 @@ export class HandSynthEngine {
     const instrument = this.pendingInstruments[player];
     const voice = this.voices[player];
     const chime = this.chimeVoices[player];
+    const orb = this.orbVoices[player];
     if (instrument === 'chime') {
-      // Loom chain held at zero; chime chain is brought up by updateChimeVoice.
-      if (voice) {
-        this.releaseVoice(voice, false);
-      }
+      if (voice) this.releaseVoice(voice, false);
+      if (orb) this.silenceOrb(player);
+    } else if (instrument === 'orbs') {
+      if (voice) this.releaseVoice(voice, false);
+      if (chime) this.silenceChime(player);
     } else {
-      if (chime) {
-        this.silenceChime(player);
+      if (chime) this.silenceChime(player);
+      if (orb) this.silenceOrb(player);
+    }
+  }
+
+  private createOrbVoice(key: PlayerKey): OrbVoice {
+    const Tone = this.tone!;
+    const panner = new Tone.Panner(key === 'local' ? -0.15 : 0.15).connect(this.master);
+    const dryGain = new Tone.Gain(0).connect(panner);
+    const reverbReturn = new Tone.Gain(0.7).connect(panner);
+    const reverb = new Tone.Reverb({
+      decay: 5.4,
+      preDelay: 0.018,
+      wet: 1,
+    }).connect(reverbReturn);
+    const wetSend = new Tone.Gain(0).connect(reverb);
+    const filter = new Tone.Filter({
+      frequency: 5200,
+      type: 'lowpass',
+      rolloff: -12,
+      Q: 0.5,
+    });
+    filter.connect(dryGain);
+    filter.connect(wetSend);
+
+    // Fundamental + octave partial (FM with harmonicity=2 gives strong octave).
+    // Fast attack + medium-long exponential decay = handpan body.
+    const fund = new Tone.PolySynth(Tone.FMSynth, {
+      harmonicity: 2,
+      modulationIndex: 6,
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.002, decay: this.params.orbDecay, sustain: 0, release: this.params.orbDecay * 0.6 },
+      modulation: { type: 'sine' },
+      modulationEnvelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0.5 },
+      volume: this.params.orbDb,
+    }).connect(filter);
+
+    // Compound-fifth partial — sine voice +19 semitones (octave + perfect
+    // fifth) at lower volume, scaled by the harmonics knob. This is the
+    // classic shimmer that distinguishes a hang from a plain bell.
+    const fifth = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.003, decay: this.params.orbDecay * 0.7, sustain: 0, release: this.params.orbDecay * 0.4 },
+      volume: this.params.orbDb - 14,
+    }).connect(filter);
+
+    return {
+      fund,
+      fifth,
+      filter,
+      panner,
+      dryGain,
+      wetSend,
+      reverb,
+      reverbReturn,
+      pulse: 0,
+      energy: 0,
+      lastHitCount: 0,
+      lastNoteIdx: -1,
+    };
+  }
+
+  private updateOrbVoice(player: PlayerKey, delta: number): void {
+    const orb = this.orbVoices[player];
+    if (!orb || !this.tone) return;
+    if (this.muted[player]) {
+      this.silenceOrb(player);
+      return;
+    }
+
+    // Wet send rises with energy — more reverb tail when actively playing.
+    const wet = clamp(0.22 + orb.energy * 0.55, 0, 1);
+    orb.wetSend.gain.rampTo(wet * this.params.reverbWetMax, PARAM_RAMP * 2);
+    orb.dryGain.gain.rampTo(0.95, PARAM_RAMP);
+
+    orb.pulse = Math.max(0, orb.pulse - delta * 3.0);
+    orb.energy = Math.max(0, orb.energy - delta * 0.45);
+  }
+
+  private silenceOrb(player: PlayerKey): void {
+    const orb = this.orbVoices[player];
+    if (!orb) return;
+    try { orb.fund.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    try { orb.fifth.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    this.setGainNow(orb.dryGain, 0);
+    this.setGainNow(orb.wetSend, 0);
+    orb.pulse = 0;
+    orb.energy = 0;
+  }
+
+  private disposeOrbVoice(orb: OrbVoice): void {
+    try { orb.fund?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    try { orb.fifth?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    orb.fund?.dispose?.();
+    orb.fifth?.dispose?.();
+    orb.filter?.dispose?.();
+    orb.panner?.dispose?.();
+    orb.dryGain?.dispose?.();
+    orb.wetSend?.dispose?.();
+    orb.reverb?.dispose?.();
+    orb.reverbReturn?.dispose?.();
+  }
+
+  private fireOrbHit(orb: OrbVoice, frequency: number, velocity: number): void {
+    // Velocity floor at 0.35 so a soft tap still rings audibly.
+    const synthVel = 0.35 + velocity * 0.65;
+    const fifthHz = frequency * 3.0; // octave + fifth (3x fundamental)
+    const harmonics = clamp(this.params.orbHarmonics, 0, 1);
+    try {
+      orb.fund.triggerAttackRelease(frequency, this.params.orbDecay, undefined, synthVel);
+      if (harmonics > 0.02) {
+        orb.fifth.triggerAttackRelease(fifthHz, this.params.orbDecay * 0.7, undefined, synthVel * harmonics * 0.55);
       }
+    } catch (err) {
+      console.warn('[handSynth] orb trigger failed', err);
     }
   }
 
@@ -815,6 +1032,7 @@ export class HandSynthEngine {
         pluckDb: () => this.applyPluckGain(),
         duetDb:  () => this.applyDuetVolume(),
         chimeDb: () => this.applyChimeVolume(),
+        orbDb:   () => this.applyOrbVolume(),
       },
     });
   }
@@ -854,6 +1072,14 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const c = this.chimeVoices[key];
       if (c?.synth?.volume) c.synth.volume.rampTo(this.params.chimeDb, PARAM_RAMP);
+    }
+  }
+
+  private applyOrbVolume(): void {
+    for (const key of PLAYER_KEYS) {
+      const o = this.orbVoices[key];
+      if (o?.fund?.volume) o.fund.volume.rampTo(this.params.orbDb, PARAM_RAMP);
+      if (o?.fifth?.volume) o.fifth.volume.rampTo(this.params.orbDb - 14, PARAM_RAMP);
     }
   }
 }

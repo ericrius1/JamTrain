@@ -1,8 +1,8 @@
 import type * as THREE from 'three/webgpu';
 
-export type InstrumentId = 'loom' | 'chime';
+export type InstrumentId = 'loom' | 'chime' | 'orbs';
 
-export const INSTRUMENT_IDS: readonly InstrumentId[] = ['loom', 'chime'];
+export const INSTRUMENT_IDS: readonly InstrumentId[] = ['loom', 'chime', 'orbs'];
 
 export type VoiceState = {
   /** True between attack and release for at least one held note. */
@@ -61,10 +61,17 @@ export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
     color: '#ffd166',
     iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="1.8"/><path d="M6.4 6.6v6.5M9.4 6.9v9.2M12 7v11M14.6 6.9v9.2M17.6 6.6v6.5"/><circle cx="6.4" cy="13.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="9.4" cy="16.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="12" cy="18.4" r="1.05" fill="currentColor" stroke="none"/><circle cx="14.6" cy="16.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="17.6" cy="13.6" r="1.05" fill="currentColor" stroke="none"/></svg>`,
   },
+  orbs: {
+    id: 'orbs',
+    label: 'Hang Orbs',
+    subtitle: 'tap · steel · ripples',
+    color: '#9be7ff',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.4" cy="9.4" r="2.6"/><circle cx="12" cy="6" r="2.6"/><circle cx="17.6" cy="9.4" r="2.6"/><circle cx="8.6" cy="16.6" r="2.6"/><circle cx="15.4" cy="16.6" r="2.6"/><circle cx="12" cy="6" r="0.9" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="8.6" cy="16.6" r="0.9" fill="currentColor" stroke="none" opacity="0.7"/></svg>`,
+  },
 };
 
 export function isInstrumentId(value: string): value is InstrumentId {
-  return value === 'loom' || value === 'chime';
+  return value === 'loom' || value === 'chime' || value === 'orbs';
 }
 
 /**

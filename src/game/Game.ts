@@ -10,6 +10,7 @@ import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
 import { HarmonicLoom } from './visuals/HarmonicLoom';
 import { WindChime } from './visuals/WindChime';
+import { OrbDrums } from './visuals/OrbDrums';
 import { CenterStage } from './CenterStage';
 import type { InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId } from './instruments';
@@ -726,6 +727,15 @@ export class Game {
         },
       });
       this.playerVisuals[player] = chime;
+    } else if (id === 'orbs') {
+      const orbs = new OrbDrums(this.scene, this.paneDock, `orbs-${player}`, {
+        palette: player,
+        title: `Hang Orbs (${player === 'local' ? 'Local' : 'Partner'})`,
+        onHit: hit => {
+          this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
+        },
+      });
+      this.playerVisuals[player] = orbs;
     } else {
       this.playerVisuals[player] = new HarmonicLoom(this.scene, this.paneDock, `loom-${player}`, {
         palette: player,

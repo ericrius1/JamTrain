@@ -44,13 +44,6 @@ const EMPTY_CAMERA_SVG = `
   <path d="M15.5 10.5l5.5-3v9l-5.5-3z"/>
 </svg>`;
 
-const PARTNER_BLIND_SVG = `
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/>
-  <circle cx="12" cy="12" r="3"/>
-  <line x1="3" y1="3" x2="21" y2="21"/>
-</svg>`;
-
 export class VideoPanel {
   private wrapper: HTMLDivElement;
   private video: HTMLVideoElement;
@@ -68,6 +61,7 @@ export class VideoPanel {
   private toolbar?: HTMLDivElement;
   private hintEl?: HTMLDivElement;
   private shareWarnOverlay?: HTMLDivElement;
+  private shareWarnHeading?: HTMLDivElement;
   private cameraEnabled = false;
   private shareVideoEnabled = false;
   private partnerPresent = false;
@@ -168,13 +162,12 @@ export class VideoPanel {
   private buildShareWarnOverlay(): void {
     const ribbon = document.createElement('div');
     ribbon.className = 'video-panel-share-warn hidden';
-    ribbon.innerHTML = `
-      <div class="icon">${PARTNER_BLIND_SVG}</div>
-      <div class="heading">PARTNER CAN'T SEE YOU</div>
-      <div class="subhead">Tap Share Video to share your camera</div>
-    `;
+    const heading = document.createElement('div');
+    heading.className = 'heading';
+    ribbon.appendChild(heading);
     this.wrapper.appendChild(ribbon);
     this.shareWarnOverlay = ribbon;
+    this.shareWarnHeading = heading;
   }
 
   setCameraEnabled(enabled: boolean): void {
@@ -183,9 +176,10 @@ export class VideoPanel {
     this.emptyOverlay?.classList.toggle('hidden', enabled);
     this.toolbar?.classList.toggle('share-revealed', enabled);
     if (this.hintEl) {
-      this.hintEl.textContent = enabled
-        ? 'Want your partner to see and hear you? Toggle Share Video / Mic →'
-        : 'Tap Camera to track your hands · You can play without it with mouse/trackpad';
+      this.hintEl.classList.toggle('hidden', enabled);
+      if (!enabled) {
+        this.hintEl.textContent = 'Tap Camera to track your hands · You can play without it with mouse/trackpad';
+      }
     }
     this.recomputeShareWarn();
   }
@@ -203,10 +197,13 @@ export class VideoPanel {
   }
 
   private recomputeShareWarn(): void {
-    if (!this.shareWarnOverlay) return;
-    const visible =
-      this.partnerPresent && this.cameraEnabled && !this.shareVideoEnabled;
+    if (!this.shareWarnOverlay || !this.shareWarnHeading) return;
+    const visible = this.partnerPresent && this.cameraEnabled;
     this.shareWarnOverlay.classList.toggle('hidden', !visible);
+    this.shareWarnOverlay.classList.toggle('is-sharing', this.shareVideoEnabled);
+    this.shareWarnHeading.textContent = this.shareVideoEnabled
+      ? "SHARING WITH PARTNER"
+      : "PARTNER CAN'T SEE YOU · TAP SHARE VIDEO";
   }
 
   setMicEnabled(enabled: boolean): void {
