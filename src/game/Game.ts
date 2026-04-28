@@ -29,14 +29,6 @@ import { fingerJointNames, fingerNames, handednesses, type PlayerPose } from './
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 
-const SHADOWS_DEFS = {
-  mapSize:    { default: 2048,    options: { '1024': 1024, '2048': 2048, '4096': 4096 }, label: 'map size' },
-  radius:     { default: 6,       min: 0,      max: 20,    step: 0.1,    label: 'radius' },
-  normalBias: { default: 0.04,    min: 0,      max: 0.2,   step: 0.001,  label: 'normal bias' },
-  bias:       { default: -0.0002, min: -0.005, max: 0.005, step: 0.0001, label: 'bias' },
-  blurSamples:{ default: 16,      min: 1,      max: 32,    step: 1,      label: 'blur samples' },
-} as const;
-
 const CAMERA_DEFS = {
   fov: { default: 62, min: 30, max: 90, step: 1, label: 'fov' },
 } as const;
@@ -126,9 +118,6 @@ export class Game {
   private remoteRig: HumanoidRig;
   private robotMotion: RobotMotionController;
   private scenery: ScenerySystem;
-  private ambientLight?: THREE.AmbientLight;
-  private keyLight?: THREE.DirectionalLight;
-  private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
   private playerVisuals: Record<PlayerSlot, PlayerVisual | null> = { local: null, remote: null };
   private playerVisualCache: Record<PlayerSlot, Partial<Record<InstrumentId, PlayerVisual>>> = {
     local: {},
@@ -152,8 +141,6 @@ export class Game {
   // intro animations.
   private introActive = true;
   private swapsInFlight: Record<PlayerSlot, number> = { local: 0, remote: 0 };
-  private shadowsTweaks?: ReturnType<typeof registerTweaks<typeof SHADOWS_DEFS>>;
-  private readonly shadowParams = makeParams(SHADOWS_DEFS);
   private cabinTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_DEFS>>;
   private cabinGroup?: THREE.Group;
   private cabinPlate?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
@@ -175,13 +162,6 @@ export class Game {
   private readonly localRightPalm = new THREE.Vector3();
   private readonly remoteLeftPalm = new THREE.Vector3();
   private readonly remoteRightPalm = new THREE.Vector3();
-  private readonly ambientBaseColor = new THREE.Color(0x3f2a1d);
-  private readonly ambientDayColor = new THREE.Color(0xffc37a);
-  private readonly ambientUnderwaterColor = new THREE.Color(0x2ac9d3);
-  private readonly keyBaseColor = new THREE.Color(0x9d5f2f);
-  private readonly keyDayColor = new THREE.Color(0xffc05a);
-  private readonly keyUnderwaterColor = new THREE.Color(0x8dfcff);
-
   constructor(
     private canvas: HTMLCanvasElement,
     urlRoom: string,
@@ -285,7 +265,6 @@ export class Game {
     await this.prewarmPlayerVisuals();
     this.refreshArchetype();
     this.roundDirector.start();
-    this.setupShadowsPane();
     this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
     attachHandDepthPane(this.paneDock);
@@ -462,7 +441,6 @@ export class Game {
     this.handSynth.dispose();
     this.audioGraph.dispose();
     this.cameraTweaks?.dispose();
-    this.shadowsTweaks?.dispose();
     this.cabinTweaks?.dispose();
     this.introSceneTweaks?.dispose();
     this.playersTweaks?.dispose();
@@ -473,8 +451,6 @@ export class Game {
 
   private setupRenderer(): void {
     this.renderer.setClearColor(0x050403, 1);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.scene.background = new THREE.Color(0x050403);
     this.scene.fog = new THREE.Fog(0x070503, 6.5, 20);
   }
@@ -502,26 +478,6 @@ export class Game {
     this.camera.lookAt(this.gameCameraTarget);
     this.camera.updateProjectionMatrix();
     this.updateCabinPlateTransform();
-  }
-
-  private setupShadowsPane(): void {
-    if (!this.keyLight || this.shadowsTweaks) return;
-    this.shadowsTweaks = registerTweaks(this.paneDock, 'shadows', SHADOWS_DEFS, {
-      title: 'Shadows',
-      params: this.shadowParams,
-      onChange: {
-        mapSize: v => {
-          if (!this.keyLight) return;
-          this.keyLight.shadow.mapSize.set(v, v);
-          this.keyLight.shadow.map?.dispose();
-          this.keyLight.shadow.map = null;
-        },
-        radius:      v => { if (this.keyLight) this.keyLight.shadow.radius = v; },
-        normalBias:  v => { if (this.keyLight) this.keyLight.shadow.normalBias = v; },
-        bias:        v => { if (this.keyLight) this.keyLight.shadow.bias = v; },
-        blurSamples: v => { if (this.keyLight) this.keyLight.shadow.blurSamples = v; },
-      },
-    });
   }
 
   private setupCameraPane(): void {
@@ -561,38 +517,6 @@ export class Game {
     this.scenery.build();
     this.buildIllustratedCabinPlate();
     this.scenery.setThunderHandler(delay => this.audio.playThunder(delay));
-
-    for (const z of [-4.65, -3.1, -1.55, 0, 1.55, 3.1, 4.65]) {
-      const isHero = Math.abs(z) < 1.7;
-      const baseIntensity = isHero ? 0.55 : 0.32;
-      const light = new THREE.PointLight(0xf5a33b, baseIntensity, 3.2, 1.4);
-      light.position.set(0, 2.34, z);
-      this.scene.add(light);
-      this.cabinLights.push({ light, baseIntensity });
-    }
-
-    this.ambientLight = new THREE.AmbientLight(0x7d5a35, 0.72);
-    this.scene.add(this.ambientLight);
-
-    this.keyLight = new THREE.DirectionalLight(0xffbd54, 1.65);
-    this.keyLight.position.set(-2.8, 4.2, 3.5);
-    this.keyLight.castShadow = true;
-    this.keyLight.target.position.set(0, 1, 0);
-    this.scene.add(this.keyLight.target);
-    const shadowCam = this.keyLight.shadow.camera as THREE.OrthographicCamera;
-    shadowCam.left = -3.4;
-    shadowCam.right = 3.4;
-    shadowCam.top = 6.0;
-    shadowCam.bottom = -6.0;
-    shadowCam.near = 0.5;
-    shadowCam.far = 16;
-    shadowCam.updateProjectionMatrix();
-    this.keyLight.shadow.mapSize.set(this.shadowParams.mapSize, this.shadowParams.mapSize);
-    this.keyLight.shadow.radius = this.shadowParams.radius;
-    this.keyLight.shadow.bias = this.shadowParams.bias;
-    this.keyLight.shadow.normalBias = this.shadowParams.normalBias;
-    this.keyLight.shadow.blurSamples = this.shadowParams.blurSamples;
-    this.scene.add(this.keyLight);
   }
 
   private buildIllustratedCabinPlate(): void {
@@ -1178,13 +1102,6 @@ export class Game {
       groovePhase: this.audio.getGroovePhase(),
     });
 
-    // Cabin lights: very subtle warm breath. Drum kicks give a tiny bump,
-    // sustained activity adds a touch of overall warmth. Stays under ±10%
-    // of the baseline so it never reads as harsh strobing.
-    const lightMod = 1 + drumPulse * 0.06 + sustained * 0.05;
-    for (const entry of this.cabinLights) {
-      entry.light.intensity = entry.baseIntensity * lightMod;
-    }
   }
 
   // Intro/active state. While intro is enabled the scenery's bird system is
