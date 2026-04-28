@@ -19,3 +19,6 @@ All modules expose tweakable params via the shared `*_DEFS` pattern (see `src/hu
 
 - Changes are persisted to `localStorage` automatically (per module key).
 - Pressing `r` while debug mode is active resets every module's params back to the in-code defaults and clears persisted state.
+
+
+Make sure when you change instruments or things related to spacetime and how it syncs that you automatically push the new spacetime module or whatever you need to do for it to work deployed
