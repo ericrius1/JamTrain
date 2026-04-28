@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import type { CreatureLighting } from '../creatureShading';
 import { makeClothMaterial, makeSkinMaterial } from '../creatureShading';
 
 export type HumanBodyHandles = {
@@ -12,10 +11,10 @@ export type HumanBodyHandles = {
   geometries: THREE.BufferGeometry[];
 };
 
-export function buildHumanBody(lighting: CreatureLighting, seatColor: number): HumanBodyHandles {
+export function buildHumanBody(seatColor: number): HumanBodyHandles {
   const group = new THREE.Group();
-  const cloth = makeClothMaterial(lighting, seatColor);
-  const skin = makeSkinMaterial(lighting);
+  const cloth = makeClothMaterial(seatColor);
+  const skin = makeSkinMaterial();
 
   // Lathed torso silhouette — points define a half-profile from waist (bottom)
   // to neck (top). Lathe revolves it around Y.

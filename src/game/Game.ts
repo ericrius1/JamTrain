@@ -628,13 +628,11 @@ export class Game {
 
     const floor = new THREE.Mesh(this.roundedBox(3.4, 0.08, cabinZ, wallR), floorMat);
     floor.position.y = 0.02;
-    floor.receiveShadow = true;
     group.add(floor);
 
     const ceilingY = 2.55;
     const ceiling = new THREE.Mesh(this.roundedBox(3.45, 0.08, cabinZ, wallR), ceilingMat);
     ceiling.position.y = ceilingY;
-    ceiling.receiveShadow = true;
     group.add(ceiling);
 
     const glassBottom = 0.12;
@@ -655,18 +653,15 @@ export class Game {
     for (const x of [-1.72]) {
       const lowerWall = new THREE.Mesh(this.roundedBox(0.08, lowerWallHeight, cabinZ, wallR), wallMat);
       lowerWall.position.set(x, 0.06 + lowerWallHeight / 2, 0);
-      lowerWall.receiveShadow = true;
       group.add(lowerWall);
 
       const upperWall = new THREE.Mesh(this.roundedBox(0.08, upperWallHeight, cabinZ, wallR), wallMat);
       upperWall.position.set(x, glassTop + upperWallHeight / 2, 0);
-      upperWall.receiveShadow = true;
       group.add(upperWall);
 
       for (const zSign of [-1, 1]) {
         const endCap = new THREE.Mesh(this.roundedBox(0.08, endCapHeight, endCapDepth, wallR), wallMat);
         endCap.position.set(x, 0.06 + endCapHeight / 2, zSign * (glassSpan / 2 + endCapDepth / 2));
-        endCap.receiveShadow = true;
         group.add(endCap);
       }
 
@@ -711,28 +706,20 @@ export class Game {
         const z = cz + dz;
         const bench = new THREE.Mesh(this.roundedBox(1.35, 0.24, 0.52, seatR), seatMat);
         bench.position.set(0, 0.36, z);
-        bench.castShadow = true;
-        bench.receiveShadow = true;
         group.add(bench);
 
         const back = new THREE.Mesh(this.roundedBox(1.35, 0.74, 0.18, seatR), seatMat);
         back.position.set(0, 0.78, z + (dz > 0 ? 0.32 : -0.32));
         back.rotation.x = dz > 0 ? -0.1 : 0.1;
-        back.castShadow = true;
-        back.receiveShadow = true;
         group.add(back);
       }
 
       const table = new THREE.Mesh(this.roundedBox(1.15, 0.06, 0.64, seatR), woodMat);
       table.position.set(0, 0.72, cz);
-      table.castShadow = true;
-      table.receiveShadow = true;
       group.add(table);
 
       const tableLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.055, 0.68, 16), woodMat);
       tableLeg.position.set(0, 0.36, cz);
-      tableLeg.castShadow = true;
-      tableLeg.receiveShadow = true;
       group.add(tableLeg);
     }
 
@@ -1101,7 +1088,6 @@ export class Game {
       chordProgress: this.audio.getChordProgress(),
       groovePhase: this.audio.getGroovePhase(),
     });
-
   }
 
   // Intro/active state. While intro is enabled the scenery's bird system is
@@ -1120,25 +1106,8 @@ export class Game {
   }
 
   private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number; underwater?: number }): void {
-    const underwater = atmosphere.underwater ?? 0;
     this.scene.background = atmosphere.background;
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(atmosphere.background);
-
-    if (this.ambientLight) {
-      this.ambientLight.color
-        .copy(this.ambientBaseColor)
-        .lerp(this.ambientDayColor, atmosphere.daylight * 0.62)
-        .lerp(this.ambientUnderwaterColor, underwater * 0.82);
-      this.ambientLight.intensity = 0.38 + atmosphere.daylight * 0.48 + atmosphere.night * 0.14 + underwater * 0.16;
-    }
-    if (this.keyLight) {
-      this.keyLight.color
-        .copy(this.keyBaseColor)
-        .lerp(this.keyDayColor, atmosphere.daylight)
-        .lerp(this.keyUnderwaterColor, underwater * 0.78);
-      this.keyLight.intensity = 0.58 + atmosphere.daylight * 1.35 + atmosphere.night * 0.18 - underwater * 0.34;
-      this.keyLight.position.set(-2.8, 3.1 + atmosphere.daylight * 1.5 + underwater * 0.55, 3.5);
-    }
   }
 
   private resize(): void {

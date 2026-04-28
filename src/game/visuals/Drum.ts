@@ -274,8 +274,8 @@ export class Drum implements PlayerVisual {
   private fixedAnchor?: THREE.Vector3;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   private palette: DrumPalette;
-  private static SPARK_COLOR_LOCAL = { r: 1.00, g: 0.62, b: 0.24 };
-  private static SPARK_COLOR_REMOTE = { r: 1.00, g: 0.78, b: 0.36 };
+  private static SPARK_COLOR_LOCAL = { r: 0.34, g: 0.88, b: 0.94 };
+  private static SPARK_COLOR_REMOTE = { r: 0.48, g: 0.84, b: 0.98 };
   private keyDownListener?: (e: KeyboardEvent) => void;
   private hzTable: readonly number[] = getDrumHz(keyDirector.getCurrent());
   private keyUnsubscribe?: () => void;

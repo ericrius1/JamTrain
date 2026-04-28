@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import type { CreatureLighting } from '../creatureShading';
 import { makeEyeMaterial, makeSkinMaterial } from '../creatureShading';
 
 export type HumanHeadHandles = {
@@ -10,10 +9,10 @@ export type HumanHeadHandles = {
   geometries: THREE.BufferGeometry[];
 };
 
-export function buildHumanHead(lighting: CreatureLighting): HumanHeadHandles {
+export function buildHumanHead(): HumanHeadHandles {
   const group = new THREE.Group();
-  const skin = makeSkinMaterial(lighting);
-  const eye = makeEyeMaterial(lighting);
+  const skin = makeSkinMaterial();
+  const eye = makeEyeMaterial();
 
   // Cranium: an egg shape — sphere scaled taller than wide, slightly fuller at the back.
   const craniumGeom = new THREE.SphereGeometry(0.22, 32, 22);

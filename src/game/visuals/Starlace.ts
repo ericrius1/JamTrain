@@ -1301,20 +1301,14 @@ export class Starlace implements PlayerVisual {
     const dir = _scratch.copy(sink.center).sub(node.world);
     if (dir.lengthSq() < 1e-4) dir.set(0, 0.1, 0);
     dir.normalize();
-    // Pick a palette color based on node seed so the constellation's
-    // multi-color identity carries into the sculpture.
-    const phase = node.seed * 3;
-    const idx = Math.floor(phase) % 3;
-    const palette = idx === 0
-      ? this.cool   // cyan
-      : idx === 1
-        ? this.warm // magenta
-        : this.gold;
+    this.noteColorForNode(node, _colorA);
+    _colorA.lerp(this.gold, hash(node.seed * 37.7 + node.noteIndex * 2.9) > 0.72 ? 0.16 : 0.04);
+    _colorA.lerp(this.hot, Math.min(0.18, velocity * 0.10));
     sink.emit({
       kind: 'starlace',
       origin: node.world.clone(),
       direction: dir.clone(),
-      color: { r: palette.r, g: palette.g, b: palette.b },
+      color: { r: _colorA.r, g: _colorA.g, b: _colorA.b },
       count: Math.round(20 + velocity * 14),
       intensity: 0.5 + velocity * 0.5,
       speed: 1.1 + velocity * 0.6,
