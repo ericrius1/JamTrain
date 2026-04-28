@@ -1,6 +1,7 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { JamAudioGraph } from './audioGraph';
-import { JAM_BACKING_DAY, JAM_BACKING_NIGHT, type JamChordVoicing } from './harmony';
+import { getBackingDay, getBackingNight, type JamChordVoicing } from './harmony';
+import { keyDirector } from './keyDirector';
 import { clamp, distance } from './math';
 import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Data } from './types';
 
@@ -66,6 +67,13 @@ export class AudioEngine {
   private chordPhase = 0;
   private registered?: ReturnType<typeof registerTweaks<typeof AUDIO_DEFS>>;
 
+  // Cached voicings for the current key. Refreshed when the key tour advances
+  // so chord lookups stay cheap. The KeyDirector advances on chord boundaries
+  // (driven from this engine), so the next chord we play picks up the new key.
+  private nightVoicings: JamChordVoicing[] = getBackingNight(keyDirector.getCurrent());
+  private dayVoicings: JamChordVoicing[] = getBackingDay(keyDirector.getCurrent());
+  private keyUnsubscribe?: () => void;
+
   // Lo-fi drum kit. Tight + dry, routed straight to the compressor so the
   // hand-modulated lowpass and big reverb don't smear the transients.
   private kick?: any;
@@ -124,6 +132,10 @@ export class AudioEngine {
     private paneDock?: HTMLElement
   ) {
     this.publish();
+    this.keyUnsubscribe = keyDirector.onChange(({ current }) => {
+      this.nightVoicings = getBackingNight(current);
+      this.dayVoicings = getBackingDay(current);
+    });
   }
 
   async start(): Promise<void> {
@@ -305,7 +317,11 @@ export class AudioEngine {
     this.chordPhase += delta;
     if (this.chordPhase >= this.params.chordCycleSeconds) {
       this.chordPhase = 0;
-      this.chordIndex = (this.chordIndex + 1) % JAM_BACKING_NIGHT.length;
+      this.chordIndex = (this.chordIndex + 1) % this.nightVoicings.length;
+      // Step the key tour at chord wraps. If a new key lands, advanceChord
+      // below will read the freshly-cached voicings and crossfade into them
+      // through the existing voice-bank machinery.
+      if (this.chordIndex === 0) keyDirector.onChordBoundary();
       this.advanceChord();
     }
 
@@ -487,6 +503,7 @@ export class AudioEngine {
     this.vinylFilter?.dispose?.();
     this.vinylGain?.dispose?.();
     this.registered?.dispose();
+    this.keyUnsubscribe?.();
     this.publish();
   }
 
@@ -540,11 +557,11 @@ export class AudioEngine {
   }
 
   private currentChord(): { a: JamChordVoicing; b: JamChordVoicing } {
-    return { a: JAM_BACKING_NIGHT[this.chordIndex], b: JAM_BACKING_DAY[this.chordIndex] };
+    return { a: this.nightVoicings[this.chordIndex], b: this.dayVoicings[this.chordIndex] };
   }
 
   private shimmerNote(): string {
-    const top = JAM_BACKING_DAY[this.chordIndex].voices[2];
+    const top = this.dayVoicings[this.chordIndex].voices[2];
     return transposeOctaveUp(top);
   }
 

@@ -1,3 +1,5 @@
+import type { Key, Mode } from './keyDirector';
+
 export type JamChordVoicing = {
   voices: [string, string, string];
   drone: string;
@@ -6,144 +8,158 @@ export type JamChordVoicing = {
 
 export type JamStarlaceChord = readonly [string, string] | readonly [string, string, string];
 
-export const JAM_SCALE_NAME = 'D major pentatonic';
+const PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-export const JAM_PLAYABLE_NOTES_LOCAL: string[] = [
-  'D3',
-  'E3',
-  'F#3',
-  'A3',
-  'B3',
-  'D4',
-  'E4',
-  'F#4',
-  'A4',
-  'B4',
-  'D5',
-  'E5',
+// Pentatonic scale semitones from the root.
+const SCALE_SEMIS: Record<Mode, readonly number[]> = {
+  majorPent: [0, 2, 4, 7, 9],
+  minorPent: [0, 3, 5, 7, 10],
+};
+
+// Bass progression as semitone offsets from the key root. Major-pent uses
+// vi-IV-I-V; minor-pent uses i-bVII-v-iv with all bass notes in-pent so it
+// locks with the upper voices.
+const BASS_PROGRESSIONS: Record<Mode, readonly number[]> = {
+  majorPent: [-3, -7, 0, -5],
+  minorPent: [0, -2, -5, -7],
+};
+
+// Drone follows bass except the I chord drops an octave for the felt-low tonic.
+const DRONE_PROGRESSIONS: Record<Mode, readonly number[]> = {
+  majorPent: [-3, -7, -12, -5],
+  minorPent: [-12, -2, -5, -7],
+};
+
+// Pentatonic-step indices for the upper voices. Step 0 = root in the reference
+// octave; step 5 = root one octave up. The same shapes carry across modes —
+// pentatonic forgiveness keeps them all consonant.
+const VOICE_STEPS_NIGHT: readonly (readonly number[])[] = [
+  [5, 7, 8],
+  [5, 6, 9],
+  [5, 7, 8],
+  [5, 6, 8],
 ];
 
-export const JAM_PLAYABLE_NOTES_REMOTE: string[] = [
-  'D2',
-  'E2',
-  'F#2',
-  'A2',
-  'B2',
-  'D3',
-  'E3',
-  'F#3',
-  'A3',
-  'B3',
-  'D4',
-  'E4',
+const VOICE_STEPS_DAY: readonly (readonly number[])[] = [
+  [7, 8, 10],
+  [4, 5, 6],
+  [7, 8, 9],
+  [6, 8, 10],
 ];
 
-export const JAM_DUET_NOTES: string[] = [
-  'D2',
-  'A2',
-  'B2',
-  'D3',
-  'E3',
-  'F#3',
-  'A3',
-  'B3',
-  'D4',
-  'E4',
-  'A4',
-  'D5',
+// Reference octaves anchored to the original D-major-pentatonic register so
+// the playable band stays in the comfortable hand-tracked range across roots.
+const REF_OCT_VOICES = 3;
+const REF_OCT_BASS = 2;
+const REF_OCT_DRONE = 3;
+
+// Step indices that reproduce the original arrays at key=D major pentatonic.
+const PLAYABLE_LOCAL_STEPS  = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const PLAYABLE_REMOTE_STEPS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+const DUET_STEPS            = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15];
+const ORB_GESTURE_STEPS     = [0, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+const STARLACE_STEPS        = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+const DRUM_STEPS            = [0, 1, 2, 3, 4];
+
+const STARLACE_CHORD_STEPS: readonly (readonly number[])[] = [
+  [0, 3, 7],
+  [1, 4, 8],
+  [2, 3, 5],
+  [3, 5, 6],
+  [4, 5, 7],
+  [5, 7, 8],
+  [6, 8, 9],
+  [7, 8, 10],
+  [8, 10, 11],
+  [9, 10, 12],
+  [10, 12, 13],
+  [9, 11, 13],
+  [8, 10, 12],
+  [11, 13],
 ];
 
-export const JAM_ORB_GESTURE_NOTES: string[] = [
-  'D2',
-  'A2',
-  'D3',
-  'F#3',
-  'A3',
-  'B3',
-  'D4',
-  'E4',
-  'F#4',
-  'A4',
-  'B4',
-  'D5',
-  'E5',
-];
+function pentStepMidi(key: Key, refOctave: number, step: number): number {
+  const semis = SCALE_SEMIS[key.mode];
+  const len = semis.length;
+  const within = ((step % len) + len) % len;
+  const octaveOffset = Math.floor(step / len);
+  return 12 * (refOctave + 1) + key.root + semis[within] + 12 * octaveOffset;
+}
 
-export const JAM_STARLACE_NOTES: string[] = [
-  'D3',
-  'E3',
-  'F#3',
-  'A3',
-  'B3',
-  'D4',
-  'E4',
-  'F#4',
-  'A4',
-  'B4',
-  'D5',
-  'E5',
-  'F#5',
-  'A5',
-];
+function midiFromRoot(key: Key, refOctave: number, semitoneOffset: number): number {
+  return 12 * (refOctave + 1) + key.root + semitoneOffset;
+}
 
-// Starlace chords stay inside the D major pentatonic set used by the orbs and
-// backing-bed upper voices, so node walks remain consonant across Bm/G/D/A bass
-// movement without C#/D or G/F# rubs.
-export const JAM_STARLACE_CHORDS: JamStarlaceChord[] = [
-  ['D3',  'A3',  'F#4'],
-  ['E3',  'B3',  'A4'],
-  ['F#3', 'A3',  'D4'],
-  ['A3',  'D4',  'E4'],
-  ['B3',  'D4',  'F#4'],
-  ['D4',  'F#4', 'A4'],
-  ['E4',  'A4',  'B4'],
-  ['F#4', 'A4',  'D5'],
-  ['A4',  'D5',  'E5'],
-  ['B4',  'D5',  'F#5'],
-  ['D5',  'F#5', 'A5'],
-  ['B4',  'E5',  'A5'],
-  ['A4',  'D5',  'F#5'],
-  ['E5',  'A5'],
-];
+function midiToName(midi: number): string {
+  const pc = ((Math.round(midi) % 12) + 12) % 12;
+  const octave = Math.floor(Math.round(midi) / 12) - 1;
+  return `${PITCH_NAMES[pc]}${octave}`;
+}
 
-export const JAM_STARLACE_HZ: number[] = [
-  146.832, // D3
-  164.814, // E3
-  184.997, // F#3
-  220.000, // A3
-  246.942, // B3
-  293.665, // D4
-  329.628, // E4
-  369.994, // F#4
-  440.000, // A4
-  493.883, // B4
-  587.330, // D5
-  659.255, // E5
-  739.989, // F#5
-  880.000, // A5
-];
+function midiToHz(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
 
-export const JAM_DRUM_HZ: number[] = [
-  146.832, // D3
-  164.814, // E3
-  184.997, // F#3
-  220.000, // A3
-  246.942, // B3
-];
+export function getPlayableNotesLocal(key: Key): string[] {
+  return PLAYABLE_LOCAL_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_VOICES, s)));
+}
 
-// Same roots as the old vi-IV-I-V cycle, but the upper voices stay inside
-// D major pentatonic. That keeps player notes consonant even while the bass
-// moves, and avoids close C#/D or G/F# rubs against the playable scale.
-export const JAM_BACKING_NIGHT: JamChordVoicing[] = [
-  { voices: ['D4',  'F#4', 'A4'], drone: 'B2', bass: 'B1' },
-  { voices: ['D4',  'E4',  'B4'], drone: 'G2', bass: 'G1' },
-  { voices: ['D4',  'F#4', 'A4'], drone: 'D2', bass: 'D2' },
-  { voices: ['D4',  'E4',  'A4'], drone: 'A2', bass: 'A1' },
-];
+export function getPlayableNotesRemote(key: Key): string[] {
+  return PLAYABLE_REMOTE_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_BASS, s)));
+}
 
-export const JAM_BACKING_DAY: JamChordVoicing[] = [
-  { voices: ['F#4', 'A4',  'D5'], drone: 'B2', bass: 'B1' },
-  { voices: ['B3',  'D4',  'E4'], drone: 'G2', bass: 'G1' },
-  { voices: ['F#4', 'A4',  'B4'], drone: 'D2', bass: 'D2' },
-  { voices: ['E4',  'A4',  'D5'], drone: 'A2', bass: 'A1' },
-];
+export function getDuetNotes(key: Key): string[] {
+  return DUET_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_BASS, s)));
+}
+
+export function getOrbGestureNotes(key: Key): string[] {
+  return ORB_GESTURE_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_BASS, s)));
+}
+
+export function getStarlaceNotes(key: Key): string[] {
+  return STARLACE_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_VOICES, s)));
+}
+
+export function getStarlaceHz(key: Key): number[] {
+  return STARLACE_STEPS.map(s => midiToHz(pentStepMidi(key, REF_OCT_VOICES, s)));
+}
+
+export function getStarlaceChords(key: Key): JamStarlaceChord[] {
+  return STARLACE_CHORD_STEPS.map(steps => {
+    const names = steps.map(s => midiToName(pentStepMidi(key, REF_OCT_VOICES, s)));
+    return (names.length === 2
+      ? [names[0], names[1]] as const
+      : [names[0], names[1], names[2]] as const) as JamStarlaceChord;
+  });
+}
+
+export function getDrumHz(key: Key): number[] {
+  return DRUM_STEPS.map(s => midiToHz(pentStepMidi(key, REF_OCT_VOICES, s)));
+}
+
+export function getBackingNight(key: Key): JamChordVoicing[] {
+  return buildBacking(key, VOICE_STEPS_NIGHT);
+}
+
+export function getBackingDay(key: Key): JamChordVoicing[] {
+  return buildBacking(key, VOICE_STEPS_DAY);
+}
+
+function buildBacking(key: Key, voiceStepsCycle: readonly (readonly number[])[]): JamChordVoicing[] {
+  const bassSemis = BASS_PROGRESSIONS[key.mode];
+  const droneSemis = DRONE_PROGRESSIONS[key.mode];
+  return voiceStepsCycle.map((voiceSteps, i) => {
+    const voices = [
+      midiToName(pentStepMidi(key, REF_OCT_VOICES, voiceSteps[0])),
+      midiToName(pentStepMidi(key, REF_OCT_VOICES, voiceSteps[1])),
+      midiToName(pentStepMidi(key, REF_OCT_VOICES, voiceSteps[2])),
+    ] as [string, string, string];
+    const drone = midiToName(midiFromRoot(key, REF_OCT_DRONE, droneSemis[i]));
+    const bass = midiToName(midiFromRoot(key, REF_OCT_BASS, bassSemis[i]));
+    return { voices, drone, bass };
+  });
+}
+
+export function getKeyName(key: Key): string {
+  return `${PITCH_NAMES[key.root]} ${key.mode === 'majorPent' ? 'maj pent' : 'min pent'}`;
+}

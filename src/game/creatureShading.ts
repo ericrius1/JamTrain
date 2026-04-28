@@ -13,7 +13,6 @@ import {
   smoothstep,
   uniform,
 } from 'three/tsl';
-import { makeParams, registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 
 /**
  * Shared key/back/ambient lighting setup. Single instance reused by all
@@ -31,13 +30,6 @@ export function createCreatureLighting() {
     rimPower: uniform(2.6),
     rimStrength: uniform(0.55),
     wrapSoft: uniform(0.32),
-    // Local "instrument light": a single soft point of color near where the
-    // player's hands meet their instrument. Additive only, falloff confined
-    // to a sphere so it lights the chest/arms without flooding the whole rig.
-    instrumentLightPos: uniform(new THREE.Vector3(0, 0, 0)),
-    instrumentLightColor: uniform(new THREE.Color('#000000')),
-    instrumentLightIntensity: uniform(0.0),
-    instrumentLightRadius: uniform(0.55),
   };
 }
 
@@ -61,10 +53,7 @@ type AnyColorNode = THREE.MeshBasicNodeMaterial['colorNode'];
  *   plus warm rim, plus optional fake-SSS back-light, plus optional fiber hash.
  */
 export function makeCreatureColorNode(lighting: CreatureLighting, role: CreatureRoleParams): AnyColorNode {
-  const {
-    keyDir, backDir, ambientCool, rimWarm, rimPower, rimStrength, wrapSoft,
-    instrumentLightPos, instrumentLightColor, instrumentLightIntensity, instrumentLightRadius,
-  } = lighting;
+  const { keyDir, backDir, ambientCool, rimWarm, rimPower, rimStrength, wrapSoft } = lighting;
   const { baseColor, sssColor, sssStrength, fiberHashStrength } = role;
 
   return Fn(() => {
@@ -95,16 +84,6 @@ export function makeCreatureColorNode(lighting: CreatureLighting, role: Creature
       const sss = ndb.mul(float(1).sub(fres)).mul(sssStrength);
       lit.addAssign((sssColor as ReturnType<typeof color>).mul(sss));
     }
-
-    // Local instrument light — soft additive falloff inside a sphere centered
-    // on the player's instrument anchor, attenuated by surface facing.
-    const toLight = instrumentLightPos.sub(positionWorld);
-    const lightDist = toLight.length();
-    const lightDir = toLight.normalize();
-    const falloff = smoothstep(instrumentLightRadius, float(0), lightDist);
-    const facing = n.dot(lightDir).mul(0.5).add(0.5);
-    const lightAdd = instrumentLightColor.mul(instrumentLightIntensity).mul(falloff).mul(facing);
-    lit.addAssign(lightAdd);
 
     return lit;
   })() as unknown as AnyColorNode;
@@ -197,26 +176,4 @@ export function makeAccentMaterial(): THREE.MeshBasicNodeMaterial {
     return color('#ffd36b').mul(float(0.72).add(pow(fres, 1.8).mul(1.05)));
   })() as unknown as AnyColorNode;
   return m;
-}
-
-/** Tweak knobs for the per-creature instrument light driven from Game.update. */
-export const CREATURE_LIGHT_DEFS = {
-  radius:       { default: 0.55, min: 0.10, max: 1.50, step: 0.01, label: 'radius' },
-  energyScale:  { default: 0.45, min: 0,    max: 2.0,  step: 0.01, label: 'energy → intensity' },
-  pulseScale:   { default: 1.10, min: 0,    max: 3.0,  step: 0.01, label: 'pulse → intensity' },
-  intensityMax: { default: 1.40, min: 0,    max: 3.0,  step: 0.01, label: 'intensity max' },
-  smoothing:    { default: 8.0,  min: 0,    max: 30,   step: 0.1,  label: 'smoothing' },
-} as const;
-
-export type CreatureLightParams = ParamsOf<typeof CREATURE_LIGHT_DEFS>;
-export const creatureLightConfig: CreatureLightParams = makeParams(CREATURE_LIGHT_DEFS);
-
-let creatureLightRegistered: ReturnType<typeof registerTweaks<typeof CREATURE_LIGHT_DEFS>> | undefined;
-
-export function attachCreatureLightPane(paneDock: HTMLElement): void {
-  if (creatureLightRegistered) return;
-  creatureLightRegistered = registerTweaks(paneDock, 'creatureLight', CREATURE_LIGHT_DEFS, {
-    title: 'Instrument Light',
-    params: creatureLightConfig,
-  });
 }

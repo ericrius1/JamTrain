@@ -1,13 +1,15 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { JamAudioGraph } from './audioGraph';
 import {
-  JAM_DUET_NOTES,
-  JAM_ORB_GESTURE_NOTES,
-  JAM_PLAYABLE_NOTES_LOCAL,
-  JAM_PLAYABLE_NOTES_REMOTE,
-  JAM_STARLACE_CHORDS,
-  JAM_STARLACE_NOTES,
+  getDuetNotes,
+  getOrbGestureNotes,
+  getPlayableNotesLocal,
+  getPlayableNotesRemote,
+  getStarlaceChords,
+  getStarlaceNotes,
+  type JamStarlaceChord,
 } from './harmony';
+import { keyDirector } from './keyDirector';
 import { clamp } from './math';
 import type { HandPose, PlayerPose } from './types';
 import type { InstrumentId, OrbGestureState, VoiceState } from './instruments';
@@ -264,12 +266,38 @@ export class HandSynthEngine {
 
   private registered?: ReturnType<typeof registerTweaks<typeof HAND_SYNTH_DEFS>>;
 
+  // Cached note tables for the current key — refreshed by the KeyDirector
+  // subscription so consumers (voices, orb gestures, starlace, duet) see new
+  // pitches as soon as the tour steps to a new key.
+  private playableLocal: string[] = getPlayableNotesLocal(keyDirector.getCurrent());
+  private playableRemote: string[] = getPlayableNotesRemote(keyDirector.getCurrent());
+  private duetNotes: string[] = getDuetNotes(keyDirector.getCurrent());
+  private orbGestureNotes: string[] = getOrbGestureNotes(keyDirector.getCurrent());
+  private starlaceNotes: string[] = getStarlaceNotes(keyDirector.getCurrent());
+  private starlaceChords: JamStarlaceChord[] = getStarlaceChords(keyDirector.getCurrent());
+  private keyUnsubscribe?: () => void;
+
   constructor(
     private audioGraph: JamAudioGraph,
     private canvas: HTMLCanvasElement,
     private paneDock?: HTMLElement
   ) {
     this.attachMouseListener();
+    this.keyUnsubscribe = keyDirector.onChange(({ current }) => {
+      this.playableLocal = getPlayableNotesLocal(current);
+      this.playableRemote = getPlayableNotesRemote(current);
+      this.duetNotes = getDuetNotes(current);
+      this.orbGestureNotes = getOrbGestureNotes(current);
+      this.starlaceNotes = getStarlaceNotes(current);
+      this.starlaceChords = getStarlaceChords(current);
+      // Existing voices keep singing notes they already triggered (they decay
+      // out on their old key). New strikes pick up the new scale via the
+      // refreshed `voice.scale` reference below.
+      const lv = this.voices.local;
+      if (lv) lv.scale = this.playableLocal;
+      const rv = this.voices.remote;
+      if (rv) rv.scale = this.playableRemote;
+    });
   }
 
   getProfileLabel(player: PlayerKey): string {
@@ -301,7 +329,7 @@ export class HandSynthEngine {
         expression: s.expression,
         tension: s.tension,
         noteIndex: s.lastNoteIdx,
-        noteCount: JAM_STARLACE_NOTES.length,
+        noteCount: this.starlaceNotes.length,
       };
     }
     const o = this.orbVoices[player];
@@ -314,7 +342,7 @@ export class HandSynthEngine {
       expression: o.expression,
       tension: o.tension,
       noteIndex: o.lastNoteIdx,
-      noteCount: JAM_ORB_GESTURE_NOTES.length,
+      noteCount: this.orbGestureNotes.length,
     };
   }
 
@@ -486,7 +514,7 @@ export class HandSynthEngine {
   private ensureLoomVoice(player: PlayerKey): Voice | null {
     if (!this.tone || !this.master) return null;
     if (!this.voices[player]) {
-      this.voices[player] = this.createVoice(player, player === 'local' ? JAM_PLAYABLE_NOTES_LOCAL : JAM_PLAYABLE_NOTES_REMOTE);
+      this.voices[player] = this.createVoice(player, player === 'local' ? this.playableLocal : this.playableRemote);
     }
     return this.voices[player];
   }
@@ -656,7 +684,7 @@ export class HandSynthEngine {
 
     this.fireStarlaceChord(starlace, playableChord, v);
     starlace.lastAudioAt = this.elapsed;
-    starlace.lastNoteIdx = chordIndex % JAM_STARLACE_NOTES.length;
+    starlace.lastNoteIdx = chordIndex % this.starlaceNotes.length;
     starlace.lastChordIndex = chordIndex;
     if (!this._loggedStarlaceFirstHit) {
       console.debug('[handSynth] first starlace chord', { player, chord: playableChord, frequency, velocity: v });
@@ -722,6 +750,7 @@ export class HandSynthEngine {
     this.duetGain?.dispose?.();
     this.master?.dispose?.();
     this.registered?.dispose();
+    this.keyUnsubscribe?.();
   }
 
   private createVoice(key: PlayerKey, scale: string[]): Voice {
@@ -1033,8 +1062,8 @@ export class HandSynthEngine {
       const depth = clamp(gesture.depth, 0, 1);
       const radial = clamp(gesture.radius, 0, 1);
       const pitchT = clamp(heightN * 0.42 + angleN * 0.24 + depth * 0.24 + speed * 0.10, 0, 1);
-      const noteIndex = pickNoteIndex(pitchT, orb.lastNoteIdx, JAM_ORB_GESTURE_NOTES.length);
-      const note = JAM_ORB_GESTURE_NOTES[noteIndex];
+      const noteIndex = pickNoteIndex(pitchT, orb.lastNoteIdx, this.orbGestureNotes.length);
+      const note = this.orbGestureNotes[noteIndex];
       const subNote = transposeInterval(note, -12);
       const shimmerNote = transposeInterval(note, speed > 0.62 ? 19 : 12);
 
@@ -1433,11 +1462,11 @@ export class HandSynthEngine {
       : Number.isFinite(nodeIndex) && nodeIndex >= 0
         ? nodeIndex
         : fallback;
-    return positiveModulo(Math.floor(raw), JAM_STARLACE_CHORDS.length);
+    return positiveModulo(Math.floor(raw), this.starlaceChords.length);
   }
 
   private starlaceChordForIndex(index: number): readonly string[] {
-    return JAM_STARLACE_CHORDS[positiveModulo(index, JAM_STARLACE_CHORDS.length)] ?? ['D4', 'F#4', 'A4'];
+    return this.starlaceChords[positiveModulo(index, this.starlaceChords.length)] ?? ['D4', 'F#4', 'A4'];
   }
 
   private starlaceGlintNote(chord: readonly string[]): string {
@@ -1574,7 +1603,7 @@ export class HandSynthEngine {
     }
 
     const avgIdx = Math.round(((local.currentNoteIdx < 0 ? 0 : local.currentNoteIdx) + (remote.currentNoteIdx < 0 ? 0 : remote.currentNoteIdx)) * 0.5);
-    const note = JAM_DUET_NOTES[clamp(avgIdx, 0, JAM_DUET_NOTES.length - 1)];
+    const note = this.duetNotes[clamp(avgIdx, 0, this.duetNotes.length - 1)];
     if (!this.duetActive) {
       this.duetSynth.triggerAttack(note);
       this.duetNote = note;
