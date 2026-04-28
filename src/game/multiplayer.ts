@@ -202,15 +202,6 @@ export class MultiplayerClient {
     await this.pushLocalCreature();
   }
 
-  // Soft hint from a previous session's localStorage. Updates the local
-  // value (so the rig and the `desiredCreature` we pass to request_seat
-  // reflect the preference), but does not mark the value as dirty — the
-  // server is still free to swap us to a different creature if our partner
-  // already has this one.
-  setLocalCreaturePreference(creatureId: string): void {
-    this.acceptLocalCreature(creatureId);
-  }
-
   private acceptLocalCreature(creatureId: string): void {
     if (this.localCreature === creatureId) return;
     this.localCreature = creatureId;
@@ -382,7 +373,6 @@ export class MultiplayerClient {
         preferredRoom: sanitizeRoomName(preferredRoom),
         fallbackName: pickRandomRoomName(this.roomId),
         displayName: this.displayName,
-        desiredCreature: this.localCreature,
       })
       .catch(error => console.warn('SpacetimeDB request_seat failed', error));
   }

@@ -7,7 +7,6 @@ window.addEventListener('vite:preloadError', () => {
 });
 
 const LOCAL_CREATURE_KEY = 'jam-train.local-creature';
-const LOCAL_INSTRUMENT_KEY = 'jam-train.local-instrument';
 const PREFS_KEY = 'jam-train-av-prefs';
 
 type AvPrefs = {
@@ -323,18 +322,9 @@ async function createRuntime(): Promise<RuntimeApi> {
     game.setPlayerCreature('remote', id);
   });
 
-  const storedCreature = localStorage.getItem(LOCAL_CREATURE_KEY);
-  if (storedCreature !== null && isCreatureId(storedCreature)) {
-    game.setPlayerCreature('local', storedCreature);
-    // Soft hint — handed to the server as a preference. The server will
-    // still pick a different creature if the partner already has this one.
-    game.multiplayer.setLocalCreaturePreference(storedCreature);
-  }
-
   hud.onLocalInstrumentChange(id => {
     game.setPlayerInstrument('local', id);
     void game.multiplayer.setLocalInstrument(id);
-    localStorage.setItem(LOCAL_INSTRUMENT_KEY, id);
   });
 
   game.multiplayer.onLocalInstrumentChange(id => {
@@ -348,13 +338,6 @@ async function createRuntime(): Promise<RuntimeApi> {
     hud.setPartnerInstrument(id);
     game.setPlayerInstrument('remote', id);
   });
-
-  const storedInstrument = localStorage.getItem(LOCAL_INSTRUMENT_KEY);
-  if (storedInstrument !== null && isInstrumentId(storedInstrument)) {
-    hud.setLocalInstrument(storedInstrument);
-    game.setPlayerInstrument('local', storedInstrument);
-    void game.multiplayer.setLocalInstrument(storedInstrument);
-  }
 
   const stopUrlRoomChange = onUrlRoomChange(room => {
     game.setRoom(room);
