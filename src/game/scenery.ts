@@ -357,6 +357,10 @@ export class ScenerySystem {
   private readonly paintedTerrainTint = new THREE.Color(0xffffff);
   private readonly paintedTerrainNightTint = new THREE.Color(0x3a2a22);
   private readonly paintedTerrainDuskTint = new THREE.Color(0xffb261);
+  private readonly atmosphereDayColor = new THREE.Color(0x6f4d2c);
+  private readonly atmosphereDuskColor = new THREE.Color(0x7a3f2e);
+  private readonly atmosphereNightColor = new THREE.Color(0x070503);
+  private readonly atmosphereUnderwaterColor = new THREE.Color(0x031b2a);
   private readonly cycleStartedAt = Date.now() / 1000;
   private lastCycle = 0;
   private atmosphere = {
@@ -523,11 +527,11 @@ export class ScenerySystem {
       this.weather?.update(delta, { fgBiome: currentFg, bgBiome: currentBg });
     }
 
-    const dayColor = new THREE.Color(0x6f4d2c);
-    const duskColor = new THREE.Color(0x7a3f2e);
-    const nightColor = new THREE.Color(0x070503);
-    this.atmosphere.background.copy(nightColor).lerp(dayColor, daylight).lerp(duskColor, goldenHour * 0.35);
-    this.atmosphere.background.lerp(new THREE.Color(0x031b2a), underwater * 0.82);
+    this.atmosphere.background
+      .copy(this.atmosphereNightColor)
+      .lerp(this.atmosphereDayColor, daylight)
+      .lerp(this.atmosphereDuskColor, goldenHour * 0.35)
+      .lerp(this.atmosphereUnderwaterColor, underwater * 0.82);
     this.atmosphere.daylight = daylight;
     this.atmosphere.night = night;
     this.atmosphere.underwater = underwater;
@@ -611,7 +615,6 @@ export class ScenerySystem {
         mesh.rotation.y = Math.PI / 2;
         mesh.position.set(side * PAINTED_TERRAIN_X_DISTANCE, PAINTED_TERRAIN_Y, 0);
         mesh.renderOrder = -31 + sequenceIndex * 0.001;
-        mesh.frustumCulled = false;
         this.paintedTerrainPanels.push({ mesh, sequenceIndex });
         this.root.add(mesh);
       }

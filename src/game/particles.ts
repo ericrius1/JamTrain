@@ -6,7 +6,7 @@ import type { LinkSample } from './types';
 type TslComputeNode = any;
 
 const stripCount = 10;
-const particlesPerStrip = 360;
+const particlesPerStrip = 240;
 
 class GpuLinkStrip {
   readonly mesh: THREE.InstancedMesh;
@@ -42,7 +42,7 @@ class GpuLinkStrip {
       position.assign(position.mul(0.78).add(base.add(offset).mul(0.22)));
     })().compute(particlesPerStrip) as TslComputeNode;
 
-    const geometry = new THREE.SphereGeometry(0.018, 8, 5);
+    const geometry = new THREE.SphereGeometry(0.018, 6, 4);
     const material = new THREE.MeshBasicNodeMaterial({
       transparent: true,
       depthWrite: false,
@@ -61,10 +61,10 @@ class GpuLinkStrip {
     renderer.compute(this.computeInit);
   }
 
-  update(renderer: THREE.WebGPURenderer, link: LinkSample): void {
+  update(renderer: THREE.WebGPURenderer, link: LinkSample, tension = link.tension): void {
     toThree(link.from, this.start.value);
     toThree(link.to, this.end.value);
-    this.energy.value = clamp(link.tension, 0.05, 1);
+    this.energy.value = clamp(tension, 0.05, 1);
     renderer.compute(this.computeUpdate);
   }
 }
@@ -149,10 +149,10 @@ export class LinkParticles {
         const link = links[i % links.length];
         // Layer music intensity on top of the link's tension. Note attacks
         // and drum hits give the threads a gentle shimmer.
-        const boosted: LinkSample = this.musicIntensity > 0
-          ? { ...link, tension: clamp(link.tension + this.musicIntensity * 0.4, 0.05, 1) }
-          : link;
-        this.strips[i].update(renderer, boosted);
+        const tension = this.musicIntensity > 0
+          ? clamp(link.tension + this.musicIntensity * 0.4, 0.05, 1)
+          : link.tension;
+        this.strips[i].update(renderer, link, tension);
       }
     } catch (error) {
       console.warn('GPU particle update failed; using CPU trail fallback', error);

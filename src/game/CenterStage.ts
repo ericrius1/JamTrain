@@ -5,8 +5,8 @@ import { voiceStateZero } from './instruments';
 import { clamp } from './math';
 
 export const CENTER_DEFS = {
-  bridgeCount:   { default: 18,    min: 6,    max: 28,   step: 1,     label: 'bridge strands' },
-  segments:      { default: 96,    min: 24,   max: 140,  step: 2,     label: 'segments' },
+  bridgeCount:   { default: 12,    min: 6,    max: 28,   step: 1,     label: 'bridge strands' },
+  segments:      { default: 64,    min: 24,   max: 140,  step: 2,     label: 'segments' },
   lift:          { default: 0.42,  min: -0.2, max: 1.2,  step: 0.01,  label: 'arch lift' },
   swirl:         { default: 0.095, min: 0,    max: 0.32, step: 0.005, label: 'interference' },
   idleOpacity:   { default: 0.04,  min: 0,    max: 0.4,  step: 0.01,  label: 'idle opacity' },
@@ -60,6 +60,7 @@ export class CenterStage {
   private mixedColor = new THREE.Color();
   private center = new THREE.Vector3();
   private chord = new THREE.Vector3();
+  private worldUp = new THREE.Vector3(0, 1, 0);
   private up = new THREE.Vector3(0, 1, 0);
   private side = new THREE.Vector3(0, 0, 1);
   private control = new THREE.Vector3();
@@ -276,7 +277,7 @@ export class CenterStage {
       const radius = radiusBase * (0.72 + r * 0.28);
       const tiltA = spin + r * 0.9;
       const a = this.tmpA.set(Math.cos(tiltA), Math.sin(tiltA) * 0.35, Math.sin(tiltA)).normalize();
-      const b = this.tmpB.crossVectors(a, new THREE.Vector3(0, 1, 0));
+      const b = this.tmpB.crossVectors(a, this.worldUp);
       if (b.lengthSq() < 0.001) b.set(1, 0, 0);
       b.normalize();
 
@@ -320,7 +321,7 @@ export class CenterStage {
     this.chord.subVectors(to, from);
     if (this.chord.lengthSq() < 0.0001) this.chord.set(1, 0, 0);
     else this.chord.normalize();
-    this.side.crossVectors(this.chord, new THREE.Vector3(0, 1, 0));
+    this.side.crossVectors(this.chord, this.worldUp);
     if (this.side.lengthSq() < 0.0001) this.side.set(0, 0, 1);
     this.side.normalize();
     this.up.crossVectors(this.side, this.chord).normalize();

@@ -3,7 +3,8 @@ import { Fn, color, mix, sin, time, uniform, uv } from 'three/tsl';
 import type { ForegroundBiome } from './biomes';
 
 const STRIP_WIDTH = 16.4;
-const STRIP_HEIGHT = 0.22;
+const STRIP_HEIGHT = 0.14;
+const STRIP_OPACITY_SCALE = 0.16;
 
 export class WaterStrip {
   private root = new THREE.Group();
@@ -21,13 +22,14 @@ export class WaterStrip {
     material.fog = false;
     material.colorNode = Fn(() => {
       const u = uv();
-      // Vertical fade — top is sky reflection, bottom is open water.
-      const blend = u.y;
+      // Keep lake/coast motion without creating a pale horizontal band across
+      // the bottom of the cabin window.
+      const blend = u.y.mul(0.74);
       const baseTint = mix(this.tint, this.skyTint, blend);
-      // Slow horizontal jitter band for shimmer.
-      const shimmer = sin(u.x.mul(34).add(time.mul(0.6))).mul(0.06).add(sin(u.x.mul(13).sub(time.mul(0.8))).mul(0.04));
-      const shine = mix(color(0xffffff), color(0x8aa8c0), u.y).mul(shimmer.mul(0.5).add(0.5));
-      return baseTint.mul(0.58).add(shine.mul(0.10));
+      const shimmer = sin(u.x.mul(34).add(time.mul(0.6))).mul(0.035)
+        .add(sin(u.x.mul(13).sub(time.mul(0.8))).mul(0.025));
+      const shadow = mix(color(0x2c3434), color(0x445151), u.y);
+      return baseTint.mul(0.22).add(shadow.mul(shimmer.add(0.20)));
     })();
     material.opacityNode = this.coverage;
 
@@ -35,7 +37,7 @@ export class WaterStrip {
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(STRIP_WIDTH, STRIP_HEIGHT), material);
       mesh.rotation.y = Math.PI / 2;
       // Sit at the foreground baseline, just below the ground line.
-      mesh.position.set(side * 2.78, 0.30, 0);
+      mesh.position.set(side * 2.78, 0.255, 0);
       mesh.renderOrder = -14;
       this.root.add(mesh);
       this.meshes.push({ mesh, side });
@@ -50,7 +52,7 @@ export class WaterStrip {
   update(biome: ForegroundBiome, _delta: number): void {
     if (biome.water) {
       // Easing toward target coverage so transitions don't pop.
-      const target = biome.water.coverage;
+      const target = biome.water.coverage * STRIP_OPACITY_SCALE;
       this.coverage.value = this.coverage.value + (target - this.coverage.value) * 0.05;
       this.tint.value.setHex(biome.water.reflectionTint);
     } else {

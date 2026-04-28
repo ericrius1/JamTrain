@@ -17,6 +17,12 @@ const TREE_VOLUME_MIDGROUND_SCROLL_SPEED = 0.32;
 const TREE_VOLUME_FOREGROUND_SCROLL_SPEED = 0.44;
 const SPRITE_BASE_X_DISTANCE = 2.18;
 const VILLAGE_X_DISTANCE = 3.18;
+const TREE_SPRITE_FOREGROUND_DENSITY = 0.62;
+const TREE_SPRITE_MIDGROUND_DENSITY = 0.72;
+const TREE_SPRITE_FOREGROUND_SCALE = 0.78;
+const TREE_SPRITE_MIDGROUND_SCALE = 0.86;
+const TREE_VOLUME_DENSITY_SCALE = 0.36;
+const TREE_VOLUME_SCALE = 0.66;
 
 type LayerKind = 'foreground' | 'midground';
 
@@ -57,6 +63,7 @@ interface LayerSlot {
   colors: Float32Array;
   positionAttr: THREE.BufferAttribute;
   colorAttr: THREE.BufferAttribute;
+  lastColorDayMul: number;
 }
 
 interface LayerHandle {
@@ -207,6 +214,7 @@ export class BiomeLayers {
       colors,
       positionAttr,
       colorAttr,
+      lastColorDayMul: Number.NaN,
     };
   }
 
@@ -248,6 +256,7 @@ export class BiomeLayers {
     slot.geometry.setAttribute('color', slot.colorAttr);
     slot.geometry.setIndex(null);
     slot.geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(), LAYER_WIDTH);
+    slot.lastColorDayMul = Number.NaN;
   }
 
   private generatePlacements(biome: ForegroundBiome, layer: LayerHandle): SpritePlacement[] {
@@ -258,13 +267,22 @@ export class BiomeLayers {
 
     for (const band of biome.sprites) {
       if (band.layer !== layer.kind) continue;
-      const count = Math.max(1, Math.floor(band.density * LAYER_WIDTH));
+      const treeLike = isTreeAtlas(band.atlas);
+      const densityScale = treeLike
+        ? (layer.kind === 'foreground' ? TREE_SPRITE_FOREGROUND_DENSITY : TREE_SPRITE_MIDGROUND_DENSITY)
+        : 1;
+      const count = Math.max(1, Math.floor(band.density * LAYER_WIDTH * densityScale));
       const step = LAYER_WIDTH / count;
       for (let i = 0; i < count; i += 1) {
         const originX = -HALF_WIDTH + step * (i + 0.5) + (rand() - 0.5) * step * 0.72;
-        const baseY = groundYAt(originX, biome, layer.kind) + (rand() - 0.5) * band.yJitter;
+        const baseY = groundYAt(originX, biome, layer.kind)
+          + (treeLike ? -0.018 : 0)
+          + (rand() - 0.5) * band.yJitter;
         const depth = spriteDepthProfile(band, layer.kind, rand);
-        const scale = (band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0])) * depth.scaleMul;
+        const treeScale = treeLike
+          ? (layer.kind === 'foreground' ? TREE_SPRITE_FOREGROUND_SCALE : TREE_SPRITE_MIDGROUND_SCALE)
+          : 1;
+        const scale = (band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0])) * depth.scaleMul * treeScale;
         const profile = scaleProfileFor(band.atlas, rand);
         const wind = vegetationWindFactor(band.atlas);
         const motionScale = band.motionScale ?? atlasMotionScaleFor(band.atlas, layer.kind);
@@ -281,8 +299,8 @@ export class BiomeLayers {
           swayPhase: rand() * Math.PI * 2,
           swayStrength: wind * (layer.kind === 'foreground' ? 0.018 : 0.011) * (0.65 + rand() * 0.45),
           swaySpeed: 0.48 + rand() * 0.54,
-          shadeBias: 0.92 + rand() * 0.14,
-          depthShade: depth.shadeMul,
+          shadeBias: treeLike ? 0.74 + rand() * 0.10 : 0.92 + rand() * 0.14,
+          depthShade: depth.shadeMul * (treeLike ? 0.88 : 1),
           atlas: band.atlas,
           tint: colorFromBiomeBand(groundColor, band, rand),
         });
@@ -294,6 +312,7 @@ export class BiomeLayers {
 
   private bakeSlot(slot: LayerSlot, scroll: number, daylight: number): void {
     const dayMul = 0.42 + daylight * 0.58;
+    const updateColors = !Number.isFinite(slot.lastColorDayMul) || Math.abs(dayMul - slot.lastColorDayMul) > 0.002;
     for (let i = 0; i < slot.vertices.length; i += 1) {
       const v = slot.vertices[i];
       const p = slot.placements[v.placementIndex];
@@ -306,13 +325,18 @@ export class BiomeLayers {
       slot.positions[i * 3 + 1] = p.baseY + v.localY * p.scale * p.heightScale;
       slot.positions[i * 3 + 2] = p.depthOffset;
 
-      const shade = dayMul * p.shadeBias * p.depthShade * v.shade;
-      slot.colors[i * 3 + 0] = p.tint.r * shade;
-      slot.colors[i * 3 + 1] = p.tint.g * shade;
-      slot.colors[i * 3 + 2] = p.tint.b * shade;
+      if (updateColors) {
+        const shade = dayMul * p.shadeBias * p.depthShade * v.shade;
+        slot.colors[i * 3 + 0] = p.tint.r * shade;
+        slot.colors[i * 3 + 1] = p.tint.g * shade;
+        slot.colors[i * 3 + 2] = p.tint.b * shade;
+      }
     }
     slot.positionAttr.needsUpdate = true;
-    slot.colorAttr.needsUpdate = true;
+    if (updateColors) {
+      slot.colorAttr.needsUpdate = true;
+      slot.lastColorDayMul = dayMul;
+    }
   }
 
   private createVillageGroup(side: number) {
@@ -438,15 +462,15 @@ class TreeVolumeLayer {
 
     for (const band of biome.sprites) {
       if (!isTreeAtlas(band.atlas)) continue;
-      const count = Math.max(1, Math.floor(band.density * LAYER_WIDTH * 0.76));
+      const count = Math.max(1, Math.floor(band.density * LAYER_WIDTH * TREE_VOLUME_DENSITY_SCALE));
       const step = LAYER_WIDTH / count;
       const rand = streamFor(this.seed, hashBiomeKey(biome.id, this.side, `${band.atlas}-volume-${band.layer}`));
 
       for (let i = 0; i < count; i += 1) {
         const originX = -HALF_WIDTH + step * (i + 0.5) + (rand() - 0.5) * step * 0.78;
-        const baseY = groundYAt(originX, biome, band.layer) + (band.layer === 'foreground' ? -0.004 : 0) + (rand() - 0.5) * band.yJitter;
+        const baseY = groundYAt(originX, biome, band.layer) + (band.layer === 'foreground' ? -0.026 : -0.012) + (rand() - 0.5) * band.yJitter;
         const depth = spriteDepthProfile(band, band.layer, rand);
-        const scale = (band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0])) * (1.22 + rand() * 0.28) * depth.scaleMul;
+        const scale = (band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0])) * TREE_VOLUME_SCALE * (0.92 + rand() * 0.18) * depth.scaleMul;
         const palette = treePaletteFor(biome, band.atlas, rand);
         const tree = makeTreeVolume(band.atlas, palette, rand);
         tree.scale.setScalar(scale);
@@ -463,7 +487,7 @@ class TreeVolumeLayer {
           swayPhase: rand() * Math.PI * 2,
           swayStrength: vegetationWindFactor(band.atlas) * 0.028 * (0.62 + rand() * 0.38),
           swaySpeed: 0.42 + rand() * 0.44,
-          scrollSpeed: baseScrollSpeed * depth.scrollMul * (0.94 + rand() * 0.12),
+          scrollSpeed: baseScrollSpeed * depth.scrollMul * (0.76 + rand() * 0.10),
         });
       }
     }
@@ -486,9 +510,9 @@ class TreeVolumeLayer {
 function colorFromBiomeBand(groundDay: THREE.Color, band: SpriteBand, rand: () => number): THREE.Color {
   const c = new THREE.Color().copy(groundDay);
   if (isEvergreen(band.atlas)) {
-    c.lerp(new THREE.Color(0x1d412f), 0.38);
+    c.lerp(new THREE.Color(0x20392e), 0.72).lerp(new THREE.Color(0x5b432b), 0.22);
   } else if (isBroadleaf(band.atlas)) {
-    c.lerp(new THREE.Color(0x5f7f47), 0.24);
+    c.lerp(new THREE.Color(0x4f5d3d), 0.56).lerp(new THREE.Color(0x6a4b2f), 0.18);
   } else if (band.atlas === 'reeds' || band.atlas === 'cattail') {
     c.lerp(new THREE.Color(0x8f8650), 0.35);
   } else if (band.atlas === 'kelp' || band.atlas === 'seaGrass') {
@@ -496,9 +520,18 @@ function colorFromBiomeBand(groundDay: THREE.Color, band: SpriteBand, rand: () =
   } else if (band.atlas === 'coralFan') {
     c.set(rand() < 0.5 ? 0xd66c70 : 0xce8f4f).lerp(new THREE.Color(0x76e1da), rand() * 0.18);
   }
-  c.offsetHSL((rand() - 0.5) * 0.035, (rand() - 0.5) * 0.08, (rand() - 0.5) * 0.08);
-  const baseMul = isUnderwaterAtlas(band.atlas) ? (band.layer === 'foreground' ? 0.74 : 0.58) : band.layer === 'foreground' ? 0.50 : 0.66;
-  const v = 0.86 + rand() * 0.30;
+  const treeLike = isTreeAtlas(band.atlas);
+  c.offsetHSL(
+    (rand() - 0.5) * (treeLike ? 0.018 : 0.035),
+    treeLike ? -0.055 + rand() * 0.025 : (rand() - 0.5) * 0.08,
+    (rand() - 0.5) * (treeLike ? 0.035 : 0.08),
+  );
+  const baseMul = isUnderwaterAtlas(band.atlas)
+    ? (band.layer === 'foreground' ? 0.74 : 0.58)
+    : treeLike
+      ? (band.layer === 'foreground' ? 0.38 : 0.48)
+      : band.layer === 'foreground' ? 0.50 : 0.66;
+  const v = treeLike ? 0.78 + rand() * 0.16 : 0.86 + rand() * 0.30;
   return c.multiplyScalar(baseMul * v);
 }
 
@@ -685,12 +718,14 @@ function makeBranch(from: THREE.Vector3, to: THREE.Vector3, radius: number, mate
 
 function treePaletteFor(biome: ForegroundBiome, atlas: AtlasId, rand: () => number): TreeVolumePalette {
   const ground = new THREE.Color(biome.groundColor.day);
-  const leafMid = ground.clone().lerp(new THREE.Color(isEvergreen(atlas) ? 0x2e6040 : 0x6f8f4e), 0.62);
-  leafMid.offsetHSL((rand() - 0.5) * 0.035, 0.02 + rand() * 0.06, (rand() - 0.5) * 0.06);
-  leafMid.multiplyScalar(1.12);
-  const leafDark = leafMid.clone().multiplyScalar(isEvergreen(atlas) ? 0.66 : 0.72);
-  const leafLight = leafMid.clone().lerp(new THREE.Color(0xd3be72), isEvergreen(atlas) ? 0.16 : 0.22).multiplyScalar(1.24);
-  const bark = new THREE.Color(0x6b4424).lerp(ground, 0.16).multiplyScalar(0.86 + rand() * 0.12);
+  const leafMid = ground.clone()
+    .lerp(new THREE.Color(isEvergreen(atlas) ? 0x263b31 : 0x4f5d3c), 0.72)
+    .lerp(new THREE.Color(0x5e462f), isEvergreen(atlas) ? 0.20 : 0.16);
+  leafMid.offsetHSL((rand() - 0.5) * 0.018, -0.04 + rand() * 0.025, -0.035 + rand() * 0.035);
+  leafMid.multiplyScalar(0.78);
+  const leafDark = leafMid.clone().multiplyScalar(isEvergreen(atlas) ? 0.62 : 0.66);
+  const leafLight = leafMid.clone().lerp(new THREE.Color(0x9c7e4a), isEvergreen(atlas) ? 0.12 : 0.16).multiplyScalar(1.04);
+  const bark = new THREE.Color(0x5a3921).lerp(ground, 0.10).multiplyScalar(0.62 + rand() * 0.08);
   return { bark, leafDark, leafMid, leafLight };
 }
 
@@ -698,6 +733,9 @@ function makeTreeMaterial(color: THREE.Color, emissiveMul: number): THREE.MeshSt
   return new THREE.MeshStandardMaterial({
     color,
     emissive: color.clone().multiplyScalar(emissiveMul * 1.8),
+    transparent: true,
+    opacity: 0.66,
+    depthWrite: false,
     roughness: 0.92,
     metalness: 0,
     flatShading: true,

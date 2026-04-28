@@ -66,8 +66,8 @@ export class HumanoidRig {
     if (this.illustratedPuppet) this.illustratedPuppet.update(this.skeleton, pose, this.elapsed);
   }
 
-  getPalmWorld(hand: Handedness): THREE.Vector3 {
-    return this.skeleton.getPalmWorld(hand);
+  getPalmWorld(hand: Handedness, target?: THREE.Vector3): THREE.Vector3 {
+    return this.skeleton.getPalmWorld(hand, target);
   }
 
   getPalmCenterWorld(hand: Handedness, target?: THREE.Vector3): THREE.Vector3 {

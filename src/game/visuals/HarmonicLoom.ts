@@ -4,15 +4,15 @@ import type { PlayerVisual, VoiceState } from '../instruments';
 import { clamp } from '../math';
 
 export const LOOM_DEFS = {
-  strands:       { default: 15,    min: 7,    max: 21,   step: 2,     label: 'strands' },
-  segments:      { default: 84,    min: 24,   max: 120,  step: 2,     label: 'segments' },
+  strands:       { default: 11,    min: 7,    max: 21,   step: 2,     label: 'strands' },
+  segments:      { default: 56,    min: 24,   max: 120,  step: 2,     label: 'segments' },
   spread:        { default: 0.34,  min: 0.08, max: 0.8,  step: 0.01,  label: 'spread' },
   waveAmp:       { default: 0.055, min: 0,    max: 0.22, step: 0.005, label: 'wave amp' },
   bowFlow:       { default: 0.82,  min: 0,    max: 2.8,  step: 0.01,  label: 'flow speed' },
   idleOpacity:   { default: 0.10,  min: 0,    max: 0.6,  step: 0.01,  label: 'idle opacity' },
   energyOpacity: { default: 0.62,  min: 0,    max: 1,    step: 0.01,  label: 'energy opacity' },
   pulseOpacity:  { default: 0.52,  min: 0,    max: 1,    step: 0.01,  label: 'pulse opacity' },
-  moteCount:     { default: 68,    min: 0,    max: 160,  step: 4,     label: 'motes' },
+  moteCount:     { default: 48,    min: 0,    max: 160,  step: 4,     label: 'motes' },
   moteSize:      { default: 0.011, min: 0.004, max: 0.04, step: 0.001, label: 'mote size' },
   nodeSize:      { default: 0.17,  min: 0.04, max: 0.55, step: 0.01,  label: 'hand nodes' },
   coolColor:     { type: 'color', default: '#68f4ff', label: 'cool' },
@@ -62,6 +62,7 @@ export class HarmonicLoom implements PlayerVisual {
   private right = new THREE.Vector3();
   private center = new THREE.Vector3();
   private axis = new THREE.Vector3(1, 0, 0);
+  private worldUp = new THREE.Vector3(0, 1, 0);
   private fieldUp = new THREE.Vector3(0, 1, 0);
   private fieldSide = new THREE.Vector3(0, 0, 1);
   private tmp = new THREE.Vector3();
@@ -210,7 +211,7 @@ export class HarmonicLoom implements PlayerVisual {
     if (this.axis.lengthSq() < 0.0001) this.axis.set(1, 0, 0);
     else this.axis.normalize();
 
-    this.fieldSide.crossVectors(this.axis, new THREE.Vector3(0, 1, 0));
+    this.fieldSide.crossVectors(this.axis, this.worldUp);
     if (this.fieldSide.lengthSq() < 0.0001) this.fieldSide.set(0, 0, 1);
     this.fieldSide.normalize();
     this.fieldUp.crossVectors(this.fieldSide, this.axis).normalize();

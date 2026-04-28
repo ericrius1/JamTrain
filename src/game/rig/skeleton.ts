@@ -26,6 +26,7 @@ const up = new THREE.Vector3(0, 1, 0);
 const tempA = new THREE.Vector3();
 const tempB = new THREE.Vector3();
 const tempC = new THREE.Vector3();
+const tempOffset = new THREE.Vector3();
 
 export type SkeletonOptions = {
   /** Outer-cylinder material for upper-arm cloth (player-color). */
@@ -54,6 +55,11 @@ export class Skeleton {
   private armJointWorld = new Map<string, THREE.Vector3>();
   private fingertipWorld = new Map<string, THREE.Vector3>();
   private fingerJointWorld = new Map<string, THREE.Vector3>();
+  private readonly wristScratch = new THREE.Vector3();
+  private readonly palmScratch = new THREE.Vector3();
+  private readonly fingerBaseScratch = new THREE.Vector3();
+  private readonly fingerMidScratch = new THREE.Vector3();
+  private readonly fingerTipScratch = new THREE.Vector3();
 
   constructor(opts: SkeletonOptions, seatIndex: number) {
     this.seatIndex = seatIndex;
@@ -105,10 +111,9 @@ export class Skeleton {
     }
   }
 
-  getPalmWorld(hand: Handedness): THREE.Vector3 {
-    const v = new THREE.Vector3();
-    this.hands[hand].wristNode.getWorldPosition(v);
-    return v;
+  getPalmWorld(hand: Handedness, target = new THREE.Vector3()): THREE.Vector3 {
+    this.hands[hand].wristNode.getWorldPosition(target);
+    return target;
   }
 
   getPalmCenterWorld(hand: Handedness, target = new THREE.Vector3()): THREE.Vector3 {
@@ -198,9 +203,9 @@ export class Skeleton {
     const rig = this.hands[handedness];
     const side = handedness === 'left' ? -1 : 1;
     const shoulder = rig.shoulder;
-    const wrist = this.posePointToRig(pose.wrist, side);
-    const palm = this.posePointToRig(pose.palm, side);
-    const elbow = tempC.copy(shoulder).lerp(wrist, 0.53).add(new THREE.Vector3(side * 0.14, 0.08, 0.16));
+    const wrist = this.posePointToRig(pose.wrist, side, this.wristScratch);
+    const palm = this.posePointToRig(pose.palm, side, this.palmScratch);
+    const elbow = tempC.copy(shoulder).lerp(wrist, 0.53).add(tempOffset.set(side * 0.14, 0.08, 0.16));
 
     this.placeSegment(rig.upper, shoulder, elbow);
     this.placeSegment(rig.lower, elbow, wrist);
@@ -214,9 +219,9 @@ export class Skeleton {
 
     for (const finger of fingerNames) {
       const fingerPose = pose.fingers[finger];
-      const base = this.posePointToRig(fingerPose.base, side);
-      const mid = this.posePointToRig(fingerPose.mid, side);
-      const tip = this.posePointToRig(fingerPose.tip, side);
+      const base = this.posePointToRig(fingerPose.base, side, this.fingerBaseScratch);
+      const mid = this.posePointToRig(fingerPose.mid, side, this.fingerMidScratch);
+      const tip = this.posePointToRig(fingerPose.tip, side, this.fingerTipScratch);
       const curlOffset = fingerPose.curl * 0.065 * this.facing;
       mid.z += curlOffset;
       tip.z += curlOffset * 1.5;
@@ -261,8 +266,8 @@ export class Skeleton {
     this.root.localToWorld(world);
   }
 
-  private posePointToRig(point: Vec3Data, side: number): THREE.Vector3 {
-    return new THREE.Vector3(
+  private posePointToRig(point: Vec3Data, side: number, target: THREE.Vector3): THREE.Vector3 {
+    return target.set(
       point.x * 0.54 + side * 0.04,
       0.54 + point.y * 0.68,
       -0.42 - point.z * 0.85 * handDepthConfig.worldDepthScale - handDepthConfig.worldDepthOffset

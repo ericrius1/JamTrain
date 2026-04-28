@@ -6,7 +6,7 @@ import { AudioEngine } from './audio';
 import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
-import { clamp, distance, fromThree } from './math';
+import { clamp } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
 import { HarmonicLoom } from './visuals/HarmonicLoom';
@@ -25,7 +25,7 @@ import { HumanoidRig } from './rig/HumanoidRig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { hashString } from './seedRandom';
-import { fingerJointNames, fingerNames, handednesses, type LinkSample, type PlayerPose } from './types';
+import { fingerJointNames, fingerNames, handednesses, type LinkSample, type PlayerPose, type Vec3Data } from './types';
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 
@@ -91,6 +91,35 @@ function makeHandContactPoints(): HandContactPoint[] {
   return contacts;
 }
 
+function makeLinkSamples(): LinkSample[] {
+  const links: LinkSample[] = [];
+  for (const hand of handednesses) {
+    for (const finger of fingerNames) {
+      links.push({
+        from: { x: 0, y: 0, z: 0 },
+        to: { x: 0, y: 0, z: 0 },
+        finger,
+        hand,
+        tension: 0,
+      });
+    }
+  }
+  return links;
+}
+
+function copyVectorData(from: THREE.Vector3, to: Vec3Data): void {
+  to.x = from.x;
+  to.y = from.y;
+  to.z = from.z;
+}
+
+function distanceBetween(a: THREE.Vector3, b: THREE.Vector3): number {
+  const x = a.x - b.x;
+  const y = a.y - b.y;
+  const z = a.z - b.z;
+  return Math.sqrt(x * x + y * y + z * z);
+}
+
 export class Game {
   private renderer: THREE.WebGPURenderer;
   private scene = new THREE.Scene();
@@ -121,6 +150,7 @@ export class Game {
   private linkPositions = new Float32Array(10 * 2 * 3);
   private linkGeometry = new THREE.BufferGeometry();
   private linkLines: THREE.LineSegments;
+  private readonly linkSamples = makeLinkSamples();
   private scenery: ScenerySystem;
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
@@ -150,6 +180,16 @@ export class Game {
   private remotePose?: PlayerPose;
   private partnerPresent = false;
   private robotJamMuted = true;
+  private readonly localLeftPalm = new THREE.Vector3();
+  private readonly localRightPalm = new THREE.Vector3();
+  private readonly remoteLeftPalm = new THREE.Vector3();
+  private readonly remoteRightPalm = new THREE.Vector3();
+  private readonly ambientBaseColor = new THREE.Color(0x3f2a1d);
+  private readonly ambientDayColor = new THREE.Color(0xffc37a);
+  private readonly ambientUnderwaterColor = new THREE.Color(0x2ac9d3);
+  private readonly keyBaseColor = new THREE.Color(0x9d5f2f);
+  private readonly keyDayColor = new THREE.Color(0xffc05a);
+  private readonly keyUnderwaterColor = new THREE.Color(0x8dfcff);
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -903,17 +943,20 @@ export class Game {
   }
 
   private updateLinks(): LinkSample[] {
-    const links: LinkSample[] = [];
     let cursor = 0;
+    let sampleIndex = 0;
+    let totalTension = 0;
 
     for (const handedness of handednesses) {
       for (const finger of fingerNames) {
         const from = this.localRig.getFingertipWorld(handedness, finger);
         const to = this.remoteRig.getFingertipWorld(handedness, finger);
-        const fromData = fromThree(from);
-        const toData = fromThree(to);
-        const tension = clamp(1.25 - Math.abs(distance(fromData, toData) - 1.1) * 0.42, 0.08, 1);
-        links.push({ from: fromData, to: toData, finger, hand: handedness, tension });
+        const tension = clamp(1.25 - Math.abs(distanceBetween(from, to) - 1.1) * 0.42, 0.08, 1);
+        const sample = this.linkSamples[sampleIndex++];
+        copyVectorData(from, sample.from);
+        copyVectorData(to, sample.to);
+        sample.tension = tension;
+        totalTension += tension;
 
         this.linkPositions[cursor++] = from.x;
         this.linkPositions[cursor++] = from.y;
@@ -926,16 +969,16 @@ export class Game {
 
     this.linkGeometry.attributes.position.needsUpdate = true;
     const material = this.linkLines.material as THREE.LineBasicMaterial;
-    const energy = links.reduce((sum, link) => sum + link.tension, 0) / Math.max(links.length, 1);
+    const energy = totalTension / Math.max(this.linkSamples.length, 1);
     material.opacity = 0.18 + energy * 0.48;
-    return links;
+    return this.linkSamples;
   }
 
   private updatePlayerVisuals(delta: number): void {
-    const localLeft = this.localRig.getPalmWorld('left');
-    const localRight = this.localRig.getPalmWorld('right');
-    const remoteLeft = this.remoteRig.getPalmWorld('left');
-    const remoteRight = this.remoteRig.getPalmWorld('right');
+    const localLeft = this.localRig.getPalmWorld('left', this.localLeftPalm);
+    const localRight = this.localRig.getPalmWorld('right', this.localRightPalm);
+    const remoteLeft = this.remoteRig.getPalmWorld('left', this.remoteLeftPalm);
+    const remoteRight = this.remoteRig.getPalmWorld('right', this.remoteRightPalm);
     const localContacts = this.updateVisualContacts('local', this.localRig);
     const remoteContacts = this.updateVisualContacts('remote', this.remoteRig);
     const localVoice = this.handSynth.getVoiceState('local');
@@ -1010,16 +1053,16 @@ export class Game {
 
     if (this.ambientLight) {
       this.ambientLight.color
-        .set(0x3f2a1d)
-        .lerp(new THREE.Color(0xffc37a), atmosphere.daylight * 0.62)
-        .lerp(new THREE.Color(0x2ac9d3), underwater * 0.82);
+        .copy(this.ambientBaseColor)
+        .lerp(this.ambientDayColor, atmosphere.daylight * 0.62)
+        .lerp(this.ambientUnderwaterColor, underwater * 0.82);
       this.ambientLight.intensity = 0.38 + atmosphere.daylight * 0.48 + atmosphere.night * 0.14 + underwater * 0.16;
     }
     if (this.keyLight) {
       this.keyLight.color
-        .set(0x9d5f2f)
-        .lerp(new THREE.Color(0xffc05a), atmosphere.daylight)
-        .lerp(new THREE.Color(0x8dfcff), underwater * 0.78);
+        .copy(this.keyBaseColor)
+        .lerp(this.keyDayColor, atmosphere.daylight)
+        .lerp(this.keyUnderwaterColor, underwater * 0.78);
       this.keyLight.intensity = 0.58 + atmosphere.daylight * 1.35 + atmosphere.night * 0.18 - underwater * 0.34;
       this.keyLight.position.set(-2.8, 3.1 + atmosphere.daylight * 1.5 + underwater * 0.55, 3.5);
     }

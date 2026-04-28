@@ -94,6 +94,26 @@ type ArmParts = {
 };
 
 const planeFacingY = Math.PI / 2;
+const puppetTextureLoader = new THREE.TextureLoader();
+const puppetTextureCache = new Map<string, THREE.Texture>();
+
+function getPuppetTexture(url: string): THREE.Texture {
+  const cached = puppetTextureCache.get(url);
+  if (cached) return cached;
+
+  const texture = puppetTextureLoader.load(url, tex => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+  });
+  texture.colorSpace = THREE.SRGBColorSpace;
+  puppetTextureCache.set(url, texture);
+  return texture;
+}
+
+export function clearIllustratedPuppetTextureCache(): void {
+  for (const texture of puppetTextureCache.values()) texture.dispose();
+  puppetTextureCache.clear();
+}
 
 function toVector3(tuple: Vec3Tuple, target = new THREE.Vector3()): THREE.Vector3 {
   return target.set(tuple[0], tuple[1], tuple[2]);
@@ -107,7 +127,6 @@ function anchorToLocal(anchor: PuppetAnchor, spec: PuppetSpriteSpec, target = ne
 export class IllustratedPuppetAvatar {
   readonly group = new THREE.Group();
 
-  private readonly loader = new THREE.TextureLoader();
   private readonly flatParts: FlatPart[] = [];
   private readonly anchoredParts: AnchoredPart[] = [];
   private readonly arms: Record<Handedness, ArmParts>;
@@ -174,10 +193,9 @@ export class IllustratedPuppetAvatar {
 
   dispose(): void {
     this.group.parent?.remove(this.group);
-    for (const part of [...this.flatParts, ...this.anchoredParts]) {
+    for (const part of this.flatParts) {
       part.mesh.geometry.dispose();
       part.mesh.material.dispose();
-      part.texture.dispose();
     }
     this.contactShadow?.geometry.dispose();
     this.contactShadow?.material.dispose();
@@ -203,11 +221,7 @@ export class IllustratedPuppetAvatar {
   }
 
   private createFlatPart(spec: PuppetSpriteSpec, renderOrder: number): FlatPart {
-    const texture = this.loader.load(spec.url, tex => {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.needsUpdate = true;
-    });
-    texture.colorSpace = THREE.SRGBColorSpace;
+    const texture = getPuppetTexture(spec.url);
 
     const geometry = new THREE.PlaneGeometry(spec.width, spec.width * spec.aspect);
     const material = new THREE.MeshBasicMaterial({

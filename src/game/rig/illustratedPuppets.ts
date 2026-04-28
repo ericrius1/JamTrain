@@ -3,10 +3,12 @@ import type { IllustratedPuppetSpec } from './IllustratedPuppetAvatar';
 
 const LION_ROOT = '/puppets/lion';
 const ELK_ROOT = '/puppets/elk';
+const FOX_ROOT = '/puppets/fox';
 const ROBOT_ROOT = '/puppets/robot';
 
 const LION_BODY_HEIGHT = 1.28;
 const ELK_BODY_HEIGHT = 1.42;
+const FOX_BODY_HEIGHT = 1.28;
 const ROBOT_BODY_HEIGHT = 1.34;
 
 export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSpec>> = {
@@ -59,10 +61,10 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       },
       hand: {
         url: `${LION_ROOT}/paw-cupped.png`,
-        width: 0.24,
-        aspect: 245 / 283,
-        from: { x: 0.28, y: 0.62 },
-        to: { x: 0.9, y: 0.24 },
+        width: 0.27,
+        aspect: 363 / 334,
+        from: { x: 0.32, y: 0.51 },
+        to: { x: 0.84, y: 0.26 },
         aimDistance: 0.18,
         minScale: 0.88,
         maxScale: 1.34,
