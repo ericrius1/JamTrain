@@ -524,7 +524,7 @@ export class HandSynthEngine {
     };
   }
 
-  /** Called by the OrbDrums visual when an orb is struck. Rings the
+  /** Called by the Drum visual when an orb is struck. Rings the
    *  hang-drum voice for the given player. */
   triggerOrbHit(player: PlayerKey, frequency: number, velocity: number, orbIndex: number): void {
     if (!this.running || !this.tone) {

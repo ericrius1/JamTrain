@@ -60,7 +60,6 @@ type TravelingSpark = {
   intensity: number;
 };
 
-const ROW_COUNTS = [5, 7, 8, 7, 5];
 const MAX_SPARKS = 64;
 const MAX_HITS_PER_FRAME = 10;
 const TAU = Math.PI * 2;
