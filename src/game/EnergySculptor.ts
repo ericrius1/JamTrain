@@ -9,6 +9,7 @@ import {
   instanceIndex,
   instancedArray,
   mix,
+  sin,
   smoothstep,
   uniform,
   uniformArray,
@@ -18,6 +19,7 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
+import { SPECTRUM_BAND_COUNT, type MusicSpectrum } from './audioGraph';
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import type { EmitRequest, EnergySink } from './sculptor/EnergyEmitter';
 import type { ArchetypeId } from './sculptor/archetypeShared';
@@ -49,6 +51,10 @@ export const SCULPTOR_DEFS = {
   fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
   fieldBreathAmount:    { default: 0.15,  min: 0,    max: 0.5,  step: 0.01, label: 'field breath' },
   duetBoost:            { default: 0.45,  min: 0,    max: 1.5,  step: 0.01, label: 'duet boost' },
+  spectrumFlowGain:     { default: 0.55,  min: 0,    max: 2,    step: 0.01, label: 'fft flow gain' },
+  spectrumPulseGain:    { default: 1.4,   min: 0,    max: 4,    step: 0.05, label: 'fft pulse gain' },
+  spectrumGlowGain:     { default: 1.1,   min: 0,    max: 3,    step: 0.05, label: 'fft glow gain' },
+  spectrumOscillation:  { default: 0.35,  min: 0,    max: 1.5,  step: 0.01, label: 'fft oscillation' },
   dissolveBurstSpeed:   { default: 6,     min: 0,    max: 16,   step: 0.1,  label: 'dissolve burst' },
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'projector base radius' },
   projectorRingCount:   { default: 3,     min: 1,    max: 5,    step: 1,    label: 'projector ring count' },
@@ -165,6 +171,21 @@ export class EnergySculptor implements EnergySink {
   private particleSizeUniform = uniform(0.022);
   private particleOpacityUniform = uniform(0.85);
 
+  // Per-band spectrum data — `instanceIndex % SPECTRUM_BAND_COUNT` picks
+  // which band a particle responds to. Levels are smoothed magnitudes, pulses
+  // are transient impulses (level minus its slow baseline). Visuals tap both
+  // so sustained content drives oscillation while attacks read as pops.
+  private spectrumLevelArray: number[] = new Array(SPECTRUM_BAND_COUNT).fill(0);
+  private spectrumPulseArray: number[] = new Array(SPECTRUM_BAND_COUNT).fill(0);
+  private spectrumLevelUniform!: THREE.UniformArrayNode<'float'>;
+  private spectrumPulseUniform!: THREE.UniformArrayNode<'float'>;
+  private spectrumOverallUniform = uniform(0);
+  private spectrumFlowGainUniform = uniform(0.55);
+  private spectrumPulseGainUniform = uniform(1.4);
+  private spectrumGlowGainUniform = uniform(1.1);
+  private spectrumOscillationUniform = uniform(0.35);
+  private spectrumTimeUniform = uniform(0);
+
   // Per-attractor parameter uniforms. CPU swaps values on archetype change.
   // attractorSelectUniform is a float (0/1/2/3), cast to uint at compute site.
   private thomasA = uniform(0.19);
@@ -248,6 +269,7 @@ export class EnergySculptor implements EnergySink {
 
     this.allocateBuffers();
     this.allocateSpawnQueue();
+    this.allocateSpectrumUniforms();
     this.buildComputePipelines();
     this.buildRenderMesh();
     this.buildSynchronyRing();
@@ -266,6 +288,10 @@ export class EnergySculptor implements EnergySink {
     this.residualFieldUniform.value = this.params.residualField;
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
     this.duetBoostUniform.value = this.params.duetBoost;
+    this.spectrumFlowGainUniform.value = this.params.spectrumFlowGain;
+    this.spectrumPulseGainUniform.value = this.params.spectrumPulseGain;
+    this.spectrumGlowGainUniform.value = this.params.spectrumGlowGain;
+    this.spectrumOscillationUniform.value = this.params.spectrumOscillation;
     this.speedGlowUniform.value = this.params.speedGlow;
     this.stretchScaleUniform.value = this.params.stretchScale;
     this.settleAmountUniform.value = this.params.settleAmount;
@@ -301,8 +327,24 @@ export class EnergySculptor implements EnergySink {
         fieldBreathAmount: v => { this.fieldBreathAmount = v; },
         dissolveBurstSpeed: v => { this.dissolveBurstUniform.value = v; },
         duetBoost: v => { this.duetBoostUniform.value = v; },
+        spectrumFlowGain: v => { this.spectrumFlowGainUniform.value = v; },
+        spectrumPulseGain: v => { this.spectrumPulseGainUniform.value = v; },
+        spectrumGlowGain: v => { this.spectrumGlowGainUniform.value = v; },
+        spectrumOscillation: v => { this.spectrumOscillationUniform.value = v; },
       },
     });
+  }
+
+  // Push the latest FFT snapshot into the GPU-side band uniforms. The arrays
+  // themselves are reused; we just memcpy. Auto-uploaded by three's TSL on
+  // the next compute/render dispatch.
+  setMusicSpectrum(spectrum: MusicSpectrum): void {
+    const n = Math.min(SPECTRUM_BAND_COUNT, spectrum.levels.length);
+    for (let i = 0; i < n; i += 1) {
+      this.spectrumLevelArray[i] = spectrum.levels[i];
+      this.spectrumPulseArray[i] = spectrum.pulses[i];
+    }
+    this.spectrumOverallUniform.value = spectrum.overall;
   }
 
   // ---------------------------------------------------------------------- emit
@@ -424,6 +466,11 @@ export class EnergySculptor implements EnergySink {
     this.spawnVelUniform = uniformArray(this.spawnVelArray, 'vec3');
     this.spawnColorUniform = uniformArray(this.spawnColorArray, 'vec3');
     this.spawnMetaUniform = uniformArray(this.spawnMetaArray, 'vec3');
+  }
+
+  private allocateSpectrumUniforms(): void {
+    this.spectrumLevelUniform = uniformArray(this.spectrumLevelArray, 'float');
+    this.spectrumPulseUniform = uniformArray(this.spectrumPulseArray, 'float');
   }
 
   private buildComputePipelines(): void {

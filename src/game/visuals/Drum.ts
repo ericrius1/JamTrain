@@ -207,10 +207,6 @@ export class Drum implements PlayerVisual {
   private hitCandidates: (OrbHitCandidate | null)[] = [];
   private activeContactKeys = new Set<string>();
   private currentContactKeys = new Set<string>();
-  private fallbackContacts: HandContactPoint[] = [
-    { id: 'left:palm', hand: 'left', kind: 'palm', position: new THREE.Vector3() },
-    { id: 'right:palm', hand: 'right', kind: 'palm', position: new THREE.Vector3() },
-  ];
   private rippleSources: THREE.Vector4[] = [];
   private rippleStarts: number[] = [];
   private rippleCursor = 0;
@@ -532,7 +528,7 @@ export class Drum implements PlayerVisual {
     this.collisionBVH.refit();
     this.tickReveal();
     if (this.revealedFully && !this.revealActive) {
-      this.processContactHits(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
+      if (contacts) this.processContactHits(contacts, delta);
       this.updatePointerGesture(delta);
     } else {
       // Drain any pointer "still inside" state so hits don't fire the moment
@@ -918,17 +914,6 @@ export class Drum implements PlayerVisual {
     if (count === this.lastReportedOrbCount) return;
     this.lastReportedOrbCount = count;
     this.onOrbCountChange?.(count);
-  }
-
-  private resolveContacts(
-    leftPalm: THREE.Vector3,
-    rightPalm: THREE.Vector3,
-    contacts?: readonly HandContactPoint[],
-  ): readonly HandContactPoint[] {
-    if (contacts && contacts.length > 0) return contacts;
-    this.fallbackContacts[0].position.copy(leftPalm);
-    this.fallbackContacts[1].position.copy(rightPalm);
-    return this.fallbackContacts;
   }
 
   private processContactHits(contacts: readonly HandContactPoint[], delta: number): void {

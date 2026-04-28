@@ -318,6 +318,13 @@ export class HandTracker {
     return stream.getVideoTracks().some(t => t.enabled);
   }
 
+  // True only when the camera is producing live hand poses. Used to gate
+  // contact-based hit detection so the rig's idle/mouse-driven pose doesn't
+  // bang the instrument when the user isn't actively tracking.
+  hasTrackedHands(): boolean {
+    return this.cameraHands !== undefined;
+  }
+
   getAudioEnabled(): boolean {
     if (!this.micStream) return false;
     return this.micStream.getAudioTracks().some(t => t.enabled);

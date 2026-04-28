@@ -189,10 +189,6 @@ export class Starlace implements PlayerVisual {
   private previousContacts = new Map<string, THREE.Vector3>();
   private activeContactKeys = new Set<string>();
   private currentContactKeys = new Set<string>();
-  private fallbackContacts: HandContactPoint[] = [
-    { id: 'starlace:left:palm', hand: 'left', kind: 'palm', position: new THREE.Vector3() },
-    { id: 'starlace:right:palm', hand: 'right', kind: 'palm', position: new THREE.Vector3() },
-  ];
   private sparks: TravelingSpark[] = Array.from({ length: MAX_SPARKS }, () => ({
     from: 0,
     to: 0,
@@ -547,7 +543,7 @@ export class Starlace implements PlayerVisual {
     this.updateRevealValues();
     if (this.revealedFully && !this.revealActive) {
       this.processKeyboardPaths();
-      this.processContacts(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
+      if (contacts) this.processContacts(contacts, delta);
       this.processPointer(delta);
     } else {
       this.keyboardPaths.clear();
@@ -877,17 +873,6 @@ export class Starlace implements PlayerVisual {
       this.sparkMesh.setMatrixAt(i, _dummy.matrix);
     }
     this.sparkMesh.instanceMatrix.needsUpdate = true;
-  }
-
-  private resolveContacts(
-    leftPalm: THREE.Vector3,
-    rightPalm: THREE.Vector3,
-    contacts?: readonly HandContactPoint[],
-  ): readonly HandContactPoint[] {
-    if (contacts && contacts.length > 0) return contacts;
-    this.fallbackContacts[0].position.copy(leftPalm);
-    this.fallbackContacts[1].position.copy(rightPalm);
-    return this.fallbackContacts;
   }
 
   private attachPointerEvents(canvas: HTMLCanvasElement): void {

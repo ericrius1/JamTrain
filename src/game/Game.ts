@@ -37,6 +37,10 @@ const PLAYERS_DEFS = {
   backOffset: { default: 0.08, min: -0.4, max: 0.8, step: 0.01, label: 'back offset' },
 } as const;
 
+const INSTRUMENTS_DEFS = {
+  playerOffset: { default: 0.7, min: 0, max: 1.0, step: 0.01, label: 'player offset' },
+} as const;
+
 const INTRO_SCENE_DEFS = {
   opacity:    { default: 0.28, min: 0.08, max: 0.60, step: 0.01, label: 'opacity' },
   brightness: { default: 0.30, min: 0.08, max: 0.70, step: 0.01, label: 'brightness' },
@@ -151,6 +155,8 @@ export class Game {
   private readonly introSceneParams = makeParams(INTRO_SCENE_DEFS);
   private playersTweaks?: ReturnType<typeof registerTweaks<typeof PLAYERS_DEFS>>;
   private readonly playersParams = makeParams(PLAYERS_DEFS);
+  private instrumentsTweaks?: ReturnType<typeof registerTweaks<typeof INSTRUMENTS_DEFS>>;
+  private readonly instrumentsParams = makeParams(INSTRUMENTS_DEFS);
   readonly paneDock: HTMLElement;
   private roomId: string;
   private roomSeed: number;
@@ -266,6 +272,7 @@ export class Game {
     this.refreshArchetype();
     this.roundDirector.start();
     this.setupPlayersPane();
+    this.setupInstrumentsPane();
     this.handTracker.attachPane(this.paneDock);
     attachHandDepthPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
@@ -757,6 +764,17 @@ export class Game {
     });
   }
 
+  private setupInstrumentsPane(): void {
+    if (this.instrumentsTweaks) return;
+    this.instrumentsTweaks = registerTweaks(this.paneDock, 'instruments', INSTRUMENTS_DEFS, {
+      title: 'Instruments',
+      params: this.instrumentsParams,
+      onChange: {
+        playerOffset: () => this.updatePlayerVisualAnchors(),
+      },
+    });
+  }
+
   private installPlayerVisuals(): void {
     this.ensurePlayerVisual('local', 'drum');
     this.ensurePlayerVisual('local', 'starlace');
@@ -914,7 +932,7 @@ export class Game {
    */
   private computeInstrumentAnchor(seatIndex: number): THREE.Vector3 {
     const dir = seatIndex === 0 ? 1 : -1;
-    return new THREE.Vector3(0, 1.05, dir * 0.55);
+    return new THREE.Vector3(0, 1.05, dir * this.instrumentsParams.playerOffset);
   }
 
   private checkSynchrony(): void {
@@ -1039,7 +1057,13 @@ export class Game {
     const localRight = this.localRig.getPalmWorld('right', this.localRightPalm);
     const remoteLeft = this.remoteRig.getPalmWorld('left', this.remoteLeftPalm);
     const remoteRight = this.remoteRig.getPalmWorld('right', this.remoteRightPalm);
-    const localContacts = this.updateVisualContacts('local', this.localRig);
+    // Local contact-based hits are gated on active webcam hand tracking. Without
+    // this, the rig's mouse-driven pose sits inside the instrument and triggers
+    // continuous hits when the user isn't moving anything. Mouse-on-orb play
+    // still works through Drum's pointer gesture path.
+    const localContacts = this.handTracker.hasTrackedHands()
+      ? this.updateVisualContacts('local', this.localRig)
+      : undefined;
     const remoteContacts = this.updateVisualContacts('remote', this.remoteRig);
     const localVoice = this.handSynth.getVoiceState('local');
     const remoteVoice = this.handSynth.getVoiceState('remote');
