@@ -2,7 +2,7 @@ import { handDepthConfig } from './handDepth';
 import { waitForHandposeCacheWorker } from './handposeCache';
 import { HandFilter } from './handFilter';
 import { clamp, lerpVec, vec } from './math';
-import { makeSimulatedHands } from './pose';
+import { makeMouseHands } from './pose';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type Vec3Data } from './types';
 
 // Self-hosted weights live under /public/handpose/. Avoids the cross-origin
@@ -90,6 +90,9 @@ const MAX_TRACKED_HANDS = 2;
 // a reset so a hand that has re-entered the frame can actually be picked up.
 const LOCK_IN_DETECTIONS = 8;
 const RESET_COOLDOWN_S = 1;
+const POINTER_LAG_SECONDS = 0.075;
+const POINTER_ACTIVE_SECONDS = 1.4;
+const POINTER_IDLE_CONFIDENCE = 0.35;
 
 export class HandTracker {
   private video?: HTMLVideoElement;
@@ -101,7 +104,11 @@ export class HandTracker {
   private latestUpdateTime = 0;
   private cameraHands?: Record<Handedness, HandPose>;
   private rawDetections: RawDetection[] = [];
-  private pointer = { x: 0, y: 0 };
+  private pointerTarget = { x: 0, y: 0 };
+  private pointer = { x: 0, y: 0, vx: 0, vy: 0 };
+  private lastPointerUpdateTime = 0;
+  private pointerLastMovedAtMs = -Infinity;
+  private seatIndex = 0;
   private mode: 'simulated' | 'camera' | 'error' = 'simulated';
   private status = 'hands: simulated';
   private partialDetectionRun = 0;
@@ -111,8 +118,9 @@ export class HandTracker {
 
   constructor(private statusTarget?: HTMLElement) {
     window.addEventListener('pointermove', event => {
-      this.pointer.x = (event.clientX / Math.max(window.innerWidth, 1)) * 2 - 1;
-      this.pointer.y = -((event.clientY / Math.max(window.innerHeight, 1)) * 2 - 1);
+      this.pointerTarget.x = (event.clientX / Math.max(window.innerWidth, 1)) * 2 - 1;
+      this.pointerTarget.y = -((event.clientY / Math.max(window.innerHeight, 1)) * 2 - 1);
+      this.pointerLastMovedAtMs = performance.now();
     });
     this.publishStatus();
   }
@@ -188,10 +196,12 @@ export class HandTracker {
     }
   }
 
-  update(time: number): Record<Handedness, HandPose> {
+  update(time: number, seatIndex = 0): Record<Handedness, HandPose> {
+    this.updatePointer(time);
+    this.seatIndex = seatIndex;
     this.latestUpdateTime = time;
 
-    const simulated = makeSimulatedHands(time, this.pointer.x, this.pointer.y);
+    const simulated = this.makeMouseHands(time);
     if (!this.cameraHands) return simulated;
 
     const hands = {} as Record<Handedness, HandPose>;
@@ -388,7 +398,7 @@ export class HandTracker {
 
     if (!mapped.left && !mapped.right) return undefined;
 
-    const completed = makeSimulatedHands(time, this.pointer.x, this.pointer.y);
+    const completed = this.makeMouseHands(time);
     for (const handedness of handednesses) {
       const detected = mapped[handedness];
       if (!detected) continue;
@@ -404,7 +414,7 @@ export class HandTracker {
     handedness: Handedness,
     time: number
   ): HandPose {
-    const fallback = makeSimulatedHands(time, this.pointer.x, this.pointer.y)[handedness];
+    const fallback = this.makeMouseHands(time)[handedness];
 
     const readImg = (key: string, index: number): LandmarkLike | undefined =>
       hand.keypoints?.[key] ?? hand.landmarks?.[index];
@@ -520,6 +530,27 @@ export class HandTracker {
       fingers,
       confidence: next.confidence,
     };
+  }
+
+  private updatePointer(time: number): void {
+    const dt = this.lastPointerUpdateTime > 0
+      ? clamp(time - this.lastPointerUpdateTime, 1 / 120, 0.05)
+      : 1 / 60;
+    this.lastPointerUpdateTime = time;
+
+    const prevX = this.pointer.x;
+    const prevY = this.pointer.y;
+    const amount = 1 - Math.exp(-dt / POINTER_LAG_SECONDS);
+    this.pointer.x += (this.pointerTarget.x - this.pointer.x) * amount;
+    this.pointer.y += (this.pointerTarget.y - this.pointer.y) * amount;
+    this.pointer.vx = (this.pointer.x - prevX) / dt;
+    this.pointer.vy = (this.pointer.y - prevY) / dt;
+  }
+
+  private makeMouseHands(time: number): Record<Handedness, HandPose> {
+    const pointerAgeSeconds = (performance.now() - this.pointerLastMovedAtMs) / 1000;
+    const confidence = pointerAgeSeconds <= POINTER_ACTIVE_SECONDS ? 1 : POINTER_IDLE_CONFIDENCE;
+    return makeMouseHands(time, this.pointer.x, this.pointer.y, this.pointer.vx, this.pointer.vy, confidence, this.seatIndex);
   }
 
   private publishStatus(): void {

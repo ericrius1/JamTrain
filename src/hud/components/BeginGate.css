@@ -59,10 +59,8 @@
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
 }
 
-/* Top rail — sparse meta on either side, headphones pill dead-centered.
-   The pill is absolutely positioned (independent of meta-left/meta-right
-   widths) so it lands on true screen center to match the conductor field
-   below. The rail itself stays flex-row for the meta strings. */
+/* Top rail — sparse meta on either side. The headphones message has moved
+   directly under the "Jam Train" title in the title block. */
 .begin-top-rail {
   position: absolute;
   top: 0;
@@ -86,24 +84,23 @@
   letter-spacing: 0.2em;
   color: var(--text-dim);
 }
+/* Headphones pill — sits directly below the "Jam Train" title. Uses the
+   verdigris/patina token so it complements (rather than competes with) the
+   gold display type while staying inside the antique brass palette. */
 .begin-headphones-pill {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
   display: inline-flex;
   align-items: center;
   gap: 12px;
   padding: 8px 18px;
-  border: 1px solid var(--brass-2);
+  border: 1px solid var(--patina-deep);
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.45);
   box-shadow:
-    inset 0 1px 0 rgba(246, 179, 51, 0.18),
+    inset 0 1px 0 rgba(111, 191, 168, 0.18),
     inset 0 -1px 0 rgba(0, 0, 0, 0.5);
-  color: var(--parchment);
+  color: var(--patina);
   font-family: 'IM Fell English SC', serif;
-  font-size: 12px;
+  font-size: 13px;
   letter-spacing: 0.32em;
   text-transform: uppercase;
   white-space: nowrap;
@@ -111,20 +108,19 @@
 .begin-headphones-pill svg {
   width: 18px;
   height: 15px;
-  color: var(--sun);
+  color: var(--patina);
   flex: 0 0 auto;
 }
 
-/* Title block — anchored at bottom center of the stage so the artwork above
-   stays unoccluded and the call-to-action sits on the natural reading axis.
-   Stretches across the stage and centers its children with flexbox so the
-   `begin-fade-down` animation (which writes to `transform`) doesn't fight a
-   `translateX(-50%)` for horizontal centering. */
+/* Title block — anchored at top center of the stage. Eyebrow + "Jam Train"
+   display + headphones pill stack vertically and center horizontally.
+   Flexbox centering keeps the `begin-fade-down` translateY animation clean
+   (no fighting with translateX(-50%) for horizontal centering). */
 .begin-title-block {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 60px;
+  top: 92px;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -147,13 +143,17 @@
     0 2px 0 rgba(0, 0, 0, 0.6),
     0 0 50px rgba(246, 179, 51, 0.35);
 }
+.begin-title-block .begin-headphones-pill {
+  margin-top: 22px;
+}
 
-/* Conductor field — rendered as the last child of the title block so it
-   flows directly under "Jam Train" on the right side of the stage. Children
-   center horizontally within the title block so the input sits visually
-   under the middle of "Jam Train" rather than hugging the right edge. */
+/* Conductor field — anchored at the bottom center of the stage so the
+   artwork between the title and the CTA stays unoccluded. */
 .begin-conductor-field {
-  margin-top: 32px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 70px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -169,6 +169,11 @@
   display: flex;
   gap: 8px;
   align-items: stretch;
+}
+.begin-conductor-spacer {
+  width: 46px;
+  flex: 0 0 auto;
+  visibility: hidden;
 }
 .begin-conductor-input {
   width: 300px;

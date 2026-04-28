@@ -28,11 +28,16 @@ const BG_OPTIONS: Record<string, string> = (() => {
   return o;
 })();
 
+const TERRAIN_LAYER_MIN = 1;
+const TERRAIN_LAYER_MAX = 9;
+const TERRAIN_LAYER_DEFAULT = 9;
+
 export const SCENERY_DEFS = {
   cycleLengthSeconds: { default: 180,  min: 30,  max: 600,  step: 1,     label: 'day/night sec' },
   cycleOffset:        { default: 0.08, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
   trainSpeed:         { default: 1.1,  min: 0,   max: 3,    step: 0.01,  label: 'train speed' },
-  hillAmplitude:      { default: 1.0,  min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape' },
+  hillAmplitude:      { default: 1.0,  min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape', folder: 'Terrain' },
+  terrainLayers:      { default: TERRAIN_LAYER_DEFAULT, min: TERRAIN_LAYER_MIN, max: TERRAIN_LAYER_MAX, step: 1, label: 'layers', folder: 'Terrain' },
   auroraIntensity:    { default: 0.28, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
   starIntensity:      { default: 0.78, min: 0,   max: 1,    step: 0.01,  label: 'stars' },
   moonSize:           { default: 0.34, min: 0.12, max: 0.58, step: 0.01, label: 'moon size' },
@@ -58,6 +63,8 @@ export type SceneryOptions = {
 interface BackgroundPanel {
   mesh: THREE.Mesh;
   geometry: THREE.BufferGeometry;
+  layer: BackgroundDepthLayer;
+  layerIndex: number;
   side: number;
   scrollOffset: number;
   segments: number;
@@ -65,11 +72,205 @@ interface BackgroundPanel {
   panelHeight: number;
 }
 
+interface BackgroundDepthLayer {
+  id: string;
+  xDistance: number;
+  widthScale: number;
+  heightScale: number;
+  yOffset: number;
+  frequencyScale: number;
+  phaseOffset: number;
+  scrollSpeed: number;
+  mist: number;
+  fogScale: number;
+  brightness: number;
+  alpha: number;
+  snowBias: number;
+  ridgeGlow: number;
+  renderOrder: number;
+}
+
+interface BackgroundFogBand {
+  y: number;
+  height: number;
+  intensity: number;
+  drift: number;
+  minLayers: number;
+  renderOrder: number;
+}
+
+interface BackgroundFogPanel {
+  mesh: THREE.Mesh;
+  band: BackgroundFogBand;
+  side: number;
+}
+
 const fullTurn = Math.PI * 2;
 const BG_WIDTH = 12.4;
 const BG_SEGMENTS = 312;
 const BG_PANEL_HEIGHT = 1.6;
 const BG_BASE_Y = 0.12;
+const BG_DEPTH_LAYERS: BackgroundDepthLayer[] = [
+  {
+    id: 'ghost-peaks',
+    xDistance: 4.72,
+    widthScale: 1.70,
+    heightScale: 0.70,
+    yOffset: 0.52,
+    frequencyScale: 0.88,
+    phaseOffset: 6.7,
+    scrollSpeed: 0.045,
+    mist: 0.84,
+    fogScale: 1.92,
+    brightness: 1.22,
+    alpha: 0.40,
+    snowBias: -0.12,
+    ridgeGlow: 0.34,
+    renderOrder: -28,
+  },
+  {
+    id: 'distant-sawtooth',
+    xDistance: 4.42,
+    widthScale: 1.62,
+    heightScale: 0.66,
+    yOffset: 0.44,
+    frequencyScale: 1.03,
+    phaseOffset: 3.9,
+    scrollSpeed: 0.065,
+    mist: 0.76,
+    fogScale: 1.68,
+    brightness: 1.18,
+    alpha: 0.46,
+    snowBias: -0.08,
+    ridgeGlow: 0.30,
+    renderOrder: -27,
+  },
+  {
+    id: 'far-peaks',
+    xDistance: 4.12,
+    widthScale: 1.54,
+    heightScale: 0.60,
+    yOffset: 0.34,
+    frequencyScale: 1.18,
+    phaseOffset: -1.5,
+    scrollSpeed: 0.095,
+    mist: 0.64,
+    fogScale: 1.42,
+    brightness: 1.10,
+    alpha: 0.54,
+    snowBias: -0.02,
+    ridgeGlow: 0.24,
+    renderOrder: -26,
+  },
+  {
+    id: 'back-ridges',
+    xDistance: 3.78,
+    widthScale: 1.46,
+    heightScale: 0.52,
+    yOffset: 0.25,
+    frequencyScale: 0.94,
+    phaseOffset: 1.9,
+    scrollSpeed: 0.135,
+    mist: 0.50,
+    fogScale: 1.18,
+    brightness: 1.02,
+    alpha: 0.64,
+    snowBias: 0.04,
+    ridgeGlow: 0.17,
+    renderOrder: -25,
+  },
+  {
+    id: 'middle-haze',
+    xDistance: 3.45,
+    widthScale: 1.38,
+    heightScale: 0.46,
+    yOffset: 0.16,
+    frequencyScale: 1.08,
+    phaseOffset: -3.7,
+    scrollSpeed: 0.190,
+    mist: 0.36,
+    fogScale: 0.96,
+    brightness: 0.94,
+    alpha: 0.72,
+    snowBias: 0.08,
+    ridgeGlow: 0.10,
+    renderOrder: -24,
+  },
+  {
+    id: 'middle-hills',
+    xDistance: 3.16,
+    widthScale: 1.30,
+    heightScale: 0.42,
+    yOffset: 0.09,
+    frequencyScale: 1.24,
+    phaseOffset: 4.2,
+    scrollSpeed: 0.255,
+    mist: 0.24,
+    fogScale: 0.78,
+    brightness: 0.86,
+    alpha: 0.80,
+    snowBias: 0.18,
+    ridgeGlow: 0.06,
+    renderOrder: -23,
+  },
+  {
+    id: 'near-folds',
+    xDistance: 2.92,
+    widthScale: 1.24,
+    heightScale: 0.38,
+    yOffset: 0.04,
+    frequencyScale: 1.43,
+    phaseOffset: -0.6,
+    scrollSpeed: 0.320,
+    mist: 0.13,
+    fogScale: 0.62,
+    brightness: 0.76,
+    alpha: 0.88,
+    snowBias: 0.30,
+    ridgeGlow: 0.02,
+    renderOrder: -22,
+  },
+  {
+    id: 'front-valley',
+    xDistance: 2.72,
+    widthScale: 1.18,
+    heightScale: 0.34,
+    yOffset: -0.01,
+    frequencyScale: 1.64,
+    phaseOffset: -5.2,
+    scrollSpeed: 0.390,
+    mist: 0.06,
+    fogScale: 0.48,
+    brightness: 0.66,
+    alpha: 0.94,
+    snowBias: 0.42,
+    ridgeGlow: 0.00,
+    renderOrder: -21,
+  },
+  {
+    id: 'window-edge',
+    xDistance: 2.56,
+    widthScale: 1.12,
+    heightScale: 0.28,
+    yOffset: -0.04,
+    frequencyScale: 1.88,
+    phaseOffset: 2.6,
+    scrollSpeed: 0.455,
+    mist: 0.02,
+    fogScale: 0.34,
+    brightness: 0.56,
+    alpha: 0.96,
+    snowBias: 0.54,
+    ridgeGlow: 0.00,
+    renderOrder: -20,
+  },
+];
+const BG_FOG_BANDS: BackgroundFogBand[] = [
+  { y: 1.22, height: 0.62, intensity: 0.22, drift: 0.014, minLayers: 7, renderOrder: -26.5 },
+  { y: 0.94, height: 0.50, intensity: 0.30, drift: 0.020, minLayers: 5, renderOrder: -25.5 },
+  { y: 0.68, height: 0.42, intensity: 0.32, drift: 0.028, minLayers: 4, renderOrder: -24.5 },
+  { y: 0.48, height: 0.34, intensity: 0.24, drift: 0.038, minLayers: 3, renderOrder: -22.5 },
+];
 
 export class ScenerySystem {
   readonly params = makeParams(SCENERY_DEFS);
@@ -102,6 +303,7 @@ export class ScenerySystem {
   private bgShimmer = uniform(0);
 
   private bgPanels: BackgroundPanel[] = [];
+  private bgFogMeshes: BackgroundFogPanel[] = [];
   private scheduler!: BiomeScheduler;
   private atlas!: SpriteAtlas;
   private layers!: BiomeLayers;
@@ -293,43 +495,71 @@ export class ScenerySystem {
   private createSky(): void {
     const material = this.createWindowSkyMaterial();
     for (const side of [-1]) {
-      const sky = new THREE.Mesh(new THREE.PlaneGeometry(11.6, 2.6), material);
+      const sky = new THREE.Mesh(new THREE.PlaneGeometry(20.0, 4.4), material);
       sky.rotation.y = Math.PI / 2;
-      sky.position.set(side * 2.56, 1.6, 0);
-      sky.renderOrder = -30;
+      sky.position.set(side * 4.95, 1.62, 0);
+      sky.renderOrder = -32;
       this.root.add(sky);
     }
   }
 
   private createBackground(): void {
+    for (const side of [-1]) {
+      for (let layerIndex = 0; layerIndex < BG_DEPTH_LAYERS.length; layerIndex += 1) {
+        const layer = BG_DEPTH_LAYERS[layerIndex];
+        const material = this.createBackgroundLayerMaterial(layer);
+        const panel = this.createBackgroundPanel(side, material, layer, layerIndex);
+        this.bgPanels.push(panel);
+        this.root.add(panel.mesh);
+      }
+      for (const band of BG_FOG_BANDS) {
+        const mist = this.createBackgroundFogBand(side, band);
+        this.bgFogMeshes.push({ mesh: mist, band, side });
+        this.root.add(mist);
+      }
+    }
+  }
+
+  private createBackgroundLayerMaterial(layer: BackgroundDepthLayer): THREE.MeshBasicNodeMaterial {
     const material = new THREE.MeshBasicNodeMaterial();
     material.colorNode = Fn(() => {
       const u = uv();
       const baseColor = mix(this.bgFromColor, this.bgToColor, this.bgMixT).toVar('bgBase');
+      baseColor.assign(baseColor.mul(float(layer.brightness)));
+
       // Snow cap blend: vertices above snow threshold get tinted.
-      const snow = smoothstep(this.bgSnowThreshold.sub(0.04), this.bgSnowThreshold.add(0.02), u.y).mul(this.bgSnowMix);
+      const snowThreshold = this.bgSnowThreshold.add(float(layer.snowBias));
+      const snow = smoothstep(snowThreshold.sub(0.04), snowThreshold.add(0.02), u.y).mul(this.bgSnowMix);
       baseColor.assign(mix(baseColor, this.bgSnowTint, snow));
-      // Soft fog into the sky horizon at the top of the strip.
-      const fogTint = mix(color(0xf0c183), color(0x0a0806), this.skyNight);
-      baseColor.assign(mix(baseColor, fogTint, u.y.mul(this.bgFog).clamp(0, 1)));
+
+      const coolMist = mix(color(0xd2e3de), color(0x071014), this.skyNight);
+      const fogTint = mix(coolMist, color(0xf0c183), this.skySunset.mul(0.38));
+      const crestGlow = smoothstep(0.56, 0.96, u.y).mul(float(layer.ridgeGlow));
+      const crestTint = mix(fogTint, this.bgSnowTint, this.bgSnowMix.mul(0.74).add(0.10).clamp(0, 1));
+      baseColor.assign(mix(baseColor, fogTint, float(layer.mist)));
+      baseColor.assign(mix(baseColor, crestTint, crestGlow));
+      baseColor.assign(mix(baseColor, fogTint, u.y.mul(this.bgFog).mul(float(layer.fogScale)).clamp(0, 1)));
+
       // Ocean shimmer band (applies at low u.y, dims into nothing higher up).
       const shimmerBand = float(1).sub(smoothstep(0.0, 0.18, u.y)).mul(this.bgShimmer).mul(0.45);
       baseColor.addAssign(color(0xffcc74).mul(shimmerBand));
       return baseColor;
     })();
-    material.depthWrite = true;
+    material.opacityNode = Fn(() => float(layer.alpha))();
+    material.transparent = true;
+    material.depthWrite = false;
     material.fog = false;
-
-    for (const side of [-1]) {
-      const panel = this.createBackgroundPanel(side, material);
-      this.bgPanels.push(panel);
-      this.root.add(panel.mesh);
-    }
+    return material;
   }
 
-  private createBackgroundPanel(side: number, material: THREE.Material): BackgroundPanel {
+  private createBackgroundPanel(
+    side: number,
+    material: THREE.Material,
+    layer: BackgroundDepthLayer,
+    layerIndex: number,
+  ): BackgroundPanel {
     const segments = BG_SEGMENTS;
-    const width = BG_WIDTH;
+    const width = BG_WIDTH * layer.widthScale;
     const panelHeight = BG_PANEL_HEIGHT;
     const positions = new Float32Array((segments + 1) * 2 * 3);
     const uvs = new Float32Array((segments + 1) * 2 * 2);
@@ -367,10 +597,41 @@ export class ScenerySystem {
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.rotation.y = Math.PI / 2;
-    mesh.position.set(side * 2.30, 0, 0);
-    mesh.renderOrder = -20;
+    mesh.position.set(side * layer.xDistance, 0, 0);
+    mesh.renderOrder = layer.renderOrder;
+    mesh.frustumCulled = false;
 
-    return { mesh, geometry, side, scrollOffset: 0, segments, width, panelHeight };
+    return { mesh, geometry, layer, layerIndex, side, scrollOffset: 0, segments, width, panelHeight };
+  }
+
+  private createBackgroundFogBand(side: number, band: BackgroundFogBand): THREE.Mesh {
+    const material = new THREE.MeshBasicNodeMaterial();
+    material.transparent = true;
+    material.depthWrite = false;
+    material.fog = false;
+
+    material.colorNode = Fn(() => {
+      const coolMist = mix(color(0xd7e9e0), color(0x071014), this.skyNight);
+      return mix(coolMist, color(0xf3c58b), this.skySunset.mul(0.42));
+    })();
+
+    material.opacityNode = Fn(() => {
+      const u = uv();
+      const verticalFade = smoothstep(0.00, 0.22, u.y)
+        .mul(float(1).sub(smoothstep(0.78, 1.00, u.y)));
+      const wispA = u.x.mul(13.0).add(time.mul(band.drift)).sin().mul(0.5).add(0.5);
+      const wispB = u.x.mul(31.0).sub(time.mul(band.drift * 0.72)).sin().mul(0.5).add(0.5);
+      const wisps = wispA.mul(0.45).add(wispB.mul(0.24)).add(0.34).clamp(0, 1);
+      const weatherFog = this.bgFog.mul(0.80).add(0.24).clamp(0, 1);
+      return verticalFade.mul(wisps).mul(weatherFog).mul(float(band.intensity));
+    })();
+
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(BG_WIDTH, band.height), material);
+    mesh.rotation.y = Math.PI / 2;
+    mesh.position.set(side * 3.30, band.y, 0);
+    mesh.renderOrder = band.renderOrder;
+    mesh.frustumCulled = false;
+    return mesh;
   }
 
   private updateBackground(delta: number, speed: number, daylight: number): void {
@@ -402,9 +663,27 @@ export class ScenerySystem {
     this.bgShimmer.value = shimmerFrom * (1 - t) + shimmerTo * t;
     this.bgFog.value = from.fogStrength * (1 - t) + to.fogStrength * t;
 
+    const activeLayers = this.activeTerrainLayerCount();
+    this.updateBackgroundVisibility(activeLayers);
+
     for (const panel of this.bgPanels) {
-      panel.scrollOffset += delta * speed * 0.42;
+      if (!panel.mesh.visible) continue;
+      panel.scrollOffset += delta * speed * panel.layer.scrollSpeed;
       this.updatePanelShape(panel, fromParams, toParams, t);
+    }
+  }
+
+  private activeTerrainLayerCount(): number {
+    return Math.round(clamp(this.params.terrainLayers, TERRAIN_LAYER_MIN, TERRAIN_LAYER_MAX));
+  }
+
+  private updateBackgroundVisibility(activeLayers: number): void {
+    const firstActiveIndex = Math.max(0, BG_DEPTH_LAYERS.length - activeLayers);
+    for (const panel of this.bgPanels) {
+      panel.mesh.visible = panel.layerIndex >= firstActiveIndex;
+    }
+    for (const fog of this.bgFogMeshes) {
+      fog.mesh.visible = activeLayers >= fog.band.minLayers;
     }
   }
 
@@ -418,10 +697,11 @@ export class ScenerySystem {
     const ampScale = this.params.hillAmplitude;
     for (let i = 0; i <= panel.segments; i += 1) {
       const localX = -panel.width / 2 + (i / panel.segments) * panel.width;
-      const sampledX = localX - panel.scrollOffset;
+      const sampledX = (localX - panel.scrollOffset) * panel.layer.frequencyScale + panel.layer.phaseOffset;
       const fromH = silhouetteHeight(sampledX, fromParams) * ampScale;
       const toH = silhouetteHeight(sampledX, toParams) * ampScale;
-      const h = fromH + (toH - fromH) * t;
+      const rawH = fromH + (toH - fromH) * t;
+      const h = rawH * panel.layer.heightScale + panel.layer.yOffset;
       positions.setY(i * 2 + 1, BG_BASE_Y + Math.max(0.04, h));
     }
     positions.needsUpdate = true;
@@ -586,8 +866,10 @@ function silhouetteHeight(x: number, p: SilhouetteParams): number {
   if (p.style === 'peaks') {
     const broad = Math.pow(Math.abs(Math.sin(xs * p.freq + 0.24)), 1.85) * p.amp;
     const needles = Math.pow(Math.abs(Math.sin(xs * p.freq2 + 1.15)), 4.2) * p.amp2;
+    const crags = Math.pow(Math.max(0, Math.sin(xs * p.freq2 * 1.64 + 0.45)), 6.0) * p.amp2 * 0.72;
     const saddles = Math.sin(xs * p.freq * 0.43 - 0.55) * p.amp * 0.10;
-    return p.base + broad + needles + saddles;
+    const serration = Math.sin(xs * p.freq * 3.1 + 1.9) * p.amp * 0.045;
+    return p.base + broad + needles + crags + saddles + serration;
   }
   if (p.style === 'flatLake') {
     const shore = Math.sin(xs * p.freq + 0.8) * p.amp;

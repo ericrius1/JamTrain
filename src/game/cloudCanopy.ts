@@ -10,9 +10,9 @@ import {
   vec3,
 } from 'three/tsl';
 
-const PANEL_WIDTH = 11.6;
-const PANEL_HEIGHT = 2.6;
-const PANEL_X = -2.42;
+const PANEL_WIDTH = 18.8;
+const PANEL_HEIGHT = 4.0;
+const PANEL_X = -4.18;
 const PANEL_Y = 1.6;
 
 // TSL UniformNode generics produce noisy errors when chained with helpers like

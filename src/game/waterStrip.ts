@@ -2,8 +2,8 @@ import * as THREE from 'three/webgpu';
 import { Fn, color, mix, sin, time, uniform, uv } from 'three/tsl';
 import type { ForegroundBiome } from './biomes';
 
-const STRIP_WIDTH = 12.4;
-const STRIP_HEIGHT = 0.18;
+const STRIP_WIDTH = 16.4;
+const STRIP_HEIGHT = 0.22;
 
 export class WaterStrip {
   private root = new THREE.Group();
@@ -35,7 +35,7 @@ export class WaterStrip {
       const mesh = new THREE.Mesh(new THREE.PlaneGeometry(STRIP_WIDTH, STRIP_HEIGHT), material);
       mesh.rotation.y = Math.PI / 2;
       // Sit at the foreground baseline, just below the ground line.
-      mesh.position.set(side * 2.13, 0.30, 0);
+      mesh.position.set(side * 2.78, 0.30, 0);
       mesh.renderOrder = -14;
       this.root.add(mesh);
       this.meshes.push({ mesh, side });

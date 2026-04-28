@@ -63,9 +63,10 @@ export class BeginGate {
     this.stage.appendChild(this.buildTopRail());
 
     const titleBlock = this.buildTitleBlock();
-    const { field, input, reroll, button, err } = this.buildConductorField();
-    titleBlock.appendChild(field);
     this.stage.appendChild(titleBlock);
+
+    const { field, input, reroll, button, err } = this.buildConductorField();
+    this.stage.appendChild(field);
 
     this.input = input;
     this.rerollBtn = reroll;
@@ -142,19 +143,6 @@ export class BeginGate {
     meta.textContent = 'AURA  ·  LINE  ·  №  VII';
     rail.appendChild(meta);
 
-    const pill = document.createElement('span');
-    pill.className = 'begin-headphones-pill';
-    pill.innerHTML = `
-      <svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 12V10a8 8 0 0 1 16 0v2" />
-        <rect x="1" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
-        <rect x="17" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
-      </svg>
-      <span>Best experienced with headphones</span>
-    `;
-    rail.appendChild(pill);
-
     const date = document.createElement('span');
     date.className = 'begin-meta-right';
     date.textContent = 'MMXXVI';
@@ -166,13 +154,26 @@ export class BeginGate {
   private buildTitleBlock(): HTMLElement {
     const block = this.div('begin-title-block begin-fade-down begin-delay-1');
 
-    const eyebrow = this.div('begin-eyebrow');
-    eyebrow.textContent = '·  THE  ·';
-    block.appendChild(eyebrow);
+    // const eyebrow = this.div('begin-eyebrow');
+    // eyebrow.textContent = '·  THE  ·';
+    // block.appendChild(eyebrow);
 
     const display = this.div('begin-display');
     display.textContent = 'Jam Train';
     block.appendChild(display);
+
+    const pill = document.createElement('span');
+    pill.className = 'begin-headphones-pill';
+    pill.innerHTML = `
+      <svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"
+           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M3 12V10a8 8 0 0 1 16 0v2" />
+        <rect x="1" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
+        <rect x="17" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
+      </svg>
+      <span>Best experienced with headphones</span>
+    `;
+    block.appendChild(pill);
 
     return block;
   }
@@ -184,15 +185,19 @@ export class BeginGate {
     button: HTMLButtonElement;
     err: HTMLElement;
   } {
-    // One right-aligned column rendered just below the "Jam Train" title:
+    // Conductor control stack at the bottom of the stage:
     // label → input + ↻ → BEGIN → blurb. The whole stack reads as a single
     // "conductor" control.
-    const field = this.div('begin-conductor-field');
+    const field = this.div('begin-conductor-field begin-fade-up begin-delay-2');
     const label = this.div('begin-conductor-label');
     label.textContent = 'CONDUCTOR';
     field.appendChild(label);
 
     const inputRow = this.div('begin-conductor-input-row');
+    // Invisible spacer mirroring the reroll button so the input centers on
+    // the same vertical axis as the BEGIN button below it.
+    const spacer = this.div('begin-conductor-spacer');
+    spacer.setAttribute('aria-hidden', 'true');
     const input = document.createElement('input');
     input.type = 'text';
     input.className = 'begin-conductor-input is-suggestion';
@@ -213,7 +218,7 @@ export class BeginGate {
     reroll.setAttribute('aria-label', 'Reshuffle conductor name');
     reroll.textContent = '↻';
 
-    inputRow.append(input, reroll);
+    inputRow.append(spacer, input, reroll);
     field.appendChild(inputRow);
 
     const button = document.createElement('button');

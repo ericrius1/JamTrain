@@ -4,6 +4,8 @@ import { fingerNames, handednesses, type FingerJointName, type FingerName, type 
 
 type Segment = { mesh: THREE.Mesh; radius: number };
 
+export type ArmJointName = 'shoulder' | 'elbow' | 'wrist' | 'palm';
+
 type FingerRig = {
   base: Segment;
   mid: Segment;
@@ -49,6 +51,7 @@ export class Skeleton {
   private backOffset = 0;
   private seatZ: number;
   private facing: number;
+  private armJointWorld = new Map<string, THREE.Vector3>();
   private fingertipWorld = new Map<string, THREE.Vector3>();
   private fingerJointWorld = new Map<string, THREE.Vector3>();
 
@@ -111,6 +114,11 @@ export class Skeleton {
   getPalmCenterWorld(hand: Handedness, target = new THREE.Vector3()): THREE.Vector3 {
     this.hands[hand].palm.getWorldPosition(target);
     return target;
+  }
+
+  getArmJointWorld(hand: Handedness, joint: ArmJointName, target = new THREE.Vector3()): THREE.Vector3 {
+    const source = this.armJointWorld.get(`${hand}:${joint}`);
+    return source ? target.copy(source) : target.set(0, 0, 0);
   }
 
   getFingertipWorld(hand: Handedness, finger: FingerName, target = new THREE.Vector3()): THREE.Vector3 {
@@ -199,6 +207,10 @@ export class Skeleton {
     rig.palm.position.copy(palm);
     rig.palm.rotation.set(0.35 * side, 0.2 * side, -0.24 * side);
     rig.wristNode.position.copy(wrist);
+    this.setArmJointWorld(handedness, 'shoulder', shoulder);
+    this.setArmJointWorld(handedness, 'elbow', elbow);
+    this.setArmJointWorld(handedness, 'wrist', wrist);
+    this.setArmJointWorld(handedness, 'palm', palm);
 
     for (const finger of fingerNames) {
       const fingerPose = pose.fingers[finger];
@@ -233,6 +245,17 @@ export class Skeleton {
       world = new THREE.Vector3();
       this.fingerJointWorld.set(jointKey, world);
       if (joint === 'tip') this.fingertipWorld.set(`${handedness}:${finger}`, world);
+    }
+    world.copy(point);
+    this.root.localToWorld(world);
+  }
+
+  private setArmJointWorld(handedness: Handedness, joint: ArmJointName, point: THREE.Vector3): void {
+    const key = `${handedness}:${joint}`;
+    let world = this.armJointWorld.get(key);
+    if (!world) {
+      world = new THREE.Vector3();
+      this.armJointWorld.set(key, world);
     }
     world.copy(point);
     this.root.localToWorld(world);

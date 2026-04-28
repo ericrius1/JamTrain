@@ -11,12 +11,20 @@ import { appendSpriteShape, type ShapeBuffers } from './spriteShapes';
 
 const LAYER_WIDTH = 12.4;
 const HALF_WIDTH = LAYER_WIDTH * 0.5;
+const MIDGROUND_SCROLL_SPEED = 0.34;
+const FOREGROUND_SCROLL_SPEED = 0.50;
+const TREE_VOLUME_MIDGROUND_SCROLL_SPEED = 0.32;
+const TREE_VOLUME_FOREGROUND_SCROLL_SPEED = 0.44;
+const SPRITE_BASE_X_DISTANCE = 2.18;
+const VILLAGE_X_DISTANCE = 3.18;
 
 type LayerKind = 'foreground' | 'midground';
 
 interface SpritePlacement {
   originX: number;
   baseY: number;
+  depthOffset: number;
+  scrollScale: number;
   scale: number;
   widthScale: number;
   heightScale: number;
@@ -25,6 +33,7 @@ interface SpritePlacement {
   swayStrength: number;
   swaySpeed: number;
   shadeBias: number;
+  depthShade: number;
   atlas: AtlasId;
   tint: THREE.Color;
 }
@@ -83,8 +92,8 @@ export class BiomeLayers {
   build(): void {
     this.root.name = 'biome-layers';
     for (const side of [-1]) {
-      this.layers.push(this.createLayer(side, 'midground', 0.55, side * 2.18, -15));
-      this.layers.push(this.createLayer(side, 'foreground', 0.85, side * 2.10, -14));
+      this.layers.push(this.createLayer(side, 'midground', MIDGROUND_SCROLL_SPEED, side * SPRITE_BASE_X_DISTANCE, -15));
+      this.layers.push(this.createLayer(side, 'foreground', FOREGROUND_SCROLL_SPEED, side * SPRITE_BASE_X_DISTANCE, -14));
       this.villagePoints.push(this.createVillageGroup(side));
       const treeVolume = new TreeVolumeLayer(side, this.seed);
       this.treeVolumes.push(treeVolume);
@@ -113,14 +122,13 @@ export class BiomeLayers {
     const window = this.scheduler.foreground();
     const fade = window.from.id === window.to.id ? 0 : window.t;
     const dominantBiome = fade < 0.5 ? window.from : window.to;
-    this.windTime += delta * (0.55 + trainSpeed * 0.18);
+    this.windTime += delta * 0.42;
 
     for (const layer of this.layers) {
       this.ensureSlotBiome(layer.slots[0], window.from, layer);
       this.ensureSlotBiome(layer.slots[1], window.to, layer);
 
       layer.scrollOffset += delta * trainSpeed * layer.scrollSpeed;
-      layer.scrollOffset = ((layer.scrollOffset % LAYER_WIDTH) + LAYER_WIDTH) % LAYER_WIDTH;
 
       layer.slots[0].material.opacity = window.from.id === window.to.id ? 1 : 1 - fade;
       layer.slots[1].material.opacity = window.from.id === window.to.id ? 0 : fade;
@@ -254,21 +262,27 @@ export class BiomeLayers {
       const step = LAYER_WIDTH / count;
       for (let i = 0; i < count; i += 1) {
         const originX = -HALF_WIDTH + step * (i + 0.5) + (rand() - 0.5) * step * 0.72;
-        const baseY = biome.ridge.baseY + (layer.kind === 'midground' ? 0.035 : 0) + (rand() - 0.5) * band.yJitter;
-        const scale = band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0]);
+        const baseY = groundYAt(originX, biome, layer.kind) + (rand() - 0.5) * band.yJitter;
+        const depth = spriteDepthProfile(band, layer.kind, rand);
+        const scale = (band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0])) * depth.scaleMul;
         const profile = scaleProfileFor(band.atlas, rand);
         const wind = vegetationWindFactor(band.atlas);
+        const motionScale = band.motionScale ?? atlasMotionScaleFor(band.atlas, layer.kind);
+        const depthJitter = band.depthJitter ?? (layer.kind === 'foreground' ? 0.10 : 0.08);
         placements.push({
           originX,
           baseY,
+          depthOffset: layer.side * depth.distance,
+          scrollScale: Math.max(0.20, motionScale * depth.scrollMul * (1 + (rand() - 0.5) * depthJitter)),
           scale,
           widthScale: profile.width,
           heightScale: profile.height,
           lean: (rand() - 0.5) * wind * (layer.kind === 'foreground' ? 0.14 : 0.08),
           swayPhase: rand() * Math.PI * 2,
-          swayStrength: wind * (layer.kind === 'foreground' ? 0.030 : 0.018) * (0.75 + rand() * 0.5),
-          swaySpeed: 0.75 + rand() * 0.85,
+          swayStrength: wind * (layer.kind === 'foreground' ? 0.018 : 0.011) * (0.65 + rand() * 0.45),
+          swaySpeed: 0.48 + rand() * 0.54,
           shadeBias: 0.92 + rand() * 0.14,
+          depthShade: depth.shadeMul,
           atlas: band.atlas,
           tint: colorFromBiomeBand(groundColor, band, rand),
         });
@@ -283,16 +297,16 @@ export class BiomeLayers {
     for (let i = 0; i < slot.vertices.length; i += 1) {
       const v = slot.vertices[i];
       const p = slot.placements[v.placementIndex];
-      let wx = p.originX - scroll;
+      let wx = p.originX - scroll * p.scrollScale;
       wx = ((wx + HALF_WIDTH) % LAYER_WIDTH + LAYER_WIDTH) % LAYER_WIDTH - HALF_WIDTH;
       const crownDrift = Math.sin(this.windTime * p.swaySpeed + p.swayPhase) * p.swayStrength;
       const leafFlutter = Math.sin(this.windTime * (p.swaySpeed + 0.65) + p.swayPhase + v.localY * 6.1) * p.swayStrength * 0.16;
       const bend = (p.lean * clamp01(v.localY) + (crownDrift + leafFlutter) * v.windWeight) * p.scale;
       slot.positions[i * 3 + 0] = wx + v.localX * p.scale * p.widthScale + bend;
       slot.positions[i * 3 + 1] = p.baseY + v.localY * p.scale * p.heightScale;
-      slot.positions[i * 3 + 2] = 0;
+      slot.positions[i * 3 + 2] = p.depthOffset;
 
-      const shade = dayMul * p.shadeBias * v.shade;
+      const shade = dayMul * p.shadeBias * p.depthShade * v.shade;
       slot.colors[i * 3 + 0] = p.tint.r * shade;
       slot.colors[i * 3 + 1] = p.tint.g * shade;
       slot.colors[i * 3 + 2] = p.tint.b * shade;
@@ -319,7 +333,7 @@ export class BiomeLayers {
     const points = new THREE.Points(geometry, material);
     points.frustumCulled = false;
     points.rotation.y = Math.PI / 2;
-    points.position.set(side * 2.10, 0, 0);
+    points.position.set(side * VILLAGE_X_DISTANCE, 0, 0);
     points.renderOrder = -10;
     this.root.add(points);
     return { points, geometry, material, side, capacity: cap };
@@ -371,6 +385,7 @@ interface TreeVolumePlacement {
   swayPhase: number;
   swayStrength: number;
   swaySpeed: number;
+  scrollSpeed: number;
 }
 
 type TreeVolumePalette = {
@@ -403,12 +418,11 @@ class TreeVolumeLayer {
 
   update(delta: number, trainSpeed: number, biome: ForegroundBiome): void {
     if (this.biomeId !== biome.id) this.populateFor(biome);
-    this.scrollOffset += delta * trainSpeed * 0.68;
-    this.scrollOffset = ((this.scrollOffset % LAYER_WIDTH) + LAYER_WIDTH) % LAYER_WIDTH;
-    this.windTime += delta * (0.42 + trainSpeed * 0.12);
+    this.scrollOffset += delta * trainSpeed;
+    this.windTime += delta * 0.32;
 
     for (const placement of this.placements) {
-      let wx = placement.originX - this.scrollOffset;
+      let wx = placement.originX - this.scrollOffset * placement.scrollSpeed;
       wx = ((wx + HALF_WIDTH) % LAYER_WIDTH + LAYER_WIDTH) % LAYER_WIDTH - HALF_WIDTH;
       const sway = Math.sin(this.windTime * placement.swaySpeed + placement.swayPhase) * placement.swayStrength;
       placement.group.position.set(placement.worldX, placement.baseY, -wx);
@@ -430,21 +444,26 @@ class TreeVolumeLayer {
 
       for (let i = 0; i < count; i += 1) {
         const originX = -HALF_WIDTH + step * (i + 0.5) + (rand() - 0.5) * step * 0.78;
-        const baseY = biome.ridge.baseY + (band.layer === 'midground' ? 0.035 : -0.004) + (rand() - 0.5) * band.yJitter;
-        const scale = (band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0])) * (1.30 + rand() * 0.32);
+        const baseY = groundYAt(originX, biome, band.layer) + (band.layer === 'foreground' ? -0.004 : 0) + (rand() - 0.5) * band.yJitter;
+        const depth = spriteDepthProfile(band, band.layer, rand);
+        const scale = (band.sizeRange[0] + rand() * (band.sizeRange[1] - band.sizeRange[0])) * (1.22 + rand() * 0.28) * depth.scaleMul;
         const palette = treePaletteFor(biome, band.atlas, rand);
         const tree = makeTreeVolume(band.atlas, palette, rand);
         tree.scale.setScalar(scale);
         this.group.add(tree);
+        const baseScrollSpeed = band.layer === 'foreground'
+          ? TREE_VOLUME_FOREGROUND_SCROLL_SPEED
+          : TREE_VOLUME_MIDGROUND_SCROLL_SPEED;
         this.placements.push({
           originX,
           baseY,
-          worldX: this.side * (band.layer === 'foreground' ? 2.10 : 2.18),
+          worldX: this.side * (SPRITE_BASE_X_DISTANCE + depth.distance),
           scale,
           group: tree,
           swayPhase: rand() * Math.PI * 2,
-          swayStrength: vegetationWindFactor(band.atlas) * 0.045 * (0.65 + rand() * 0.45),
-          swaySpeed: 0.58 + rand() * 0.62,
+          swayStrength: vegetationWindFactor(band.atlas) * 0.028 * (0.62 + rand() * 0.38),
+          swaySpeed: 0.42 + rand() * 0.44,
+          scrollSpeed: baseScrollSpeed * depth.scrollMul * (0.94 + rand() * 0.12),
         });
       }
     }
@@ -481,6 +500,59 @@ function colorFromBiomeBand(groundDay: THREE.Color, band: SpriteBand, rand: () =
   const baseMul = isUnderwaterAtlas(band.atlas) ? (band.layer === 'foreground' ? 0.74 : 0.58) : band.layer === 'foreground' ? 0.50 : 0.66;
   const v = 0.86 + rand() * 0.30;
   return c.multiplyScalar(baseMul * v);
+}
+
+function groundYAt(x: number, biome: ForegroundBiome, layer: LayerKind): number {
+  const baseOffset = layer === 'midground' ? 0.035 : 0;
+  const depthMul = layer === 'midground' ? 0.24 : 0.34;
+  const waveA = Math.sin(x * biome.ridge.frequency + 1.7) * 0.58;
+  const waveB = Math.sin(x * biome.ridge.frequency * 0.47 - 0.4) * 0.42;
+  return biome.ridge.baseY + baseOffset + biome.ridge.amplitude * depthMul * (waveA + waveB);
+}
+
+function atlasMotionScaleFor(atlas: AtlasId, layer: LayerKind): number {
+  if (atlas === 'sailboat' || atlas === 'lighthouse' || atlas === 'lighthouseLit') return 0.76;
+  if (atlas === 'barn' || atlas === 'silo' || atlas === 'cottage' || atlas === 'cottageLit') return 0.88;
+  if (atlas === 'haystack') return 0.92;
+  if (atlas === 'reeds' || atlas === 'cattail' || atlas === 'fencePost') return 1.02;
+  if (isUnderwaterAtlas(atlas)) return layer === 'foreground' ? 0.92 : 0.82;
+  return 1;
+}
+
+function spriteDepthProfile(
+  band: SpriteBand,
+  layer: LayerKind,
+  rand: () => number,
+): { distance: number; scaleMul: number; shadeMul: number; scrollMul: number } {
+  let near = layer === 'foreground' ? 0.22 : 0.86;
+  let far = layer === 'foreground' ? 1.05 : 2.18;
+
+  if (isTreeAtlas(band.atlas)) {
+    near = layer === 'foreground' ? 0.36 : 1.04;
+    far = layer === 'foreground' ? 1.18 : 2.28;
+  } else if (band.atlas === 'sailboat' || band.atlas === 'lighthouse' || band.atlas === 'lighthouseLit') {
+    near = 1.24;
+    far = 2.44;
+  } else if (band.atlas === 'barn' || band.atlas === 'silo' || band.atlas === 'cottage' || band.atlas === 'cottageLit' || band.atlas === 'haystack') {
+    near = layer === 'foreground' ? 0.84 : 1.12;
+    far = layer === 'foreground' ? 1.72 : 2.34;
+  } else if (band.atlas === 'reeds' || band.atlas === 'cattail' || band.atlas === 'fencePost') {
+    near = layer === 'foreground' ? 0.20 : 0.72;
+    far = layer === 'foreground' ? 0.76 : 1.42;
+  } else if (isUnderwaterAtlas(band.atlas)) {
+    near = layer === 'foreground' ? 0.28 : 0.92;
+    far = layer === 'foreground' ? 1.18 : 2.10;
+  }
+
+  const t = rand();
+  const distance = near + (far - near) * t;
+  const rangeT = (distance - near) / Math.max(0.001, far - near);
+  return {
+    distance,
+    scaleMul: 1.02 - rangeT * 0.22,
+    shadeMul: 0.96 - rangeT * 0.18,
+    scrollMul: 1 / (1 + distance * 0.42),
+  };
 }
 
 function makeTreeVolume(atlas: AtlasId, palette: TreeVolumePalette, rand: () => number): THREE.Group {

@@ -140,7 +140,7 @@ export class VideoPanel {
 
     const hint = document.createElement('div');
     hint.className = 'video-panel-toolbar-hint';
-    hint.textContent = 'Tap Camera to track your hands · You can play without it with mouse/trackpad';
+    hint.textContent = 'Tap Camera to jam with your hands · You can play without it with mouse/trackpad';
     toolbar.appendChild(hint);
     this.hintEl = hint;
 
@@ -153,7 +153,7 @@ export class VideoPanel {
     empty.innerHTML = `
       <div class="icon">${EMPTY_CAMERA_SVG}</div>
       <div class="heading">· Camera Off ·</div>
-      <div class="subhead">Tap <em>Camera</em> above to track your hands</div>
+      <div class="subhead">Tap <em>Camera</em> above to play with your hands</div>
       <div class="hint">You can still play without it — pointer-driven hands work too.</div>
     `;
     this.wrapper.appendChild(empty);
@@ -180,7 +180,7 @@ export class VideoPanel {
     if (this.hintEl) {
       this.hintEl.classList.toggle('hidden', enabled);
       if (!enabled) {
-        this.hintEl.textContent = 'Tap Camera to track your hands · You can play without it with mouse/trackpad';
+        this.hintEl.textContent = 'Tap Camera to jam with your hands · You can play without it with mouse/trackpad';
       }
     }
     this.recomputeShareWarn();

@@ -9,6 +9,7 @@ import { buildLionHead, type LionHeadHandles } from './lionHead';
 import { buildLionMane, type LionManeHandles } from './lionMane';
 import { buildLionTail, type LionTailHandles } from './lionTail';
 import { buildLionBody, type LionBodyHandles } from './lionBody';
+import { OtterAvatar } from './otterAvatar';
 
 export type HumanoidRigOptions = {
   seatIndex: number;
@@ -24,19 +25,23 @@ export class HumanoidRig {
   private creature: CreatureId;
   private seatIndex: number;
   private seatColor: number;
+  private readonly otterLightLayer: number;
   private lighting: CreatureLighting;
   private skeleton!: Skeleton;
   private head!: HeadHandles;
   private body!: BodyHandles;
   private mane: LionManeHandles | null = null;
   private tail: LionTailHandles | null = null;
+  private otter: OtterAvatar | null = null;
   private accentMaterial!: THREE.MeshBasicNodeMaterial;
+  private fingertipNodesVisible = true;
   private elapsed = 0;
 
   constructor(private scene: THREE.Scene, opts: HumanoidRigOptions) {
     this.seatIndex = opts.seatIndex;
     this.seatColor = opts.color;
     this.creature = opts.creature;
+    this.otterLightLayer = opts.seatIndex === 0 ? 2 : 3;
     this.lighting = createCreatureLighting();
 
     this.buildForCreature();
@@ -64,6 +69,7 @@ export class HumanoidRig {
     this.elapsed += delta;
     this.skeleton.update(pose, delta);
     if (this.tail) this.tail.update(this.elapsed);
+    if (this.otter) this.otter.update(this.skeleton, pose, this.elapsed);
   }
 
   getPalmWorld(hand: Handedness): THREE.Vector3 {
@@ -96,6 +102,7 @@ export class HumanoidRig {
   }
 
   setFingertipNodesVisible(visible: boolean): void {
+    this.fingertipNodesVisible = visible;
     this.skeleton.setFingertipNodesVisible(visible);
   }
 
@@ -112,11 +119,19 @@ export class HumanoidRig {
       this.head = buildLionHead(this.lighting);
       this.mane = buildLionMane(this.lighting, this.seatColor, this.seatIndex);
       this.tail = buildLionTail(this.lighting, this.seatColor);
+      this.otter = null;
+    } else if (this.creature === 'otter') {
+      this.body = buildLionBody(this.lighting);
+      this.head = buildLionHead(this.lighting);
+      this.mane = null;
+      this.tail = null;
+      this.otter = new OtterAvatar(this.otterLightLayer);
     } else {
       this.body = buildHumanBody(this.lighting, this.seatColor);
       this.head = buildHumanHead(this.lighting);
       this.mane = null;
       this.tail = null;
+      this.otter = null;
     }
 
     this.skeleton = new Skeleton(
@@ -129,15 +144,26 @@ export class HumanoidRig {
       this.seatIndex
     );
 
-    this.skeleton.bodyAnchor.add(this.body.group);
-    this.skeleton.headAnchor.add(this.head.group);
-    if (this.mane) this.skeleton.headAnchor.add(this.mane.group);
-    if (this.tail) this.skeleton.bodyAnchor.add(this.tail.group);
+    this.skeleton.setFingertipNodesVisible(this.fingertipNodesVisible);
+
+    if (this.otter) {
+      this.skeleton.root.visible = false;
+      this.root.add(this.otter.group);
+    } else {
+      this.skeleton.bodyAnchor.add(this.body.group);
+      this.skeleton.headAnchor.add(this.head.group);
+      if (this.mane) this.skeleton.headAnchor.add(this.mane.group);
+      if (this.tail) this.skeleton.bodyAnchor.add(this.tail.group);
+    }
 
     this.root.add(this.skeleton.root);
   }
 
   private teardownCreatureScopedNodes(): void {
+    if (this.otter) {
+      this.otter.dispose();
+      this.otter = null;
+    }
     if (this.skeleton) {
       this.root.remove(this.skeleton.root);
       this.skeleton.root.traverse((child) => {

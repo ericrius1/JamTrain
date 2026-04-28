@@ -585,6 +585,8 @@ export class Game {
     const wallMat = new THREE.MeshStandardMaterial({ color: 0x100c0a, roughness: 0.88, metalness: 0.05 });
     const ceilingMat = new THREE.MeshStandardMaterial({ color: 0x0d0907, roughness: 0.96, metalness: 0.02 });
     const trimMat = new THREE.MeshStandardMaterial({ color: 0xa16e2c, roughness: 0.45, metalness: 0.42 });
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x060504, roughness: 0.82, metalness: 0.08 });
+    const frameLipMat = new THREE.MeshStandardMaterial({ color: 0xd09a3f, roughness: 0.36, metalness: 0.52 });
     const woodMat = new THREE.MeshStandardMaterial({ color: 0x603419, roughness: 0.56, metalness: 0.12 });
     const seatMat = new THREE.MeshStandardMaterial({ color: 0x2b1713, roughness: 0.72, metalness: 0.04 });
     const glassMat = new THREE.MeshStandardMaterial({
@@ -613,15 +615,14 @@ export class Game {
     ceiling.receiveShadow = true;
     group.add(ceiling);
 
-    const glassBottom = 0.19;
-    const glassTop = 2.38;
+    const glassBottom = 0.12;
+    const glassTop = 2.44;
     const glassHeight = glassTop - glassBottom;
     const glassY = (glassBottom + glassTop) / 2;
-    const paneDepth = 1.32;
-    const glassZs = [-3.96, -2.64, -1.32, 0, 1.32, 2.64, 3.96];
-    const glassSpan = glassZs.length * paneDepth;
-    const frameThick = 0.025;
-    const frameOuterSpan = glassSpan + frameThick;
+    const glassSpan = 9.34;
+    const frameThick = 0.11;
+    const brassLip = 0.018;
+    const frameOuterSpan = glassSpan + frameThick * 2;
 
     const ceilingBottom = ceilingY - 0.04;
     const lowerWallHeight = glassBottom - 0.06;
@@ -649,33 +650,38 @@ export class Game {
 
       const frameX = x * 1.012;
 
-      const topRail = new THREE.Mesh(this.roundedBox(frameThick, frameThick, frameOuterSpan, wallR), trimMat);
+      const topRail = new THREE.Mesh(this.roundedBox(frameThick, frameThick, frameOuterSpan, wallR), frameMat);
       topRail.position.set(frameX, glassTop + frameThick / 2, 0);
       group.add(topRail);
 
-      const bottomRail = new THREE.Mesh(this.roundedBox(frameThick, frameThick, frameOuterSpan, wallR), trimMat);
+      const bottomRail = new THREE.Mesh(this.roundedBox(frameThick, frameThick, frameOuterSpan, wallR), frameMat);
       bottomRail.position.set(frameX, glassBottom - frameThick / 2, 0);
       group.add(bottomRail);
 
       for (const z of [-glassSpan / 2 - frameThick / 2, glassSpan / 2 + frameThick / 2]) {
-        const endPost = new THREE.Mesh(this.roundedBox(frameThick, glassHeight, frameThick, wallR), trimMat);
+        const endPost = new THREE.Mesh(this.roundedBox(frameThick, glassHeight, frameThick, wallR), frameMat);
         endPost.position.set(frameX, glassY, z);
         group.add(endPost);
       }
 
-      for (let i = 0; i < glassZs.length - 1; i += 1) {
-        const mullionZ = (glassZs[i] + glassZs[i + 1]) / 2;
-        const mullion = new THREE.Mesh(this.roundedBox(frameThick, glassHeight, frameThick, wallR), trimMat);
-        mullion.position.set(frameX, glassY, mullionZ);
-        group.add(mullion);
+      const topLip = new THREE.Mesh(this.roundedBox(brassLip, brassLip, glassSpan, brassLip * 0.5), frameLipMat);
+      topLip.position.set(frameX - 0.004, glassTop - brassLip * 0.6, 0);
+      group.add(topLip);
+
+      const bottomLip = new THREE.Mesh(this.roundedBox(brassLip, brassLip, glassSpan, brassLip * 0.5), frameLipMat);
+      bottomLip.position.set(frameX - 0.004, glassBottom + brassLip * 0.6, 0);
+      group.add(bottomLip);
+
+      for (const z of [-glassSpan / 2, glassSpan / 2]) {
+        const sideLip = new THREE.Mesh(this.roundedBox(brassLip, glassHeight, brassLip, brassLip * 0.5), frameLipMat);
+        sideLip.position.set(frameX - 0.004, glassY, z);
+        group.add(sideLip);
       }
 
-      for (const z of glassZs) {
-        const windowPane = new THREE.Mesh(new THREE.BoxGeometry(0.035, glassHeight, paneDepth), glassMat);
-        windowPane.position.set(x * 1.005, glassY, z);
-        windowPane.renderOrder = 2;
-        group.add(windowPane);
-      }
+      const windowPane = new THREE.Mesh(new THREE.BoxGeometry(0.022, glassHeight, glassSpan), glassMat);
+      windowPane.position.set(x * 1.005, glassY, 0);
+      windowPane.renderOrder = 2;
+      group.add(windowPane);
     }
 
     for (const cz of boothCenters) {
@@ -829,9 +835,9 @@ export class Game {
     const delta = Math.min((now - this.lastFrameAt) / 1000, 0.05);
     const elapsed = (now - this.startedAt) / 1000;
     this.lastFrameAt = now;
-    const hands = this.handTracker.update(elapsed);
     const localSeat = this.multiplayer.localSeatIndex;
     const partnerSeat = this.multiplayer.partnerSeatIndex;
+    const hands = this.handTracker.update(elapsed, localSeat);
     const localPose = makePlayerPose(this.multiplayer.localId, 'Player', this.roomId, localSeat, hands, false);
     const remoteFromNetwork = this.poseSession.getRemotePose();
     const robotHands = this.robotMotion.update(elapsed, delta, localPose);

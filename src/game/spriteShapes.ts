@@ -6,6 +6,13 @@ export interface ShapeBuffers {
   colors: number[];
 }
 
+export interface SpriteTransformOptions {
+  flipX?: boolean;
+  rotation?: number;
+  scaleX?: number;
+  scaleY?: number;
+}
+
 type Point = [number, number];
 type Polygon = Point[];
 
@@ -17,10 +24,11 @@ export function appendSpriteShape(
   scale: number,
   tint: THREE.Color,
   anchor: 'bottom' | 'center' = 'bottom',
+  transform?: SpriteTransformOptions,
 ): void {
   const yAnchor = anchor === 'center' ? 0.5 : 0;
   for (const poly of spritePolygons(id)) {
-    appendPolygon(buffers, poly, originX, originY, scale, yAnchor, tint);
+    appendPolygon(buffers, poly, originX, originY, scale, yAnchor, tint, transform);
   }
 }
 
@@ -32,12 +40,13 @@ function appendPolygon(
   scale: number,
   yAnchor: number,
   tint: THREE.Color,
+  transform?: SpriteTransformOptions,
 ): void {
   if (poly.length < 3) return;
   for (let i = 1; i < poly.length - 1; i += 1) {
-    appendVertex(buffers, poly[0], originX, originY, scale, yAnchor, tint);
-    appendVertex(buffers, poly[i], originX, originY, scale, yAnchor, tint);
-    appendVertex(buffers, poly[i + 1], originX, originY, scale, yAnchor, tint);
+    appendVertex(buffers, poly[0], originX, originY, scale, yAnchor, tint, transform);
+    appendVertex(buffers, poly[i], originX, originY, scale, yAnchor, tint, transform);
+    appendVertex(buffers, poly[i + 1], originX, originY, scale, yAnchor, tint, transform);
   }
 }
 
@@ -49,9 +58,24 @@ function appendVertex(
   scale: number,
   yAnchor: number,
   tint: THREE.Color,
+  transform?: SpriteTransformOptions,
 ): void {
   const [x, y] = point;
-  buffers.positions.push(originX + (x - 0.5) * scale, originY + (y - yAnchor) * scale, 0);
+  const flipMul = transform?.flipX ? -1 : 1;
+  const sx = transform?.scaleX ?? 1;
+  const sy = transform?.scaleY ?? 1;
+  const localX = (x - 0.5) * scale * sx * flipMul;
+  const localY = (y - yAnchor) * scale * sy;
+  const rotation = transform?.rotation ?? 0;
+  let px = localX;
+  let py = localY;
+  if (rotation !== 0) {
+    const c = Math.cos(rotation);
+    const s = Math.sin(rotation);
+    px = localX * c - localY * s;
+    py = localX * s + localY * c;
+  }
+  buffers.positions.push(originX + px, originY + py, 0);
   buffers.colors.push(tint.r, tint.g, tint.b);
 }
 
