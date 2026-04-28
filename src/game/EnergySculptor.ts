@@ -19,11 +19,8 @@ import {
   vec4,
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
-import type { EmitRequest, EnergySink, ParticleKind } from './sculptor/EnergyEmitter';
-import type { Archetype, ArchetypeId } from './sculptor/archetypeShared';
-import { drumDrum } from './sculptor/archetypes/drumDrum';
-import { drumMelody } from './sculptor/archetypes/drumMelody';
-import { melodyMelody } from './sculptor/archetypes/melodyMelody';
+import type { EmitRequest, EnergySink } from './sculptor/EnergyEmitter';
+import type { ArchetypeId } from './sculptor/archetypeShared';
 import {
   aizawaFlow,
   ATTRACTOR_PRESETS,
@@ -38,14 +35,15 @@ export const SCULPTOR_DEFS = {
   particleCount:        { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
   particleSize:         { default: 0.005, min: 0.001, max: 0.03, step: 0.001, label: 'particle size' },
   particleOpacity:      { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
-  flowSpeed:            { default: 1.0,   min: 0.1,   max: 3,    step: 0.05, label: 'flow speed' },
-  velocityBlend:        { default: 0.92,  min: 0.4,   max: 1,    step: 0.005, label: 'velocity smoothing' },
+  flowSpeed:            { default: 0.72,  min: 0.1,   max: 3,    step: 0.05, label: 'flow speed' },
+  velocityBlend:        { default: 0.92,  min: 0.4,   max: 1,    step: 0.005, label: 'velocity damping' },
   speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
   stretchScale:         { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
-  containmentStrength:  { default: 6.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
+  containmentStrength:  { default: 2.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
   lifeSeconds:          { default: 100,   min: 8,    max: 240,  step: 0.5, label: 'life seconds' },
   fadeFraction:         { default: 0.18,  min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
-  fieldMemorySeconds:   { default: 6,     min: 1,    max: 90,   step: 0.5, label: 'field memory' },
+  fieldMemorySeconds:   { default: 12,    min: 1,    max: 90,   step: 0.5, label: 'field memory' },
+  residualField:        { default: 0.04,  min: 0,    max: 0.25, step: 0.005, label: 'residual field' },
   settleAmount:         { default: 1.0,   min: 0,    max: 1,    step: 0.01, label: 'settle amount' },
   settleStart:          { default: 0.05,  min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
   fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
@@ -88,12 +86,6 @@ const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
   drumMelody: 'aizawa',
 };
 
-const ARCHETYPES: Record<ArchetypeId, Archetype> = {
-  drumDrum,
-  melodyMelody,
-  drumMelody,
-};
-
 // Cap on how many particles we can spawn in a single frame. Sized for the
 // instruments' bursty emit: Drum hits emit ~24, Starlace plucks ~20-34. With
 // two players hitting hard at the same time we still stay under ~120.
@@ -128,7 +120,6 @@ export class EnergySculptor implements EnergySink {
   private positionsBuffer!: THREE.StorageBufferNode<'vec3'>;
   private velocitiesBuffer!: THREE.StorageBufferNode<'vec3'>;
   private colorsBuffer!: THREE.StorageBufferNode<'vec3'>;
-  private targetsBuffer!: THREE.StorageBufferNode<'vec3'>;
   // x = age (seconds), y = lifeMax (seconds), z = smoothedAccel, w = alphaLife (0..1)
   private metaBuffer!: THREE.StorageBufferNode<'vec4'>;
 
@@ -136,13 +127,11 @@ export class EnergySculptor implements EnergySink {
   private spawnPosArray: THREE.Vector3[] = [];
   private spawnVelArray: THREE.Vector3[] = [];
   private spawnColorArray: THREE.Vector3[] = [];
-  private spawnTargetArray: THREE.Vector3[] = [];
   // x=lifeMax, y=kindBlend, z=sizeScale (currently unused, reserved)
   private spawnMetaArray: THREE.Vector3[] = [];
   private spawnPosUniform!: THREE.UniformArrayNode<'vec3'>;
   private spawnVelUniform!: THREE.UniformArrayNode<'vec3'>;
   private spawnColorUniform!: THREE.UniformArrayNode<'vec3'>;
-  private spawnTargetUniform!: THREE.UniformArrayNode<'vec3'>;
   private spawnMetaUniform!: THREE.UniformArrayNode<'vec3'>;
   // Float uniforms; cast to uint at shader edge. Using float here keeps the
   // public TS overload set happy without losing any precision for our counts.
@@ -161,6 +150,7 @@ export class EnergySculptor implements EnergySink {
   private lifeMaxUniform = uniform(28);
   private fadeFractionUniform = uniform(0.25);
   private fieldMemorySecondsUniform = uniform(18);
+  private residualFieldUniform = uniform(0.035);
   private dissolveModeUniform = uniform(0);
   private dissolveBurstUniform = uniform(6);
   private musicPulseUniform = uniform(0);
@@ -233,7 +223,6 @@ export class EnergySculptor implements EnergySink {
   private synchronyBoost = 0;
   private synchronyRingAge = 1;
   private elapsed = 0;
-  private targetScratch = new THREE.Vector3();
 
   // Decorative scene elements.
   private synchronyRing?: THREE.Mesh;
@@ -274,6 +263,7 @@ export class EnergySculptor implements EnergySink {
     this.lifeMaxUniform.value = this.params.lifeSeconds;
     this.fadeFractionUniform.value = this.params.fadeFraction;
     this.fieldMemorySecondsUniform.value = this.params.fieldMemorySeconds;
+    this.residualFieldUniform.value = this.params.residualField;
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
     this.duetBoostUniform.value = this.params.duetBoost;
     this.speedGlowUniform.value = this.params.speedGlow;
@@ -283,7 +273,7 @@ export class EnergySculptor implements EnergySink {
     this.fieldRotationRate = this.params.fieldRotationRate;
     this.fieldBreathAmount = this.params.fieldBreathAmount;
 
-    this.registered = registerTweaks(paneDock, 'energySculptorMemoryTargets', SCULPTOR_DEFS, {
+    this.registered = registerTweaks(paneDock, 'energySculptorFlowDamping', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
@@ -304,6 +294,7 @@ export class EnergySculptor implements EnergySink {
         lifeSeconds: v => { this.lifeMaxUniform.value = v; },
         fadeFraction: v => { this.fadeFractionUniform.value = v; },
         fieldMemorySeconds: v => { this.fieldMemorySecondsUniform.value = v; },
+        residualField: v => { this.residualFieldUniform.value = v; },
         settleAmount: v => { this.settleAmountUniform.value = v; },
         settleStart: v => { this.settleStartUniform.value = v; },
         fieldRotationRate: v => { this.fieldRotationRate = v; },
@@ -419,7 +410,6 @@ export class EnergySculptor implements EnergySink {
     this.positionsBuffer = instancedArray(this.count, 'vec3');
     this.velocitiesBuffer = instancedArray(this.count, 'vec3');
     this.colorsBuffer = instancedArray(this.count, 'vec3');
-    this.targetsBuffer = instancedArray(this.count, 'vec3');
     this.metaBuffer = instancedArray(this.count, 'vec4');
   }
 
@@ -428,13 +418,11 @@ export class EnergySculptor implements EnergySink {
       this.spawnPosArray.push(new THREE.Vector3());
       this.spawnVelArray.push(new THREE.Vector3());
       this.spawnColorArray.push(new THREE.Vector3());
-      this.spawnTargetArray.push(new THREE.Vector3());
       this.spawnMetaArray.push(new THREE.Vector3());
     }
     this.spawnPosUniform = uniformArray(this.spawnPosArray, 'vec3');
     this.spawnVelUniform = uniformArray(this.spawnVelArray, 'vec3');
     this.spawnColorUniform = uniformArray(this.spawnColorArray, 'vec3');
-    this.spawnTargetUniform = uniformArray(this.spawnTargetArray, 'vec3');
     this.spawnMetaUniform = uniformArray(this.spawnMetaArray, 'vec3');
   }
 
@@ -442,7 +430,6 @@ export class EnergySculptor implements EnergySink {
     const positions = this.positionsBuffer;
     const velocities = this.velocitiesBuffer;
     const colors = this.colorsBuffer;
-    const targets = this.targetsBuffer;
     const meta = this.metaBuffer;
 
     // Emit pass: write spawn-queue entries into ring-buffer slots.
@@ -457,12 +444,10 @@ export class EnergySculptor implements EnergySink {
       const spawnPos = this.spawnPosUniform.element(i);
       const spawnVel = this.spawnVelUniform.element(i);
       const spawnColor = this.spawnColorUniform.element(i);
-      const spawnTarget = this.spawnTargetUniform.element(i);
       const spawnMeta = this.spawnMetaUniform.element(i);
       positions.element(slot).assign(spawnPos);
       velocities.element(slot).assign(spawnVel);
       colors.element(slot).assign(spawnColor);
-      targets.element(slot).assign(spawnTarget);
       // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
       meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
     });
@@ -506,7 +491,6 @@ export class EnergySculptor implements EnergySink {
       });
       const pos = positions.element(i).toVar();
       const vel = velocities.element(i).toVar();
-      const memoryTarget = targets.element(i);
       // Capture pre-integration speed so we can derive a signed acceleration
       // (positive when the particle is speeding up, negative when slowing).
       // Used by the renderer to stretch / squish the sprite along travel.
@@ -533,29 +517,27 @@ export class EnergySculptor implements EnergySink {
       const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
       const fadeStart = float(1).sub(this.fadeFractionUniform);
 
-      // Field memory is absolute time, not a fraction of visual lifetime. Each
-      // particle gets a unique archetype target at birth. The live attractor
-      // has a brief chance to bend the path, then its authority fades and the
-      // particle is pinned to that emission-time target instead of remaining
-      // inside a shared strange-attractor basin.
+      // Field memory is absolute time, not a fraction of visual lifetime. New
+      // particles ride the rotating flow strongly. Older particles keep
+      // sampling that same flow, but at a low residual gain, so their velocity
+      // damps in place instead of being redirected toward a center or target.
       const memoryAge = m.x.div(this.fieldMemorySecondsUniform.max(0.0001)).clamp(0, 1);
       const settledT = smoothstep(this.settleStartUniform, 1.0, memoryAge)
         .mul(this.settleAmountUniform)
         .clamp(0, 1);
       const fieldInfluenceBase = float(1).sub(settledT);
       const fieldInfluence = fieldInfluenceBase.mul(fieldInfluenceBase);
-      const pinInfluence = settledT.mul(settledT);
+      const flowInfluence = mix(this.residualFieldUniform, float(1), fieldInfluence);
 
       // Smoothly blend velocity toward flow so trajectories feel inertial
       // rather than instantaneously snapping to dp/dt.
-      const memoryPull = memoryTarget.sub(pos).mul(pinInfluence).mul(2.4);
-      const targetVel = flow.mul(speedGain).mul(fieldInfluence).add(memoryPull);
+      const targetVel = flow.mul(speedGain).mul(flowInfluence);
       const newVel = mix(targetVel, vel, this.velocityBlendUniform).toVar();
 
       // Soft containment: when a particle drifts past the safe radius for
-      // this attractor, push it back so we don't accumulate runaways. Gated
-      // by fieldInfluence so settled particles aren't dragged off their resting
-      // positions, but active particles still stay bounded.
+      // this attractor, push it back so we don't accumulate runaways. This is
+      // intentionally not part of residual field motion; old particles should
+      // not get a slow inward pull after their active field window ends.
       const r = pos.length();
       const overshoot = smoothstep(this.containmentRadiusUniform.mul(0.85), this.containmentRadiusUniform, r);
       const inward = pos.normalize().negate().mul(overshoot).mul(this.containmentStrengthUniform);
@@ -818,7 +800,6 @@ export class EnergySculptor implements EnergySink {
     const lifeBase = this.lifeMaxUniform.value;
     const worldScale = this.worldScaleUniform.value || 1;
     const invWorldScale = 1 / worldScale;
-    const archetype = ARCHETYPES[this.currentArchetype];
 
     for (const req of this.pendingEmits) {
       if (cursor >= MAX_SPAWNS_PER_FRAME) break;
@@ -828,14 +809,11 @@ export class EnergySculptor implements EnergySink {
       const dirY = dirNormSq > 1e-6 ? req.direction.y : 1;
       const dirZ = dirNormSq > 1e-6 ? req.direction.z : 0;
       const kind = req.kind === 'starlace' ? KIND_STARLACE : KIND_DRUM;
-      const particleKind: ParticleKind = req.kind;
       const jitterRadius = req.kind === 'starlace' ? 0.16 : 0.6;
       const speedScale = req.kind === 'starlace' ? 1.45 : 1.0;
 
       for (let i = 0; i < allowed; i += 1) {
         const slot = cursor;
-        const seed = Math.random();
-        const particleNorm = (i + seed) / Math.max(1, allowed);
         // Origin: world → attractor space.
         const oxLocal = (req.origin.x - this.center.x) * invWorldScale;
         const oyLocal = (req.origin.y - this.center.y) * invWorldScale;
@@ -855,12 +833,6 @@ export class EnergySculptor implements EnergySink {
           dirX * seedSpeed,
           dirY * seedSpeed,
           dirZ * seedSpeed,
-        );
-        archetype.shape(particleNorm, this.roundProgress, seed, particleKind, this.targetScratch);
-        this.spawnTargetArray[slot].set(
-          this.targetScratch.x * invWorldScale,
-          this.targetScratch.y * invWorldScale,
-          this.targetScratch.z * invWorldScale,
         );
 
         this.spawnColorArray[slot].set(req.color.r, req.color.g, req.color.b);
