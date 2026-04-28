@@ -95,6 +95,7 @@ function preloadCriticalAssets(): Promise<void> {
     '/cabin/illustrated-cabin-plate-v2-color.webp',
     '/cabin/illustrated-cabin-plate-v2-alpha.webp',
     '/scenery/far-terrain-chunk-01-alpine-lake.webp',
+    '/scenery/far-terrain-chunk-02-fog-forest.webp',
     `/puppets/${localPuppet}`,
     `/puppets/${partnerHand}`,
     ...puppetParts.flatMap(part => [

@@ -3,19 +3,12 @@ import { makeParams, registerTweaks } from '../hud/tweakDefs';
 import { clamp } from './math';
 import {
   BiomeScheduler,
-  FOREGROUND_BIOMES,
   timeOfDayPhase,
   type ForegroundBiomeId,
   type MagicEvent,
 } from './biomes';
 import { SpriteAtlas } from './spriteAtlas';
 import { SkyLife } from './skyLife';
-
-const FG_OPTIONS: Record<string, string> = (() => {
-  const o: Record<string, string> = { auto: 'auto' };
-  for (const id of Object.keys(FOREGROUND_BIOMES)) o[id] = id;
-  return o;
-})();
 
 const PAINTED_TERRAIN_CHUNKS = [
   { id: 'alpine-lake', texture: '/scenery/far-terrain-chunk-01-alpine-lake.webp' },
@@ -30,6 +23,32 @@ const PAINTED_TERRAIN_CHUNKS = [
   { id: 'lavender-steppe', texture: '/scenery/far-terrain-chunk-10-lavender-steppe.webp' },
   { id: 'crystal-ravine', texture: '/scenery/far-terrain-chunk-11-crystal-ravine.webp' },
 ] as const;
+type PaintedTerrainChunk = (typeof PAINTED_TERRAIN_CHUNKS)[number];
+type PaintedTerrainChunkId = PaintedTerrainChunk['id'];
+type PaintedTerrainSelection = 'auto' | PaintedTerrainChunkId;
+
+const PAINTED_TERRAIN_OPTIONS: Record<string, PaintedTerrainSelection> = (() => {
+  const options: Record<string, PaintedTerrainSelection> = { auto: 'auto' };
+  for (const chunk of PAINTED_TERRAIN_CHUNKS) {
+    options[chunk.id.replaceAll('-', ' ')] = chunk.id;
+  }
+  return options;
+})();
+
+const PAINTED_TERRAIN_FOREGROUND_HINTS: Record<PaintedTerrainChunkId, ForegroundBiomeId> = {
+  'alpine-lake': 'lake',
+  'fog-forest': 'forest',
+  'snow-peaks': 'snowfield',
+  'red-mesa': 'hills',
+  'coastal-lake': 'lake',
+  'meadow-fields': 'meadow',
+  'cypress-wetland': 'lake',
+  'autumn-moor': 'farmland',
+  'basalt-coast': 'coast',
+  'lavender-steppe': 'meadow',
+  'crystal-ravine': 'hills',
+};
+
 const PAINTED_TERRAIN_SEQUENCE = [
   0, 1, 6, 4, 8, 2, 10, 7, 5, 9, 3,
   1, 0, 4, 6, 5, 7, 10, 2, 8, 9, 3,
@@ -49,7 +68,7 @@ export const SCENERY_DEFS = {
   cycleOffset:           { default: 0.50, min: 0,  max: 1,   step: 0.001, label: 'cycle offset' },
   trainSpeed:            { default: 1.1,  min: 0,  max: 3,   step: 0.01,  label: 'train speed' },
   paintedTerrainOpacity: { default: 0.92, min: 0,  max: 1,   step: 0.01,  label: 'painted layer' },
-  foreground:            { type: 'select', default: 'lake', options: FG_OPTIONS, folder: 'Biomes' },
+  foreground:            { type: 'select', default: 'auto', options: PAINTED_TERRAIN_OPTIONS, folder: 'Biomes' },
   transitionSpeed:       { default: 1,    min: 0.1, max: 10, step: 0.1,   folder: 'Biomes' },
   recencyPenalty:        { default: 1,    min: 0,   max: 2,  step: 0.05,  folder: 'Biomes' },
 } as const;
@@ -88,6 +107,8 @@ export class ScenerySystem {
   private paintedTerrainPanels: PaintedTerrainPanel[] = [];
   private paintedTerrainDistance = 0;
   private paintedTerrainLoader?: THREE.TextureLoader;
+  private paintedTerrainSelection: PaintedTerrainSelection = 'auto';
+  private paintedTerrainTextureCache = new Map<PaintedTerrainChunkId, THREE.Texture>();
   private readonly paintedTerrainTint = new THREE.Color(0xffffff);
   private readonly paintedTerrainNightTint = new THREE.Color(0x3a2a22);
   private readonly paintedTerrainDuskTint = new THREE.Color(0xffb261);
@@ -119,11 +140,11 @@ export class ScenerySystem {
       () => this.lastCycle,
     );
 
-    this.registered = registerTweaks(paneContainer, 'scenery-v3', SCENERY_DEFS, {
+    this.registered = registerTweaks(paneContainer, 'scenery-v4', SCENERY_DEFS, {
       title: 'Scenery',
       params: this.params,
       onChange: {
-        foreground:      v => { this.scheduler.overrides.forceForeground = v === 'auto' ? undefined : v as ForegroundBiomeId; },
+        foreground:      v => { this.setPaintedTerrainSelection(v as PaintedTerrainSelection); },
         transitionSpeed: v => { this.scheduler.overrides.transitionSpeedMul = v; },
         recencyPenalty:  v => { this.scheduler.overrides.recencyPenaltyStrength = v; },
       },
@@ -202,7 +223,7 @@ export class ScenerySystem {
         cloudCover: 0,
         rainAmount: 0,
         phase: timeOfDayPhase(cycle),
-        currentForegroundId: currentFg.id,
+        currentForegroundId: this.paintedTerrainForegroundHint() ?? currentFg.id,
       });
     }
 
@@ -281,9 +302,10 @@ export class ScenerySystem {
     goldenHour: number,
   ): void {
     const loopLength = this.paintedTerrainLoopLength();
-    if (loopLength > 0) {
+    if (loopLength > 0 && this.paintedTerrainSelection === 'auto') {
       const speedFactor = clamp(speed, 0, PAINTED_TERRAIN_MAX_SPEED) / PAINTED_TERRAIN_MAX_SPEED;
-      const deltaDistance = delta * speedFactor * loopLength / PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED;
+      const transitionSpeed = Math.max(0.05, this.params.transitionSpeed);
+      const deltaDistance = delta * speedFactor * transitionSpeed * loopLength / PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED;
       this.paintedTerrainDistance = (this.paintedTerrainDistance + deltaDistance) % loopLength;
       this.updatePaintedTerrainPanels();
     }
@@ -305,8 +327,10 @@ export class ScenerySystem {
     if (loopLength <= 0) return;
 
     const sequenceLength = PAINTED_TERRAIN_SEQUENCE.length;
-    const currentIndex = Math.floor(this.paintedTerrainDistance / PAINTED_TERRAIN_CHUNK_STRIDE) % sequenceLength;
-    const localDistance = this.paintedTerrainDistance % PAINTED_TERRAIN_CHUNK_STRIDE;
+    const currentIndex = this.paintedTerrainCurrentSequenceIndex();
+    const localDistance = this.paintedTerrainSelection === 'auto'
+      ? this.paintedTerrainDistance % PAINTED_TERRAIN_CHUNK_STRIDE
+      : 0;
 
     for (const panel of this.paintedTerrainPanels) {
       const sequenceIndex = (currentIndex + panel.sequenceOffset) % sequenceLength;
@@ -320,21 +344,60 @@ export class ScenerySystem {
   private assignPaintedTerrainTexture(panel: PaintedTerrainPanel, sequenceIndex: number): void {
     const chunkIndex = PAINTED_TERRAIN_SEQUENCE[sequenceIndex];
     const chunk = PAINTED_TERRAIN_CHUNKS[chunkIndex];
-    const loader = this.paintedTerrainLoader;
-    if (!loader) return;
-
-    panel.texture?.dispose();
-    const texture = loader.load(chunk.texture, tex => {
-      this.configurePaintedTerrainTexture(tex);
-      tex.needsUpdate = true;
-    });
-    this.configurePaintedTerrainTexture(texture);
+    const texture = this.getPaintedTerrainTexture(chunk);
+    if (!texture) return;
 
     panel.sequenceIndex = sequenceIndex;
     panel.texture = texture;
     panel.material.map = texture;
     panel.material.needsUpdate = true;
     panel.mesh.name = `painted-far-terrain-${chunk.id}`;
+  }
+
+  private getPaintedTerrainTexture(chunk: PaintedTerrainChunk): THREE.Texture | undefined {
+    const cached = this.paintedTerrainTextureCache.get(chunk.id);
+    if (cached) return cached;
+
+    const loader = this.paintedTerrainLoader;
+    if (!loader) return undefined;
+
+    const texture = loader.load(chunk.texture, tex => {
+      this.configurePaintedTerrainTexture(tex);
+      tex.needsUpdate = true;
+    });
+    this.configurePaintedTerrainTexture(texture);
+    this.paintedTerrainTextureCache.set(chunk.id, texture);
+    return texture;
+  }
+
+  private setPaintedTerrainSelection(selection: PaintedTerrainSelection): void {
+    this.paintedTerrainSelection = isPaintedTerrainSelection(selection) ? selection : 'auto';
+    this.scheduler.overrides.forceForeground = this.paintedTerrainForegroundHint();
+
+    if (this.paintedTerrainSelection !== 'auto') {
+      const sequenceIndex = this.sequenceIndexForPaintedTerrainChunk(this.paintedTerrainSelection);
+      this.paintedTerrainDistance = sequenceIndex * PAINTED_TERRAIN_CHUNK_STRIDE;
+    }
+
+    this.updatePaintedTerrainPanels();
+  }
+
+  private paintedTerrainCurrentSequenceIndex(): number {
+    if (this.paintedTerrainSelection !== 'auto') {
+      return this.sequenceIndexForPaintedTerrainChunk(this.paintedTerrainSelection);
+    }
+    return Math.floor(this.paintedTerrainDistance / PAINTED_TERRAIN_CHUNK_STRIDE) % PAINTED_TERRAIN_SEQUENCE.length;
+  }
+
+  private paintedTerrainForegroundHint(): ForegroundBiomeId | undefined {
+    if (this.paintedTerrainSelection === 'auto') return undefined;
+    return PAINTED_TERRAIN_FOREGROUND_HINTS[this.paintedTerrainSelection];
+  }
+
+  private sequenceIndexForPaintedTerrainChunk(id: PaintedTerrainChunkId): number {
+    const chunkIndex = PAINTED_TERRAIN_CHUNKS.findIndex(chunk => chunk.id === id);
+    const sequenceIndex = PAINTED_TERRAIN_SEQUENCE.findIndex(index => index === chunkIndex);
+    return Math.max(0, sequenceIndex);
   }
 
   private configurePaintedTerrainTexture(texture: THREE.Texture): void {
@@ -351,10 +414,11 @@ export class ScenerySystem {
   private disposePaintedTerrain(): void {
     for (const panel of this.paintedTerrainPanels) {
       this.root.remove(panel.mesh);
-      panel.texture?.dispose();
       panel.material.dispose();
     }
     this.paintedTerrainPanels = [];
+    for (const texture of this.paintedTerrainTextureCache.values()) texture.dispose();
+    this.paintedTerrainTextureCache.clear();
     this.paintedTerrainGeometry?.dispose();
     this.paintedTerrainAlphaTexture?.dispose();
     this.paintedTerrainGeometry = undefined;
@@ -362,4 +426,8 @@ export class ScenerySystem {
     this.paintedTerrainLoader = undefined;
   }
 
+}
+
+function isPaintedTerrainSelection(value: string): value is PaintedTerrainSelection {
+  return value === 'auto' || PAINTED_TERRAIN_CHUNKS.some(chunk => chunk.id === value);
 }

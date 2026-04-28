@@ -11,6 +11,7 @@ export interface SpriteTransformOptions {
   rotation?: number;
   scaleX?: number;
   scaleY?: number;
+  zOffset?: number;
 }
 
 type Point = [number, number];
@@ -75,7 +76,7 @@ function appendVertex(
     px = localX * c - localY * s;
     py = localX * s + localY * c;
   }
-  buffers.positions.push(originX + px, originY + py, 0);
+  buffers.positions.push(originX + px, originY + py, transform?.zOffset ?? 0);
   buffers.colors.push(tint.r, tint.g, tint.b);
 }
 

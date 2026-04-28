@@ -145,10 +145,9 @@ export class Starlace implements PlayerVisual {
   private pulseLineMaterial: THREE.LineBasicMaterial;
   private lineSegments: THREE.LineSegments;
   private pulseLineSegments: THREE.LineSegments;
-  private nodeGeometry: THREE.SphereGeometry;
-  private nodeMeshes: THREE.InstancedMesh[] = [];
-  private nodeMaterials: THREE.MeshBasicMaterial[] = [];
-  private nodeMeshSlots: Array<{ meshIndex: number; slot: number }> = [];
+  private nodeGeometries: THREE.BufferGeometry[] = [];
+  private nodeMeshes: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>[] = [];
+  private nodeMaterials: THREE.MeshStandardMaterial[] = [];
   private sparkMesh: THREE.InstancedMesh;
   private sparkMaterial: THREE.MeshBasicMaterial;
 
@@ -297,7 +296,12 @@ export class Starlace implements PlayerVisual {
     this.pulseLineSegments.renderOrder = 17;
     this.mesh.add(this.lineSegments, this.pulseLineSegments);
 
-    this.nodeGeometry = new THREE.SphereGeometry(1, 10, 8);
+    this.nodeGeometries = [
+      new THREE.TetrahedronGeometry(1, 0),
+      new THREE.OctahedronGeometry(1, 0),
+      new THREE.IcosahedronGeometry(1, 0),
+      new THREE.DodecahedronGeometry(1, 0),
+    ];
     this.buildNodeMeshes();
 
     this.sparkMaterial = new THREE.MeshBasicMaterial({
@@ -565,7 +569,7 @@ export class Starlace implements PlayerVisual {
     this.pulseLineGeometry.dispose();
     this.lineMaterial.dispose();
     this.pulseLineMaterial.dispose();
-    this.nodeGeometry.dispose();
+    for (const geometry of this.nodeGeometries) geometry.dispose();
     for (const material of this.nodeMaterials) material?.dispose();
     this.sparkMesh.geometry.dispose();
     this.sparkMaterial.dispose();
@@ -679,32 +683,27 @@ export class Starlace implements PlayerVisual {
   }
 
   private buildNodeMeshes(): void {
-    const paletteCount = STARLACE_NOTE_PALETTE.length;
-    const counts = Array.from({ length: paletteCount }, () => 0);
-    this.nodeMeshSlots = Array.from({ length: this.nodes.length }, () => ({ meshIndex: 0, slot: 0 }));
-
     for (let i = 0; i < this.nodes.length; i += 1) {
-      const meshIndex = this.notePaletteIndexForNode(this.nodes[i]);
-      const slot = counts[meshIndex];
-      counts[meshIndex] += 1;
-      this.nodeMeshSlots[i] = { meshIndex, slot };
-    }
-
-    for (let i = 0; i < paletteCount; i += 1) {
-      const count = counts[i];
-      if (count <= 0) continue;
-      const material = new THREE.MeshBasicMaterial({
-        color: STARLACE_NOTE_PALETTE[i],
+      const node = this.nodes[i];
+      const paletteIndex = this.notePaletteIndexForNode(node);
+      const shapeIndex = Math.floor(hash(node.seed * 61.7 + i * 0.37) * this.nodeGeometries.length) % this.nodeGeometries.length;
+      const material = new THREE.MeshStandardMaterial({
+        color: STARLACE_NOTE_PALETTE[paletteIndex],
+        emissive: STARLACE_NOTE_PALETTE[paletteIndex],
+        emissiveIntensity: 0.18,
+        flatShading: true,
+        roughness: 0.52,
+        metalness: 0.08,
         transparent: true,
-        opacity: 0.88,
+        opacity: 0.92,
         blending: THREE.NormalBlending,
         depthWrite: false,
       });
-      const mesh = new THREE.InstancedMesh(this.nodeGeometry, material, count);
+      const mesh = new THREE.Mesh(this.nodeGeometries[shapeIndex], material);
       mesh.frustumCulled = false;
       mesh.renderOrder = 20;
-      this.nodeMaterials[i] = material;
       this.nodeMeshes[i] = mesh;
+      this.nodeMaterials[i] = material;
       this.mesh.add(mesh);
     }
   }
@@ -817,14 +816,30 @@ export class Starlace implements PlayerVisual {
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
       const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.10) * reveal;
 
-      _dummy.position.copy(node.world);
-      _dummy.scale.setScalar(size);
-      _dummy.updateMatrix();
-      const slot = this.nodeMeshSlots[i];
-      this.nodeMeshes[slot.meshIndex]?.setMatrixAt(slot.slot, _dummy.matrix);
-    }
-    for (const mesh of this.nodeMeshes) {
-      if (mesh) mesh.instanceMatrix.needsUpdate = true;
+      const mesh = this.nodeMeshes[i];
+      if (!mesh) continue;
+      mesh.position.copy(node.world);
+      mesh.rotation.set(
+        this.elapsed * (0.18 + node.seed * 0.18) + node.seed * TAU,
+        this.elapsed * (0.14 + node.seed * 0.16) + node.u * 2.1,
+        this.elapsed * (0.10 + node.seed * 0.12) + node.v * 2.4,
+      );
+      mesh.scale.setScalar(size);
+
+      const material = this.nodeMaterials[i];
+      if (!material) continue;
+      this.noteColorForNode(node, _colorA);
+      _colorB.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
+      _colorA.lerp(_colorB, 0.10 + twinkle * 0.045);
+      _colorA.lerp(this.gold, hash(node.seed * 29.1 + node.noteIndex) > 0.80 ? 0.08 : 0.015);
+      const flash = Math.pow(pulse, 1.55);
+      _colorC.copy(_colorA).lerp(this.hot, 0.12 + flash * 0.16).multiplyScalar(0.90 + flash * 0.46);
+      _colorC.r = Math.min(_colorC.r, 1.10);
+      _colorC.g = Math.min(_colorC.g, 1.04);
+      _colorC.b = Math.min(_colorC.b, 1.12);
+      material.color.copy(_colorC);
+      material.emissive.copy(_colorC);
+      material.emissiveIntensity = 0.16 + flash * 0.76;
     }
   }
 
@@ -1356,7 +1371,9 @@ export class Starlace implements PlayerVisual {
     for (let i = 0; i < this.nodeMaterials.length; i += 1) {
       const material = this.nodeMaterials[i];
       if (!material) continue;
-      material.color.copy(this.noteColors[i % this.noteColors.length]).lerp(this.gold, i % 4 === 0 ? 0.10 : 0.025);
+      const node = this.nodes[i];
+      if (!node) continue;
+      material.color.copy(this.noteColors[this.notePaletteIndexForNode(node)]).lerp(this.gold, i % 4 === 0 ? 0.10 : 0.025);
     }
     this.sparkMaterial.color.setRGB(1.00, 0.97, 0.92);
   }
