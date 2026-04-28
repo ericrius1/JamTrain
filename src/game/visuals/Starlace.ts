@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
-import { JAM_STARLACE_HZ } from '../harmony';
+import { getStarlaceHz } from '../harmony';
+import { keyDirector } from '../keyDirector';
 import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments';
 import { clamp, hash } from '../math';
 
@@ -85,7 +86,9 @@ const STARLACE_MAX_NODE_DEGREE = 4;
 const STARLACE_MAX_LINK_SPAN = 0.33;
 const STARLACE_LINK_FADE_START = 0.18;
 
-const STARLACE_HZ: readonly number[] = JAM_STARLACE_HZ;
+// Hz table for the current key. Refreshed per Starlace instance via the
+// KeyDirector subscription so each starlace harp picks up new tunings as the
+// tour advances. Length stays constant (one entry per pentatonic step).
 
 const _worldUp = new THREE.Vector3(0, 1, 0);
 const _contactDelta = new THREE.Vector3();
@@ -202,6 +205,8 @@ export class Starlace implements PlayerVisual {
   private gold = new THREE.Color();
   private hot = new THREE.Color();
   private noteColors: THREE.Color[] = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex));
+  private hzTable: readonly number[] = getStarlaceHz(keyDirector.getCurrent());
+  private keyUnsubscribe?: () => void;
   private onPluckCallback?: (event: StarlacePluck) => void;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   private keyDownListener?: (e: KeyboardEvent) => void;
@@ -242,6 +247,10 @@ export class Starlace implements PlayerVisual {
     this.mesh = new THREE.Group();
     this.mesh.name = `starlace-harp-${opts.palette ?? 'local'}`;
     scene.add(this.mesh);
+
+    this.keyUnsubscribe = keyDirector.onChange(({ current }) => {
+      this.hzTable = getStarlaceHz(current);
+    });
 
     this.createNodes();
     this.createEdges();
@@ -557,6 +566,7 @@ export class Starlace implements PlayerVisual {
   dispose(): void {
     this.detachKeyboardEvents();
     this.detachPointerEvents();
+    this.keyUnsubscribe?.();
     this.registered?.dispose();
     this.lineGeometry.dispose();
     this.pulseLineGeometry.dispose();
@@ -608,8 +618,8 @@ export class Starlace implements PlayerVisual {
       .sort((a, b) => a.score - b.score);
     const maxRank = Math.max(1, byPitchPosition.length - 1);
     for (let rank = 0; rank < byPitchPosition.length; rank += 1) {
-      const noteIndex = Math.round((rank / maxRank) * (STARLACE_HZ.length - 1));
-      this.nodes[byPitchPosition[rank].i].noteIndex = clamp(noteIndex, 0, STARLACE_HZ.length - 1);
+      const noteIndex = Math.round((rank / maxRank) * (this.hzTable.length - 1));
+      this.nodes[byPitchPosition[rank].i].noteIndex = clamp(noteIndex, 0, this.hzTable.length - 1);
     }
   }
 
@@ -660,7 +670,7 @@ export class Starlace implements PlayerVisual {
   }
 
   private buildKeyboardPitchBuckets(): void {
-    this.keyboardPitchNodes = Array.from({ length: STARLACE_HZ.length }, () => []);
+    this.keyboardPitchNodes = Array.from({ length: this.hzTable.length }, () => []);
     for (let i = 0; i < this.nodes.length; i += 1) {
       const noteIndex = this.nodes[i].noteIndex;
       this.keyboardPitchNodes[noteIndex]?.push(i);
@@ -672,7 +682,7 @@ export class Starlace implements PlayerVisual {
         return nodeA.u === nodeB.u ? nodeA.v - nodeB.v : nodeA.u - nodeB.u;
       });
     }
-    this.keyboardStartCursor = Array.from({ length: STARLACE_HZ.length }, () => 0);
+    this.keyboardStartCursor = Array.from({ length: this.hzTable.length }, () => 0);
   }
 
   private resolveAxes(): void {
@@ -772,7 +782,7 @@ export class Starlace implements PlayerVisual {
     for (let i = 0; i < this.nodes.length; i += 1) {
       const node = this.nodes[i];
       const twinkle = 0.5 + Math.sin(this.elapsed * (1.2 + node.seed * 1.7) + node.seed * TAU) * 0.5;
-      const pitchGlow = 1 - Math.abs((node.noteIndex / (STARLACE_HZ.length - 1)) - this.smoothedPitch);
+      const pitchGlow = 1 - Math.abs((node.noteIndex / (this.hzTable.length - 1)) - this.smoothedPitch);
       const pulse = clamp(node.pulse + pitchGlow * this.smoothedEnergy * 0.18 + twinkle * 0.07, 0, 1);
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
       const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.10) * reveal;
@@ -1070,7 +1080,7 @@ export class Starlace implements PlayerVisual {
       this.onPluckCallback({
         nodeIndex,
         noteIndex: node.noteIndex,
-        frequency: STARLACE_HZ[node.noteIndex],
+        frequency: this.hzTable[node.noteIndex],
         velocity,
         x: clamp(node.u + 0.5, 0, 1),
         y: clamp(node.v + 0.5, 0, 1),
@@ -1172,7 +1182,7 @@ export class Starlace implements PlayerVisual {
   }
 
   private keyboardHomeNoteIndex(keyIndex: number): number {
-    return clamp(keyIndex, 0, STARLACE_HZ.length - 1);
+    return clamp(keyIndex, 0, this.hzTable.length - 1);
   }
 
   private pickKeyboardStartNode(homeNoteIndex: number): number {
@@ -1331,7 +1341,7 @@ export class Starlace implements PlayerVisual {
   }
 
   private noteColorForNode(node: StarNode, target: THREE.Color): THREE.Color {
-    const maxNote = Math.max(1, STARLACE_HZ.length - 1);
+    const maxNote = Math.max(1, this.hzTable.length - 1);
     const palettePos = (node.noteIndex / maxNote) * (this.noteColors.length - 1);
     const low = Math.floor(palettePos);
     const high = Math.min(this.noteColors.length - 1, low + 1);

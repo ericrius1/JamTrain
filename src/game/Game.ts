@@ -23,6 +23,7 @@ import { WebRtcPoseTransport } from './pose/WebRtcPoseTransport';
 import { HumanoidRig } from './rig/HumanoidRig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
+import { keyDirector } from './keyDirector';
 import { hashString } from './seedRandom';
 import { fingerJointNames, fingerNames, handednesses, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
@@ -199,12 +200,15 @@ export class Game {
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
+    keyDirector.setRoomSeed(this.roomSeed);
+    keyDirector.attachPane(this.paneDock);
     this.multiplayer.onStateChange(state => {
       ui.connectionStatus.textContent = state;
     });
     this.multiplayer.onAssignedRoom(room => {
       this.roomSeed = hashString(room);
       this.scenery.setRoomSeed(this.roomSeed);
+      keyDirector.setRoomSeed(this.roomSeed);
     });
     this.multiplayer.onPartnerIdentity(identity => {
       this.partnerPresent = identity !== null;

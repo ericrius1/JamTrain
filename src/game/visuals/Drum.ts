@@ -22,7 +22,8 @@ import {
   drumKeyboardIndexForKey,
   drumOrbCountForBaseRow,
 } from '../drumControls';
-import { JAM_DRUM_HZ } from '../harmony';
+import { getDrumHz } from '../harmony';
+import { keyDirector } from '../keyDirector';
 import type { HandContactPoint, OrbGestureState, PlayerVisual, VoiceState } from '../instruments';
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
@@ -98,8 +99,8 @@ type AnyNode = any;
 
 // One octave of the Jam Train drum scale. frequencyForOrb() walks this table
 // by scale degree and transposes whole cycles up by octaves, so expanded
-// pyramids do not repeat exact pitches.
-const ORB_HZ: readonly number[] = JAM_DRUM_HZ;
+// pyramids do not repeat exact pitches. The table is per-instance and tracks
+// the current key via the KeyDirector subscription set up in the constructor.
 
 function makeOrbOffsets(baseRow: number, columnSpacing: number, rowSpacing: number): THREE.Vector3[] {
   // Pyramid: bottom row has `baseRow` orbs, each row above has one fewer, until
@@ -276,6 +277,8 @@ export class Drum implements PlayerVisual {
   private static SPARK_COLOR_LOCAL = { r: 1.00, g: 0.62, b: 0.24 };
   private static SPARK_COLOR_REMOTE = { r: 1.00, g: 0.78, b: 0.36 };
   private keyDownListener?: (e: KeyboardEvent) => void;
+  private hzTable: readonly number[] = getDrumHz(keyDirector.getCurrent());
+  private keyUnsubscribe?: () => void;
 
   constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'drum', opts: DrumOptions = {}) {
     this.params = { ...Object.fromEntries(Object.entries(DRUM_DEFS).map(([k, d]) => [k, d.default])) } as DrumParams;
@@ -292,6 +295,10 @@ export class Drum implements PlayerVisual {
     this.mesh = new THREE.Group();
     this.mesh.name = `orb-drums-${opts.palette ?? 'local'}`;
     scene.add(this.mesh);
+
+    this.keyUnsubscribe = keyDirector.onChange(({ current }) => {
+      this.hzTable = getDrumHz(current);
+    });
 
     this.uniforms = createOrbUniforms(this.params);
     for (let r = 0; r < MAX_RIPPLES; r += 1) {
@@ -547,6 +554,7 @@ export class Drum implements PlayerVisual {
 
   dispose(): void {
     this.registered?.dispose();
+    this.keyUnsubscribe?.();
     this.detachPointerEvents();
     this.detachKeyboardEvents();
     for (const orb of this.orbs) {
@@ -898,12 +906,12 @@ export class Drum implements PlayerVisual {
   }
 
   private frequencyForOrb(orbIndex: number): number {
-    const len = ORB_HZ.length;
+    const len = this.hzTable.length;
     if (len <= 0) return 0;
     const degree = Math.max(0, Math.floor(orbIndex));
     const pitchClass = degree % len;
     const octaveShift = Math.floor(degree / len);
-    return ORB_HZ[pitchClass] * Math.pow(2, octaveShift);
+    return this.hzTable[pitchClass] * Math.pow(2, octaveShift);
   }
 
   private notifyOrbCount(count = drumOrbCountForBaseRow(this.params.pyramidBaseRow)): void {
