@@ -60,11 +60,12 @@
 
 #scene {
   position: absolute;
-  left: 8px;
-  top: 8px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: block;
-  width: calc(100% - 16px);
-  height: calc(100% - 16px);
+  width: min(calc(100% - 16px), calc((100vh - 16px) * 1920 / 1014));
+  aspect-ratio: 1920 / 1014;
   outline: none;
   background: #071013;
   border-radius: 14px;
@@ -73,7 +74,11 @@
 
 #vignette {
   position: absolute;
-  inset: 8px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(calc(100% - 16px), calc((100vh - 16px) * 1920 / 1014));
+  aspect-ratio: 1920 / 1014;
   pointer-events: none;
   z-index: 1;
   border-radius: 14px;
