@@ -2,7 +2,7 @@ import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { JamAudioGraph } from './audioGraph';
 import { clamp } from './math';
 import type { HandPose, PlayerPose } from './types';
-import type { InstrumentId, VoiceState } from './instruments';
+import type { InstrumentId, OrbGestureState, VoiceState } from './instruments';
 import { voiceStateZero } from './instruments';
 
 export const HAND_SYNTH_DEFS = {
@@ -24,6 +24,9 @@ export const HAND_SYNTH_DEFS = {
   orbDb:         { default: 2,     min: -30, max: 12,   step: 0.5,  label: 'orb dB' },
   orbDecay:      { default: 2.4,   min: 0.4, max: 6,    step: 0.05, label: 'orb decay s' },
   orbHarmonics:  { default: 0.55,  min: 0,   max: 1,    step: 0.01, label: 'orb partials' },
+  starlaceDb:    { default: 1,     min: -30, max: 12,   step: 0.5,  label: 'starlace dB' },
+  starlaceDecay: { default: 3.2,   min: 0.6, max: 8,    step: 0.05, label: 'starlace decay s' },
+  starlaceGlow:  { default: 0.62,  min: 0,   max: 1,    step: 0.01, label: 'starlace glow' },
 } as const;
 
 export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
@@ -33,6 +36,8 @@ export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
 const SCALE_NOTES_LOCAL: string[] = ['D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5'];
 const SCALE_NOTES_REMOTE: string[] = SCALE_NOTES_LOCAL.map(transposeOctaveDown);
 const DUET_NOTES: string[] = ['D2', 'A2', 'D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'A4', 'D5', 'E5'];
+const ORB_GESTURE_NOTES: string[] = ['D2', 'A2', 'D3', 'F3', 'G3', 'A3', 'C4', 'D4', 'F4', 'G4', 'A4', 'C5', 'D5'];
+const STARLACE_NOTES: string[] = ['D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5', 'F#5', 'A5'];
 
 const PRESENCE_THRESHOLD = 0.5;
 const PARAM_RAMP = 0.08;
@@ -46,6 +51,8 @@ const CHIME_MAX_HITS_PER_WINDOW = 6;
 const CHIME_MAX_ACTIVE_VOICES = 12;
 const ORB_MAX_HITS_PER_WINDOW = 5;
 const ORB_MAX_ACTIVE_VOICES = 8;
+const STARLACE_MAX_HITS_PER_WINDOW = 8;
+const STARLACE_MAX_ACTIVE_VOICES = 14;
 
 type PlayerKey = 'local' | 'remote';
 const PLAYER_KEYS: PlayerKey[] = ['local', 'remote'];
@@ -108,6 +115,12 @@ type OrbVoice = {
   // characteristic ringing top end.
   fund: any;        // Tone.PolySynth(Tone.FMSynth) — fundamental + octave
   fifth: any;       // Tone.PolySynth(Tone.Synth) — compound fifth partial (1.5x octave)
+  auraSynth: any;   // held molten core voice
+  subSynth: any;    // deep center pressure
+  shimmerSynth: any;// fast-motion glass layer
+  auraGain: any;
+  subGain: any;
+  shimmerGain: any;
   filter: any;      // gentle lowpass — keeps the metal warm, not glassy
   panner: any;
   dryGain: any;
@@ -116,6 +129,34 @@ type OrbVoice = {
   reverbReturn: any;
   pulse: number;
   energy: number;
+  pitch: number;
+  expression: number;
+  tension: number;
+  gestureActive: boolean;
+  gestureNote: string;
+  lastSparkAt: number;
+  lastHitCount: number;
+  lastNoteIdx: number;
+};
+
+type StarlaceVoice = {
+  pluck: any;       // Tone.PolySynth(Tone.FMSynth) — luminous string plucks
+  glint: any;       // high octave spark on fast swipes
+  auraSynth: any;   // sustained pad that blooms from repeated star hits
+  auraGain: any;
+  filter: any;
+  panner: any;
+  dryGain: any;
+  wetSend: any;
+  reverb: any;
+  reverbReturn: any;
+  pulse: number;
+  energy: number;
+  pitch: number;
+  expression: number;
+  tension: number;
+  auraActive: boolean;
+  auraNote: string;
   lastHitCount: number;
   lastNoteIdx: number;
 };
@@ -128,6 +169,7 @@ export class HandSynthEngine {
   private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
   private chimeVoices: Record<PlayerKey, ChimeVoice | null> = { local: null, remote: null };
   private orbVoices: Record<PlayerKey, OrbVoice | null> = { local: null, remote: null };
+  private starlaceVoices: Record<PlayerKey, StarlaceVoice | null> = { local: null, remote: null };
   private chimeBudgets: Record<PlayerKey, HitBudget> = {
     local: { windowStart: 0, used: 0, dropped: 0 },
     remote: { windowStart: 0, used: 0, dropped: 0 },
@@ -135,6 +177,14 @@ export class HandSynthEngine {
   private orbBudgets: Record<PlayerKey, HitBudget> = {
     local: { windowStart: 0, used: 0, dropped: 0 },
     remote: { windowStart: 0, used: 0, dropped: 0 },
+  };
+  private starlaceBudgets: Record<PlayerKey, HitBudget> = {
+    local: { windowStart: 0, used: 0, dropped: 0 },
+    remote: { windowStart: 0, used: 0, dropped: 0 },
+  };
+  private orbGestures: Record<PlayerKey, OrbGestureState> = {
+    local: inactiveOrbGesture(),
+    remote: inactiveOrbGesture(),
   };
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'loom', remote: 'loom' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
@@ -170,6 +220,9 @@ export class HandSynthEngine {
     orbDb: HAND_SYNTH_DEFS.orbDb.default,
     orbDecay: HAND_SYNTH_DEFS.orbDecay.default,
     orbHarmonics: HAND_SYNTH_DEFS.orbHarmonics.default,
+    starlaceDb: HAND_SYNTH_DEFS.starlaceDb.default,
+    starlaceDecay: HAND_SYNTH_DEFS.starlaceDecay.default,
+    starlaceGlow: HAND_SYNTH_DEFS.starlaceGlow.default,
   };
 
   private registered?: ReturnType<typeof registerTweaks<typeof HAND_SYNTH_DEFS>>;
@@ -185,7 +238,7 @@ export class HandSynthEngine {
   getProfileLabel(player: PlayerKey): string {
     const id = this.pendingInstruments[player];
     if (id === 'chime') return 'Wind Chime';
-    if (id === 'orbs') return 'Hang Orbs';
+    if (id === 'orbs') return 'Ripple Orb';
     return 'Aurora Loom';
   }
 
@@ -218,11 +271,11 @@ export class HandSynthEngine {
         active: o.energy > 0.02,
         energy: o.energy,
         pulse: o.pulse,
-        pitch: 0.5,
-        expression: 0.5,
-        tension: clamp(o.energy * 1.2, 0, 1),
+        pitch: o.pitch,
+        expression: o.expression,
+        tension: o.tension,
         noteIndex: o.lastNoteIdx,
-        noteCount: 7,
+        noteCount: ORB_GESTURE_NOTES.length,
       };
     }
     const v = this.voices[player];
@@ -506,6 +559,20 @@ export class HandSynthEngine {
     const chime = this.chimeVoices[player];
     if (!chime) return;
     chime.warmth = clamp(warmth, 0, 1);
+  }
+
+  setOrbGesture(player: PlayerKey, gesture: OrbGestureState): void {
+    this.orbGestures[player] = {
+      active: gesture.active,
+      x: clamp(gesture.x, -1, 1),
+      y: clamp(gesture.y, -1, 1),
+      z: clamp(gesture.z, -1, 1),
+      depth: clamp(gesture.depth, 0, 1),
+      radius: clamp(gesture.radius, 0, 1),
+      speed: clamp(gesture.speed, 0, 1),
+      angle: Number.isFinite(gesture.angle) ? gesture.angle : 0,
+      intensity: clamp(gesture.intensity, 0, 1),
+    };
   }
 
   /** Called by the OrbDrums visual when an orb is struck. Rings the
@@ -823,9 +890,40 @@ export class HandSynthEngine {
     }).connect(filter);
     fifth.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
 
+    const auraGain = new Tone.Gain(0).connect(filter);
+    const subGain = new Tone.Gain(0).connect(filter);
+    const shimmerGain = new Tone.Gain(0).connect(filter);
+
+    const auraSynth = new Tone.Synth({
+      oscillator: { type: 'fatsine4', count: 4, spread: 22 } as any,
+      envelope: { attack: 0.18, decay: 0.34, sustain: 0.82, release: 1.45 },
+      portamento: 0.075,
+      volume: this.params.orbDb - 8,
+    }).connect(auraGain);
+
+    const subSynth = new Tone.Synth({
+      oscillator: { type: 'sine' },
+      envelope: { attack: 0.30, decay: 0.28, sustain: 0.74, release: 1.8 },
+      portamento: 0.12,
+      volume: this.params.orbDb - 12,
+    }).connect(subGain);
+
+    const shimmerSynth = new Tone.Synth({
+      oscillator: { type: 'triangle8' } as any,
+      envelope: { attack: 0.055, decay: 0.22, sustain: 0.42, release: 0.85 },
+      portamento: 0.045,
+      volume: this.params.orbDb - 18,
+    }).connect(shimmerGain);
+
     return {
       fund,
       fifth,
+      auraSynth,
+      subSynth,
+      shimmerSynth,
+      auraGain,
+      subGain,
+      shimmerGain,
       filter,
       panner,
       dryGain,
@@ -834,6 +932,12 @@ export class HandSynthEngine {
       reverbReturn,
       pulse: 0,
       energy: 0,
+      pitch: 0.5,
+      expression: 0.5,
+      tension: 0.35,
+      gestureActive: false,
+      gestureNote: '',
+      lastSparkAt: -Infinity,
       lastHitCount: 0,
       lastNoteIdx: -1,
     };
@@ -847,18 +951,99 @@ export class HandSynthEngine {
       return;
     }
 
+    const gesture = this.orbGestures[player];
+    const gestureActive = gesture.active && this.pendingInstruments[player] === 'orbs';
+    if (gestureActive) {
+      const angleN = (gesture.angle + Math.PI) / (Math.PI * 2);
+      const heightN = clamp(gesture.y * 0.5 + 0.5, 0, 1);
+      const speed = clamp(gesture.speed, 0, 1);
+      const depth = clamp(gesture.depth, 0, 1);
+      const radial = clamp(gesture.radius, 0, 1);
+      const pitchT = clamp(heightN * 0.42 + angleN * 0.24 + depth * 0.24 + speed * 0.10, 0, 1);
+      const noteIndex = pickNoteIndex(pitchT, orb.lastNoteIdx, ORB_GESTURE_NOTES.length);
+      const note = ORB_GESTURE_NOTES[noteIndex];
+      const subNote = transposeInterval(note, -12);
+      const shimmerNote = transposeInterval(note, speed > 0.62 ? 19 : 12);
+
+      if (!orb.gestureActive) {
+        try {
+          orb.auraSynth.triggerAttack(note);
+          orb.subSynth.triggerAttack(subNote);
+          orb.shimmerSynth.triggerAttack(shimmerNote);
+        } catch (err) {
+          console.warn('[handSynth] orb gesture attack failed', err);
+        }
+        orb.gestureActive = true;
+      } else if (note !== orb.gestureNote) {
+        try {
+          orb.auraSynth.setNote(note);
+          orb.subSynth.setNote(subNote);
+          orb.shimmerSynth.setNote(shimmerNote);
+        } catch (err) {
+          console.warn('[handSynth] orb gesture retune failed', err);
+        }
+      } else {
+        try {
+          orb.auraSynth.setNote(note);
+          orb.subSynth.setNote(subNote);
+          orb.shimmerSynth.setNote(shimmerNote);
+        } catch { /* best-effort continuous retune */ }
+      }
+
+      const fineBend = gesture.x * 18 + gesture.z * 9 + speed * 16;
+      try {
+        orb.auraSynth.detune?.rampTo?.(fineBend, PARAM_RAMP);
+        orb.subSynth.detune?.rampTo?.(fineBend * 0.35, PARAM_RAMP * 1.5);
+        orb.shimmerSynth.detune?.rampTo?.(fineBend * 1.8, PARAM_RAMP);
+      } catch { /* detune is optional on Tone nodes */ }
+
+      const aura = clamp(0.06 + depth * 0.38 + speed * 0.20 + gesture.intensity * 0.12, 0, 0.72);
+      const sub = clamp(depth * depth * 0.40 + (1 - radial) * 0.12, 0, 0.50);
+      const shimmer = clamp(speed * 0.36 + Math.max(0, gesture.y) * 0.10, 0, 0.46);
+      orb.auraGain.gain.rampTo(aura, PARAM_RAMP);
+      orb.subGain.gain.rampTo(sub, PARAM_RAMP * 1.4);
+      orb.shimmerGain.gain.rampTo(shimmer, PARAM_RAMP);
+
+      const filterHz = 420 + depth * 1800 + speed * 5600 + heightN * 1200;
+      orb.filter.frequency.rampTo(clamp(filterHz, 240, 9200), PARAM_RAMP);
+      orb.filter.Q.rampTo(0.45 + depth * 1.1 + speed * 3.2, PARAM_RAMP);
+      orb.panner.pan.rampTo(clamp((player === 'local' ? -0.10 : 0.10) + gesture.x * 0.36, -0.85, 0.85), PARAM_RAMP);
+
+      const sparkGap = 0.16 - speed * 0.085;
+      if (speed > 0.58 && this.elapsed - orb.lastSparkAt > sparkGap) {
+        try {
+          const sparkVel = clamp(0.18 + speed * 0.72 + depth * 0.12, 0, 1);
+          orb.fifth.triggerAttackRelease(shimmerNote, '16n', undefined, sparkVel * 0.42);
+        } catch { /* spark is ornamental */ }
+        orb.lastSparkAt = this.elapsed;
+        orb.pulse = Math.max(orb.pulse, clamp(0.35 + speed * 0.5, 0, 1));
+      }
+
+      orb.gestureNote = note;
+      orb.lastNoteIdx = noteIndex;
+      orb.pitch += (pitchT - orb.pitch) * (1 - Math.exp(-delta * 10));
+      orb.expression += (depth - orb.expression) * (1 - Math.exp(-delta * 8));
+      orb.tension += (speed - orb.tension) * (1 - Math.exp(-delta * 9));
+      const targetEnergy = clamp(0.12 + depth * 0.42 + speed * 0.46 + gesture.intensity * 0.20, 0, 1);
+      orb.energy += (targetEnergy - orb.energy) * (1 - Math.exp(-delta * 7));
+      orb.pulse = Math.max(0, orb.pulse - delta * 2.2);
+    } else {
+      this.releaseOrbGesture(orb, false);
+      orb.energy += (0 - orb.energy) * (1 - Math.exp(-delta * 3.6));
+      orb.tension += (0.35 - orb.tension) * (1 - Math.exp(-delta * 4));
+      orb.pulse = Math.max(0, orb.pulse - delta * 3.0);
+    }
+
     // Wet send rises with energy — more reverb tail when actively playing.
-    const wet = clamp(0.22 + orb.energy * 0.55, 0, 1);
+    const wet = clamp(0.24 + orb.energy * 0.58 + (gestureActive ? gesture.depth * 0.16 : 0), 0, 1);
     orb.wetSend.gain.rampTo(wet * this.params.reverbWetMax, PARAM_RAMP * 2);
     orb.dryGain.gain.rampTo(0.95, PARAM_RAMP);
-
-    orb.pulse = Math.max(0, orb.pulse - delta * 3.0);
-    orb.energy = Math.max(0, orb.energy - delta * 0.45);
   }
 
   private silenceOrb(player: PlayerKey): void {
     const orb = this.orbVoices[player];
     if (!orb) return;
+    this.releaseOrbGesture(orb, true);
     try { orb.fund.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     try { orb.fifth.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     this.setGainNow(orb.dryGain, 0);
@@ -867,11 +1052,45 @@ export class HandSynthEngine {
     orb.energy = 0;
   }
 
+  private releaseOrbGesture(orb: OrbVoice, immediate: boolean): void {
+    if (!orb.gestureActive && !immediate) {
+      orb.auraGain.gain.rampTo(0, PARAM_RAMP * 2);
+      orb.subGain.gain.rampTo(0, PARAM_RAMP * 2);
+      orb.shimmerGain.gain.rampTo(0, PARAM_RAMP * 2);
+      return;
+    }
+    try {
+      orb.auraSynth.triggerRelease?.(this.tone?.now?.());
+      orb.subSynth.triggerRelease?.(this.tone?.now?.());
+      orb.shimmerSynth.triggerRelease?.(this.tone?.now?.());
+    } catch (err) {
+      console.warn('[handSynth] orb gesture release failed', err);
+    }
+    if (immediate) {
+      this.setGainNow(orb.auraGain, 0);
+      this.setGainNow(orb.subGain, 0);
+      this.setGainNow(orb.shimmerGain, 0);
+    } else {
+      orb.auraGain.gain.rampTo(0, PARAM_RAMP * 2);
+      orb.subGain.gain.rampTo(0, PARAM_RAMP * 2);
+      orb.shimmerGain.gain.rampTo(0, PARAM_RAMP * 2);
+    }
+    orb.gestureActive = false;
+    orb.gestureNote = '';
+  }
+
   private disposeOrbVoice(orb: OrbVoice): void {
+    this.releaseOrbGesture(orb, true);
     try { orb.fund?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     try { orb.fifth?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     orb.fund?.dispose?.();
     orb.fifth?.dispose?.();
+    orb.auraSynth?.dispose?.();
+    orb.subSynth?.dispose?.();
+    orb.shimmerSynth?.dispose?.();
+    orb.auraGain?.dispose?.();
+    orb.subGain?.dispose?.();
+    orb.shimmerGain?.dispose?.();
     orb.filter?.dispose?.();
     orb.panner?.dispose?.();
     orb.dryGain?.dispose?.();
@@ -1175,8 +1394,25 @@ export class HandSynthEngine {
       const o = this.orbVoices[key];
       if (o?.fund?.volume) o.fund.volume.rampTo(this.params.orbDb, PARAM_RAMP);
       if (o?.fifth?.volume) o.fifth.volume.rampTo(this.params.orbDb - 14, PARAM_RAMP);
+      if (o?.auraSynth?.volume) o.auraSynth.volume.rampTo(this.params.orbDb - 8, PARAM_RAMP);
+      if (o?.subSynth?.volume) o.subSynth.volume.rampTo(this.params.orbDb - 12, PARAM_RAMP);
+      if (o?.shimmerSynth?.volume) o.shimmerSynth.volume.rampTo(this.params.orbDb - 18, PARAM_RAMP);
     }
   }
+}
+
+function inactiveOrbGesture(): OrbGestureState {
+  return {
+    active: false,
+    x: 0,
+    y: 0,
+    z: 0,
+    depth: 0,
+    radius: 0,
+    speed: 0,
+    angle: 0,
+    intensity: 0,
+  };
 }
 
 function handCoords(hand: HandPose): Coords {

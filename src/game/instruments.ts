@@ -1,9 +1,9 @@
 import type * as THREE from 'three/webgpu';
 import type { FingerJointName, FingerName, Handedness } from './types';
 
-export type InstrumentId = 'loom' | 'chime' | 'orbs';
+export type InstrumentId = 'loom' | 'chime' | 'orbs' | 'starlace';
 
-export const INSTRUMENT_IDS: readonly InstrumentId[] = ['loom', 'chime', 'orbs'];
+export const INSTRUMENT_IDS: readonly InstrumentId[] = ['loom', 'chime', 'orbs', 'starlace'];
 
 export type VoiceState = {
   /** True between attack and release for at least one held note. */
@@ -98,10 +98,17 @@ export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
     color: '#9be7ff',
     iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.2"/><circle cx="12" cy="12" r="3.2" opacity="0.7"/><path d="M4.8 12c3.4-2.3 10.1-2.3 14.4 0"/><path d="M4.8 12c3.4 2.3 10.1 2.3 14.4 0"/><circle cx="14.2" cy="9.2" r="1.1" fill="currentColor" stroke="none"/></svg>`,
   },
+  starlace: {
+    id: 'starlace',
+    label: 'Starlace Harp',
+    subtitle: 'swipe · stars · glissando',
+    color: '#ff8cf0',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7.5 10 4l5.6 2.7 3.9 4.8-2.2 5.6-6 2.9-5.8-2.4-2-5.4 1-4.7Z"/><path d="M4.5 7.5 11.3 20M10 4l1.3 16M15.6 6.7l-10.1 10.9M19.5 11.5 5.5 17.6M4.5 7.5l15 4M10 4l7.3 13.1"/><circle cx="4.5" cy="7.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="10" cy="4" r="1.15" fill="currentColor" stroke="none"/><circle cx="15.6" cy="6.7" r="1.15" fill="currentColor" stroke="none"/><circle cx="19.5" cy="11.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="17.3" cy="17.1" r="1.15" fill="currentColor" stroke="none"/><circle cx="11.3" cy="20" r="1.15" fill="currentColor" stroke="none"/><circle cx="5.5" cy="17.6" r="1.15" fill="currentColor" stroke="none"/></svg>`,
+  },
 };
 
 export function isInstrumentId(value: string): value is InstrumentId {
-  return value === 'loom' || value === 'chime' || value === 'orbs';
+  return value === 'loom' || value === 'chime' || value === 'orbs' || value === 'starlace';
 }
 
 /**

@@ -120,7 +120,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: 92px;
+  top: 42px;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -134,7 +134,7 @@
 }
 .begin-display {
   font-family: 'IM Fell English', serif;
-  font-size: 150px;
+  font-size: 140px;
   line-height: 0.92;
   color: var(--sun);
   letter-spacing: 0.01em;

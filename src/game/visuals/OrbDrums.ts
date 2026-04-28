@@ -63,6 +63,7 @@ type OrbDrumsOptions = {
   onGesture?: (gesture: OrbGestureState) => void;
   camera?: THREE.Camera;
   canvas?: HTMLCanvasElement;
+  anchor?: THREE.Vector3;
 };
 
 // One playable orb. Pitch/color fields are carved out of the sphere instead of
@@ -198,6 +199,7 @@ export class OrbDrums implements PlayerVisual {
   private registered?: ReturnType<typeof registerTweaks<typeof ORB_DRUMS_DEFS>>;
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
+  private fixedAnchor?: THREE.Vector3;
 
   constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'orbDrums', opts: OrbDrumsOptions = {}) {
     this.params = { ...Object.fromEntries(Object.entries(ORB_DRUMS_DEFS).map(([k, d]) => [k, d.default])) } as OrbDrumsParams;
@@ -206,6 +208,7 @@ export class OrbDrums implements PlayerVisual {
     this.onGestureCallback = opts.onGesture;
     this.camera = opts.camera;
     this.canvas = opts.canvas;
+    this.fixedAnchor = opts.anchor?.clone();
 
     this.mesh = new THREE.Group();
     this.mesh.name = `orb-drums-${opts.palette ?? 'local'}`;
@@ -250,7 +253,7 @@ export class OrbDrums implements PlayerVisual {
     }
 
     this.registered = registerTweaks(paneDock, paneKey, ORB_DRUMS_DEFS, {
-      title: opts.title ?? 'Hang Orbs',
+      title: opts.title ?? 'Ripple Orb',
       params: this.params,
       onChange: {
         baseColor:    () => this.uniforms.baseColor.value.set(this.params.baseColor),
@@ -291,8 +294,12 @@ export class OrbDrums implements PlayerVisual {
     this.elapsed += delta;
 
     if (!this.initialized) {
-      this.anchor.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
-      this.anchor.z -= 0.06;
+      if (this.fixedAnchor) {
+        this.anchor.copy(this.fixedAnchor);
+      } else {
+        this.anchor.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
+        this.anchor.z -= 0.06;
+      }
       this.initialized = true;
       this.placeGroup();
     }
@@ -300,7 +307,9 @@ export class OrbDrums implements PlayerVisual {
     // Anchor follows hand cloud center with strong smoothing. While the mouse
     // is actively inside the orb, freeze the anchor so the instrument does not
     // run away from the pointer.
-    if (!this.pointerInside && !this.pointerDown) {
+    if (this.fixedAnchor) {
+      this.anchor.copy(this.fixedAnchor);
+    } else if (!this.pointerInside && !this.pointerDown) {
       _palmTmp.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
       _palmTmp.z -= 0.06;
       const alpha = 1 - Math.exp(-delta / Math.max(0.05, this.params.anchorSmoothing));
@@ -357,6 +366,156 @@ export class OrbDrums implements PlayerVisual {
       this.orbs[i].offset.copy(offsets[i]);
       this.orbs[i].uniforms.offset.value.copy(offsets[i]);
     }
+  }
+
+  private attachPointerEvents(canvas: HTMLCanvasElement): void {
+    const updatePointer = (event: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = (event.clientY - rect.top) / rect.height;
+      this.pointerNdc.set(x * 2 - 1, -(y * 2 - 1));
+      this.pointerLastAtMs = performance.now();
+    };
+
+    this.pointerMoveListener = event => updatePointer(event);
+    this.pointerDownListener = event => {
+      updatePointer(event);
+      this.pointerDown = true;
+      this.lastPointerRippleAt = -Infinity;
+    };
+    this.pointerUpListener = () => {
+      this.pointerDown = false;
+    };
+    this.pointerLeaveListener = () => {
+      this.pointerDown = false;
+      this.pointerInside = false;
+      this.pointerPrevValid = false;
+      this.pointerLastAtMs = -Infinity;
+    };
+
+    canvas.addEventListener('pointermove', this.pointerMoveListener);
+    canvas.addEventListener('pointerdown', this.pointerDownListener);
+    window.addEventListener('pointerup', this.pointerUpListener);
+    canvas.addEventListener('pointerleave', this.pointerLeaveListener);
+  }
+
+  private detachPointerEvents(): void {
+    if (!this.canvas) return;
+    if (this.pointerMoveListener) this.canvas.removeEventListener('pointermove', this.pointerMoveListener);
+    if (this.pointerDownListener) this.canvas.removeEventListener('pointerdown', this.pointerDownListener);
+    if (this.pointerUpListener) window.removeEventListener('pointerup', this.pointerUpListener);
+    if (this.pointerLeaveListener) this.canvas.removeEventListener('pointerleave', this.pointerLeaveListener);
+    this.pointerMoveListener = undefined;
+    this.pointerDownListener = undefined;
+    this.pointerUpListener = undefined;
+    this.pointerLeaveListener = undefined;
+  }
+
+  private updatePointerGesture(delta: number): void {
+    const orb = this.orbs[0];
+    const camera = this.camera;
+    if (!orb || !camera || !this.canvas) {
+      this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
+      return;
+    }
+
+    const recent = (performance.now() - this.pointerLastAtMs) / 1000 < 0.42 || this.pointerDown;
+    if (!recent) {
+      this.pointerInside = false;
+      this.pointerPrevValid = false;
+      this.pointerGlow += (0 - this.pointerGlow) * (1 - Math.exp(-delta * 8));
+      this.uniforms.gesture.value.w = this.pointerGlow;
+      this.uniforms.gestureDepth.value += (0 - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 8));
+      this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
+      return;
+    }
+
+    _sphereCenter.copy(this.mesh.position).add(orb.mesh.position);
+    _raycaster.setFromCamera(this.pointerNdc, camera);
+    const ray = _raycaster.ray;
+    const radius = this.params.orbRadius;
+    const distSq = ray.distanceSqToPoint(_sphereCenter);
+    const inside = distSq <= radius * radius;
+
+    if (!inside) {
+      this.pointerInside = false;
+      this.pointerPrevValid = false;
+      this.pointerGlow += (0 - this.pointerGlow) * (1 - Math.exp(-delta * 8));
+      this.uniforms.gesture.value.w = this.pointerGlow;
+      this.uniforms.gestureDepth.value += (0 - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 8));
+      this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
+      return;
+    }
+
+    ray.closestPointToPoint(_sphereCenter, _rayClosest);
+    const chordHalf = Math.sqrt(Math.max(0, radius * radius - distSq));
+    const screenDepth = clamp(1 - Math.sqrt(distSq) / Math.max(radius, 1e-4), 0, 1);
+    const chordT = clamp(0.18 + screenDepth * 0.64 + (this.pointerDown ? 0.14 : 0), 0.08, 0.94);
+    _rayFront.copy(_rayClosest).addScaledVector(ray.direction, -chordHalf);
+    _rayBack.copy(_rayClosest).addScaledVector(ray.direction, chordHalf);
+    _pointerWorld.copy(_rayFront).lerp(_rayBack, chordT);
+    _pointerLocal.copy(_pointerWorld).sub(this.mesh.position);
+
+    let speedUnits = 0;
+    if (this.pointerPrevValid && delta > 0) {
+      speedUnits = _pointerLocal.distanceTo(_pointerPrev) / Math.max(radius, 1e-4) / delta;
+    }
+    _pointerPrev.copy(_pointerLocal);
+    this.pointerPrevValid = true;
+
+    const radial = clamp(_pointerLocal.length() / Math.max(radius, 1e-4), 0, 1);
+    const depth = clamp(1 - radial, 0, 1);
+    const speed = clamp(speedUnits / 7.5, 0, 1);
+    const intensity = clamp(0.18 + speed * 0.52 + depth * 0.42 + (this.pointerDown ? 0.20 : 0), 0, 1);
+    this.pointerGlow += (intensity - this.pointerGlow) * (1 - Math.exp(-delta * 12));
+    this.uniforms.gesture.value.set(_pointerLocal.x, _pointerLocal.y, _pointerLocal.z, this.pointerGlow);
+    this.uniforms.gestureDepth.value += (depth - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 10));
+
+    const newlyEntered = !this.pointerInside;
+    const shouldRipple = newlyEntered
+      || ((this.pointerDown || speed > 0.055) && this.elapsed - this.lastPointerRippleAt > 0.052);
+    if (shouldRipple) {
+      this.addRippleAt(_pointerLocal, clamp(intensity, 0.18, 1));
+      orb.hitPulse = Math.min(1, orb.hitPulse + 0.14 + intensity * 0.26);
+      this.lastPointerRippleAt = this.elapsed;
+    }
+
+    this.pointerInside = true;
+    this.emitGesture(true, _pointerLocal, depth, radial, speed);
+  }
+
+  private emitGesture(active: boolean, localPoint: THREE.Vector3, depth: number, radius: number, speed: number): void {
+    if (!this.onGestureCallback) return;
+    const invRadius = 1 / Math.max(this.params.orbRadius, 1e-4);
+    this.onGestureCallback({
+      active,
+      x: clamp(localPoint.x * invRadius, -1, 1),
+      y: clamp(localPoint.y * invRadius, -1, 1),
+      z: clamp(localPoint.z * invRadius, -1, 1),
+      depth: clamp(depth, 0, 1),
+      radius: clamp(radius, 0, 1),
+      speed: clamp(speed, 0, 1),
+      angle: Math.atan2(localPoint.z, localPoint.x),
+      intensity: active ? clamp(0.18 + depth * 0.42 + speed * 0.58, 0, 1) : 0,
+    });
+  }
+
+  private addRippleAt(localPoint: THREE.Vector3, intensity: number): void {
+    const slot = this.rippleCursor % MAX_RIPPLES;
+    this.rippleSources[slot].set(localPoint.x, localPoint.y, localPoint.z, clamp(intensity, 0.05, 1));
+    this.rippleStarts[slot] = this.elapsed;
+    this.rippleCursor = (this.rippleCursor + 1) % MAX_RIPPLES;
+  }
+
+  private noteIndexForPoint(localPoint: THREE.Vector3): number {
+    const radius = Math.max(this.params.orbRadius, 1e-4);
+    const y = clamp(localPoint.y / radius * 0.5 + 0.5, 0, 1);
+    const radial = clamp(localPoint.length() / radius, 0, 1);
+    const depth = 1 - radial;
+    const angle = (Math.atan2(localPoint.z, localPoint.x) + Math.PI) / (Math.PI * 2);
+    const t = clamp(y * 0.46 + angle * 0.34 + depth * 0.20, 0, 1);
+    return clamp(Math.round(t * (ORB_HZ.length - 1)), 0, ORB_HZ.length - 1);
   }
 
   private resolveContacts(
@@ -568,6 +727,22 @@ export class OrbDrums implements PlayerVisual {
       // Fresnel rim — bright cyan halo at the silhouette.
       const rim = pow(fres, float(2.2)).mul(0.85);
       lit.addAssign(u.rimColor.mul(rim));
+      const restGlow = cos(positionLocal.y.mul(6.5).add(positionLocal.x.mul(2.2)).add(perOrb.elapsed.mul(0.65)))
+        .mul(0.5).add(0.5);
+      lit.addAssign(u.rimColor.mul(float(0.08).add(restGlow.mul(0.045))));
+
+      const gestureDelta = samplePos.sub(u.gesture.xyz);
+      const gestureDist = gestureDelta.length().div(u.orbRadius.max(0.001));
+      const gestureAura = float(1).sub(smoothstep(float(0.18), float(1.15), gestureDist))
+        .mul(u.gesture.w)
+        .mul(float(0.52).add(u.gestureDepth.mul(0.72)));
+      const gestureFilament = sin(gestureDist.mul(28).sub(perOrb.elapsed.mul(5.2)))
+        .mul(0.5).add(0.5)
+        .mul(float(1).sub(smoothstep(float(0.05), float(1.25), gestureDist)))
+        .mul(u.gesture.w)
+        .mul(float(0.18).add(u.gestureDepth.mul(0.36)));
+      lit.addAssign(u.rimColor.mul(gestureAura.mul(0.50).add(gestureFilament.mul(0.32))));
+      lit.addAssign(u.hotColor.mul(gestureAura.mul(0.38).add(gestureFilament.mul(0.54))));
 
       const waveEnergy = h.abs().clamp(0, 1.4);
       const crest = smoothstep(float(0.08), float(0.54), h);
@@ -607,7 +782,7 @@ function applyPaletteDefaults(params: OrbDrumsParams, palette: OrbDrumsPalette):
     return;
   }
   // local — cool blue steel drum
-  params.baseColor = '#1d3247';
-  params.rimColor = '#7ad9ff';
-  params.hotColor = '#fff8d6';
+  params.baseColor = '#102947';
+  params.rimColor = '#75f0ff';
+  params.hotColor = '#fff4ca';
 }

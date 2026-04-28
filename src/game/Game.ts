@@ -12,6 +12,7 @@ import { LinkParticles } from './particles';
 import { HarmonicLoom } from './visuals/HarmonicLoom';
 import { WindChime } from './visuals/WindChime';
 import { OrbDrums } from './visuals/OrbDrums';
+import { StarlaceHarp } from './visuals/StarlaceHarp';
 import { CenterStage } from './CenterStage';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId } from './instruments';
@@ -36,13 +37,8 @@ const SHADOWS_DEFS = {
   blurSamples:{ default: 16,      min: 1,      max: 32,    step: 1,      label: 'blur samples' },
 } as const;
 
-const CAMERA_DOLLY_DEFS = {
-  fovWide:          { default: 62,   min: 30,  max: 90,  step: 1,    label: 'fov wide' },
-  fovNarrow:        { default: 66,   min: 30,  max: 100, step: 1,    label: 'fov narrow' },
-  dollyBackMeters:  { default: 2.4,  min: 0,   max: 5,   step: 0.05, label: 'dolly back m' },
-  riseMeters:       { default: 0.18, min: 0,   max: 1,   step: 0.01, label: 'rise m' },
-  narrowAspect:     { default: 0.55, min: 0.3, max: 1.5, step: 0.01, label: 'narrow aspect' },
-  smoothingSeconds: { default: 0.45, min: 0,   max: 2,   step: 0.01, label: 'lag sec' },
+const CAMERA_DEFS = {
+  fov: { default: 62, min: 30, max: 90, step: 1, label: 'fov' },
 } as const;
 
 const PLAYERS_DEFS = {
@@ -101,18 +97,11 @@ export class Game {
   private camera = new THREE.PerspectiveCamera(55, 1, 0.05, 90);
   private orbitControls?: OrbitControls;
   private cameraMode: CameraMode = 'game';
-  private readonly gameCameraPosition = new THREE.Vector3(1.48, 1.34, 0.56);
-  private readonly gameCameraTarget = new THREE.Vector3(-0.18, 1.06, 0);
-  // Anchor pose for the design aspect (1920×1014). The dolly system pulls
-  // the camera back along the view direction from this anchor as the
-  // viewport narrows.
-  private readonly designCameraPos = new THREE.Vector3(1.66, 1.34, 0.02);
-  private readonly designCameraTarget = new THREE.Vector3(-0.12, 1.06, 0);
-  private readonly _backDir = new THREE.Vector3();
+  private readonly gameCameraPosition = new THREE.Vector3(1.66, 1.34, 0.02);
+  private readonly gameCameraTarget = new THREE.Vector3(-0.12, 1.06, 0);
   private readonly _cabinPlateForward = new THREE.Vector3();
-  private readonly cameraDolly = makeParams(CAMERA_DOLLY_DEFS);
-  private dollyT = 0;
-  private cameraTweaks?: ReturnType<typeof registerTweaks<typeof CAMERA_DOLLY_DEFS>>;
+  private readonly cameraParams = makeParams(CAMERA_DEFS);
+  private cameraTweaks?: ReturnType<typeof registerTweaks<typeof CAMERA_DEFS>>;
   private readonly sculptureTarget = new THREE.Vector3(0, 1.08, 0);
   private startedAt = performance.now();
   private lastFrameAt = this.startedAt;
@@ -435,9 +424,6 @@ export class Game {
   }
 
   private setupCamera(): void {
-    // Snap to the aspect-derived target so the first frame doesn't animate
-    // in from the wide pose.
-    this.dollyT = this.computeDollyTarget();
     this.lockGameCamera();
     this.setupCameraPane();
   }
@@ -454,33 +440,8 @@ export class Game {
     this.orbitControls.target.copy(this.sculptureTarget);
   }
 
-  private computeDollyTarget(): number {
-    // 0 at the design aspect (or wider); 1 at the configured narrow aspect.
-    const ref = 1920 / 1014;
-    const span = Math.max(0.0001, ref - this.cameraDolly.narrowAspect);
-    return THREE.MathUtils.clamp((ref - this.camera.aspect) / span, 0, 1);
-  }
-
-  private updateCameraDolly(delta: number): void {
-    // Exponential smoothing toward the aspect-derived target so a window
-    // resize feels like a graceful dolly rather than a snap.
-    const target = this.computeDollyTarget();
-    const tau = this.cameraDolly.smoothingSeconds;
-    const alpha = tau <= 0 ? 1 : 1 - Math.exp(-delta / tau);
-    this.dollyT += (target - this.dollyT) * alpha;
-    this.lockGameCamera();
-  }
-
   private lockGameCamera(): void {
-    const t = this.dollyT;
-    const p = this.cameraDolly;
-    this.camera.fov = THREE.MathUtils.lerp(p.fovWide, p.fovNarrow, t);
-    this._backDir.subVectors(this.designCameraPos, this.designCameraTarget).normalize();
-    this.gameCameraPosition
-      .copy(this.designCameraPos)
-      .addScaledVector(this._backDir, p.dollyBackMeters * t);
-    this.gameCameraPosition.y += p.riseMeters * t;
-    this.gameCameraTarget.copy(this.designCameraTarget);
+    this.camera.fov = this.cameraParams.fov;
     this.camera.position.copy(this.gameCameraPosition);
     this.camera.lookAt(this.gameCameraTarget);
     this.camera.updateProjectionMatrix();
@@ -509,9 +470,12 @@ export class Game {
 
   private setupCameraPane(): void {
     if (this.cameraTweaks) return;
-    this.cameraTweaks = registerTweaks(this.paneDock, 'cameraDolly', CAMERA_DOLLY_DEFS, {
-      title: 'Camera Dolly',
-      params: this.cameraDolly,
+    this.cameraTweaks = registerTweaks(this.paneDock, 'camera', CAMERA_DEFS, {
+      title: 'Camera',
+      params: this.cameraParams,
+      onChange: {
+        fov: () => this.lockGameCamera(),
+      },
     });
   }
 
@@ -825,12 +789,27 @@ export class Game {
     } else if (id === 'orbs') {
       const orbs = new OrbDrums(this.scene, this.paneDock, `orbs-${player}`, {
         palette: player,
-        title: `Hang Orbs (${player === 'local' ? 'Local' : 'Partner'})`,
+        title: `Ripple Orb (${player === 'local' ? 'Local' : 'Partner'})`,
+        camera: this.camera,
+        canvas: this.canvas,
+        anchor: player === 'local' ? this.sculptureTarget : undefined,
         onHit: hit => {
           this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
         },
+        onGesture: gesture => {
+          this.handSynth.setOrbGesture(player, gesture);
+        },
       });
       this.playerVisuals[player] = orbs;
+    } else if (id === 'starlace') {
+      const starlace = new StarlaceHarp(this.scene, this.paneDock, `starlace-${player}`, {
+        palette: player,
+        title: `Starlace Harp (${player === 'local' ? 'Local' : 'Partner'})`,
+        onPluck: pluck => {
+          this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
+        },
+      });
+      this.playerVisuals[player] = starlace;
     } else {
       this.playerVisuals[player] = new HarmonicLoom(this.scene, this.paneDock, `loom-${player}`, {
         palette: player,
@@ -919,7 +898,6 @@ export class Game {
     this.handSynth.update(localPose, remotePose, delta);
     this.updateMusicReactivity(delta);
     this.poseSession.sendLocalPose(localPose, elapsed);
-    if (this.cameraMode === 'game') this.updateCameraDolly(delta);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
   }
