@@ -1,6 +1,7 @@
 export type JamChordVoicing = {
   voices: [string, string, string];
   drone: string;
+  bass: string;
 };
 
 export const JAM_SCALE_NAME = 'D major pentatonic';
@@ -112,15 +113,15 @@ export const JAM_DRUM_HZ: number[] = [
 // D major pentatonic. That keeps player notes consonant even while the bass
 // moves, and avoids close C#/D or G/F# rubs against the playable scale.
 export const JAM_BACKING_NIGHT: JamChordVoicing[] = [
-  { voices: ['D4',  'F#4', 'A4'], drone: 'B2' },
-  { voices: ['D4',  'E4',  'B4'], drone: 'G2' },
-  { voices: ['D4',  'F#4', 'A4'], drone: 'D2' },
-  { voices: ['D4',  'E4',  'A4'], drone: 'A2' },
+  { voices: ['D4',  'F#4', 'A4'], drone: 'B2', bass: 'B1' },
+  { voices: ['D4',  'E4',  'B4'], drone: 'G2', bass: 'G1' },
+  { voices: ['D4',  'F#4', 'A4'], drone: 'D2', bass: 'D2' },
+  { voices: ['D4',  'E4',  'A4'], drone: 'A2', bass: 'A1' },
 ];
 
 export const JAM_BACKING_DAY: JamChordVoicing[] = [
-  { voices: ['F#4', 'A4',  'D5'], drone: 'B2' },
-  { voices: ['B3',  'D4',  'E4'], drone: 'G2' },
-  { voices: ['F#4', 'A4',  'B4'], drone: 'D2' },
-  { voices: ['E4',  'A4',  'D5'], drone: 'A2' },
+  { voices: ['F#4', 'A4',  'D5'], drone: 'B2', bass: 'B1' },
+  { voices: ['B3',  'D4',  'E4'], drone: 'G2', bass: 'G1' },
+  { voices: ['F#4', 'A4',  'B4'], drone: 'D2', bass: 'D2' },
+  { voices: ['E4',  'A4',  'D5'], drone: 'A2', bass: 'A1' },
 ];

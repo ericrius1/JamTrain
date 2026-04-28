@@ -3,6 +3,8 @@ import {
   Fn,
   If,
   Return,
+  atan,
+  cameraViewMatrix,
   float,
   instanceIndex,
   instancedArray,
@@ -11,6 +13,8 @@ import {
   uniform,
   uniformArray,
   uint,
+  uv,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl';
@@ -33,6 +37,7 @@ export const SCULPTOR_DEFS = {
   flowSpeed:            { default: 1.0,   min: 0.1,   max: 3,    step: 0.05, label: 'flow speed' },
   velocityBlend:        { default: 0.92,  min: 0.4,   max: 1,    step: 0.005, label: 'velocity smoothing' },
   speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
+  stretchScale:         { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
   containmentStrength:  { default: 6.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
   lifeSeconds:          { default: 28,    min: 4,    max: 120,  step: 0.5, label: 'life seconds' },
   fadeFraction:         { default: 0.25,  min: 0.05, max: 0.6,  step: 0.01, label: 'fade fraction' },
@@ -147,6 +152,7 @@ export class EnergySculptor implements EnergySink {
   private duetBoostUniform = uniform(0.45);
   private centerUniform = uniform(new THREE.Vector3());
   private speedGlowUniform = uniform(0.7);
+  private stretchScaleUniform = uniform(0.06);
   private particleSizeUniform = uniform(0.022);
   private particleOpacityUniform = uniform(0.85);
 
@@ -218,6 +224,7 @@ export class EnergySculptor implements EnergySink {
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
     this.duetBoostUniform.value = this.params.duetBoost;
     this.speedGlowUniform.value = this.params.speedGlow;
+    this.stretchScaleUniform.value = this.params.stretchScale;
 
     this.registered = registerTweaks(paneDock, 'energySculptor', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
@@ -235,6 +242,7 @@ export class EnergySculptor implements EnergySink {
         flowSpeed: v => { this.flowSpeedUniform.value = v; },
         velocityBlend: v => { this.velocityBlendUniform.value = v; },
         speedGlow: v => { this.speedGlowUniform.value = v; },
+        stretchScale: v => { this.stretchScaleUniform.value = v; },
         containmentStrength: v => { this.containmentStrengthUniform.value = v; },
         lifeSeconds: v => { this.lifeMaxUniform.value = v; },
         fadeFraction: v => { this.fadeFractionUniform.value = v; },
@@ -383,8 +391,8 @@ export class EnergySculptor implements EnergySink {
       positions.element(slot).assign(spawnPos);
       velocities.element(slot).assign(spawnVel);
       colors.element(slot).assign(spawnColor);
-      // age=0, lifeMax=spawnMeta.x, kind=spawnMeta.y, alpha=1
-      meta.element(slot).assign(vec4(0, spawnMeta.x, spawnMeta.y, 1));
+      // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
+      meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
     });
     this.emitCompute = emitFn().compute(MAX_SPAWNS_PER_FRAME);
 
@@ -398,6 +406,10 @@ export class EnergySculptor implements EnergySink {
       });
       const pos = positions.element(i).toVar();
       const vel = velocities.element(i).toVar();
+      // Capture pre-integration speed so we can derive a signed acceleration
+      // (positive when the particle is speeding up, negative when slowing).
+      // Used by the renderer to stretch / squish the sprite along travel.
+      const oldSpeed = vel.length().toVar();
 
       // Compute candidate flow from each attractor; select via uniform branch.
       const flow = vec3(0).toVar();
@@ -462,9 +474,15 @@ export class EnergySculptor implements EnergySink {
       const fadeOut = float(1).sub(smoothstep(fadeStart, 1.0, lifeT));
       const alphaLife = born.mul(fadeOut);
 
+      // Signed acceleration along the path, low-passed across frames so the
+      // visual stretch doesn't strobe on every integration tick.
+      const newSpeed = newVel.length();
+      const instantAccel = newSpeed.sub(oldSpeed).div(this.dtUniform.max(1e-4));
+      const smoothedAccel = mix(instantAccel, m.z, 0.7);
+
       positions.element(i).assign(newPos);
       velocities.element(i).assign(newVel);
-      meta.element(i).assign(vec4(newAge, lifeMax, m.z, alphaLife));
+      meta.element(i).assign(vec4(newAge, lifeMax, smoothedAccel, alphaLife));
     });
     this.integrateCompute = integrateFn().compute(this.count);
   }
@@ -481,25 +499,51 @@ export class EnergySculptor implements EnergySink {
     const localPos = this.positionsBuffer.toAttribute();
     material.positionNode = localPos.mul(this.worldScaleUniform).add(this.centerUniform);
 
-    // Sprite scale: base size * sqrt(alpha) so dying particles shrink. We
-    // apply a small bump for kind=starlace to give that stream a different
-    // feel from the drum stream within the same archetype.
     const m = this.metaBuffer.toAttribute();
     const alpha = m.w;
-    material.scaleNode = this.particleSizeUniform.mul(alpha.sqrt().add(0.15));
-
-    // Color: base color from emit, brightened by speed and slightly by music
-    // pulse. Final RGB is multiplied by alphaLife so dead particles are black
-    // (additive blending) and don't contribute.
-    const baseColor = this.colorsBuffer.toAttribute();
+    const accel = m.z;
     const vel = this.velocitiesBuffer.toAttribute();
     const speed = vel.length();
+
+    // Acceleration → directional stretch. Positive accel stretches the sprite
+    // along the velocity direction; negative accel squishes it (inverse on
+    // perpendicular). At rest the factor is 1.0 → perfect circle.
+    const stretchAmount = accel.mul(this.stretchScaleUniform).clamp(-0.55, 0.85);
+    // Mute stretch on near-stationary particles so freshly-spawned dots stay
+    // round instead of getting a random rotation from numerical jitter.
+    const speedRamp = speed.mul(2.0).clamp(0, 1);
+    const stretchFactor = float(1).add(stretchAmount.mul(speedRamp));
+    const stretchSafe = stretchFactor.max(0.45);
+
+    // Project world-space velocity into camera-view space so the sprite's
+    // X axis (after billboarding) can be aligned with the on-screen velocity
+    // direction. Length-zero velocities (just-spawned, frozen) fall back to
+    // angle 0 — the speedRamp gate above already disables their stretch.
+    const worldVel = vel.mul(this.worldScaleUniform);
+    const viewVel = cameraViewMatrix.mul(vec4(worldVel, 0));
+    const angle = atan(viewVel.y, viewVel.x);
+    material.rotationNode = angle;
+
+    // Sprite scale: base size * sqrt(alpha) so dying particles shrink, then
+    // stretch one axis and squish the other for the kinetic feel.
+    const sizeBase = this.particleSizeUniform.mul(alpha.sqrt().add(0.15));
+    material.scaleNode = vec2(sizeBase.mul(stretchSafe), sizeBase.div(stretchSafe));
+
+    // Color: base color, brightened by speed and music pulse, multiplied by
+    // alphaLife so dead particles contribute nothing under additive blending.
+    const baseColor = this.colorsBuffer.toAttribute();
     const speedTerm = speed.mul(0.05).clamp(0, 1).mul(this.speedGlowUniform);
     const musicTerm = this.musicPulseUniform.mul(0.35);
     const glow = float(0.55).add(speedTerm).add(musicTerm);
     const lit = baseColor.mul(glow).mul(alpha);
     material.colorNode = lit;
-    material.opacityNode = alpha.mul(this.particleOpacityUniform);
+
+    // Discard quad corners so the underlying PlaneGeometry reads as a circle.
+    // Soft edge over a few percent of the radius gives it a glow falloff that
+    // plays nicely with additive blending.
+    const r = uv().sub(0.5).length();
+    const disc = smoothstep(0.5, 0.42, r);
+    material.opacityNode = alpha.mul(this.particleOpacityUniform).mul(disc);
 
     this.material = material;
     this.mesh = new THREE.InstancedMesh(geometry, material, this.count);

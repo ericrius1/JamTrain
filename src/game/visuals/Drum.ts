@@ -92,6 +92,7 @@ type DrumOptions = {
 // to meet instead of making a new hit feel like it erased the previous one.
 const MAX_RIPPLES = 24;
 const RIPPLE_MAX_AGE = 5.8;
+const DRUM_LAYOUT_TOP_ROWS = DRUM_DEFAULT_BASE_ROW;
 
 type AnyNode = any;
 
@@ -102,14 +103,17 @@ const ORB_HZ: readonly number[] = JAM_DRUM_HZ;
 
 function makeOrbOffsets(baseRow: number, columnSpacing: number, rowSpacing: number): THREE.Vector3[] {
   // Pyramid: bottom row has `baseRow` orbs, each row above has one fewer, until
-  // a single orb at the apex. Vertically centered around y=0 so the cluster
-  // hovers symmetrically above the anchor. Index order is bottom-up, left-to-right.
+  // a single orb at the apex. Default-size drums stay centered around the
+  // anchor; larger drums grow downward so the apex does not climb into the
+  // top of the view. Index order is bottom-up, left-to-right.
   const rows = Math.max(1, Math.floor(baseRow));
   const offsets: THREE.Vector3[] = [];
   const yCenter = (rows - 1) * 0.5 * rowSpacing;
+  const topOverflowRows = Math.max(0, rows - DRUM_LAYOUT_TOP_ROWS);
+  const downBias = topOverflowRows * 0.5 * rowSpacing;
   for (let row = 0; row < rows; row += 1) {
     const orbsInRow = rows - row;
-    const y = row * rowSpacing - yCenter;
+    const y = row * rowSpacing - yCenter - downBias;
     for (let col = 0; col < orbsInRow; col += 1) {
       const x = (col - (orbsInRow - 1) / 2) * columnSpacing;
       offsets.push(new THREE.Vector3(x, y, 0));
