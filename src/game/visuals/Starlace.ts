@@ -3,7 +3,7 @@ import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments';
 import { clamp, hash } from '../math';
 
-export const STARLACE_HARP_DEFS = {
+export const STARLACE_DEFS = {
   width:           { default: 0.82,  min: 0.36, max: 1.35, step: 0.01,  label: 'width' },
   height:          { default: 0.54,  min: 0.24, max: 1.05, step: 0.01,  label: 'height' },
   depth:           { default: 0.14,  min: 0.00, max: 0.40, step: 0.005, label: 'depth' },
@@ -22,7 +22,7 @@ export const STARLACE_HARP_DEFS = {
   hotColor:        { type: 'color', default: '#fff7d6', label: 'hot' },
 } as const;
 
-export type StarlaceHarpParams = ParamsOf<typeof STARLACE_HARP_DEFS>;
+export type StarlaceParams = ParamsOf<typeof STARLACE_DEFS>;
 
 export type StarlacePluck = {
   nodeIndex: number;
@@ -34,7 +34,7 @@ export type StarlacePluck = {
 
 type StarlacePalette = 'local' | 'remote';
 
-type StarlaceHarpOptions = {
+type StarlaceOptions = {
   palette?: StarlacePalette;
   title?: string;
   onPluck?: (event: StarlacePluck) => void;
@@ -92,9 +92,9 @@ const _dummy = new THREE.Object3D();
 const _colorA = new THREE.Color();
 const _colorB = new THREE.Color();
 
-export class StarlaceHarp implements PlayerVisual {
+export class Starlace implements PlayerVisual {
   readonly mesh: THREE.Group;
-  readonly params: StarlaceHarpParams;
+  readonly params: StarlaceParams;
 
   private nodes: StarNode[] = [];
   private edges: [number, number][] = [];
@@ -150,10 +150,10 @@ export class StarlaceHarp implements PlayerVisual {
   private gold = new THREE.Color();
   private hot = new THREE.Color();
   private onPluckCallback?: (event: StarlacePluck) => void;
-  private registered?: ReturnType<typeof registerTweaks<typeof STARLACE_HARP_DEFS>>;
+  private registered?: ReturnType<typeof registerTweaks<typeof STARLACE_DEFS>>;
 
-  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'starlaceHarp', opts: StarlaceHarpOptions = {}) {
-    this.params = { ...Object.fromEntries(Object.entries(STARLACE_HARP_DEFS).map(([k, d]) => [k, d.default])) } as StarlaceHarpParams;
+  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'starlace', opts: StarlaceOptions = {}) {
+    this.params = { ...Object.fromEntries(Object.entries(STARLACE_DEFS).map(([k, d]) => [k, d.default])) } as StarlaceParams;
     applyPaletteDefaults(this.params, opts.palette ?? 'local');
     this.onPluckCallback = opts.onPluck;
 
@@ -221,8 +221,8 @@ export class StarlaceHarp implements PlayerVisual {
     this.applyColors();
     this.writeHiddenSparks();
 
-    this.registered = registerTweaks(paneDock, paneKey, STARLACE_HARP_DEFS, {
-      title: opts.title ?? 'Starlace Harp',
+    this.registered = registerTweaks(paneDock, paneKey, STARLACE_DEFS, {
+      title: opts.title ?? 'Starlace',
       params: this.params,
       onChange: {
         coolColor: () => this.applyColors(),
@@ -582,7 +582,7 @@ function easeOutCubic(t: number): number {
   return 1 - inv * inv * inv;
 }
 
-function applyPaletteDefaults(params: StarlaceHarpParams, palette: StarlacePalette): void {
+function applyPaletteDefaults(params: StarlaceParams, palette: StarlacePalette): void {
   if (palette === 'remote') {
     params.coolColor = '#d98bff';
     params.warmColor = '#ff7ad6';

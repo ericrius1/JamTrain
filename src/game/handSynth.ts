@@ -186,7 +186,7 @@ export class HandSynthEngine {
     local: inactiveOrbGesture(),
     remote: inactiveOrbGesture(),
   };
-  private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'loom', remote: 'loom' };
+  private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'drum', remote: 'drum' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
   private duetSynth?: any;
   private duetFilter?: any;
@@ -237,10 +237,8 @@ export class HandSynthEngine {
 
   getProfileLabel(player: PlayerKey): string {
     const id = this.pendingInstruments[player];
-    if (id === 'chime') return 'Wind Chime';
-    if (id === 'orbs') return 'Ripple Orb';
-    if (id === 'starlace') return 'Starlace Harp';
-    return 'Aurora Loom';
+    if (id === 'starlace') return 'Starlace';
+    return 'Drum';
   }
 
   getInstrument(player: PlayerKey): InstrumentId {
@@ -249,36 +247,6 @@ export class HandSynthEngine {
 
   getVoiceState(player: PlayerKey): VoiceState {
     const instrument = this.pendingInstruments[player];
-    if (instrument === 'chime') {
-      const c = this.chimeVoices[player];
-      if (!c) return voiceStateZero();
-      return {
-        active: c.energy > 0.02,
-        energy: c.energy,
-        pulse: c.pulse,
-        // Map warmth (left-hand y, 0..1) onto the existing pitch slot so
-        // the chime visual driven off voice still reads "high vs low".
-        pitch: c.warmth,
-        expression: c.warmth,
-        tension: clamp(c.energy * 1.4, 0, 1),
-        noteIndex: c.lastNoteIdx,
-        noteCount: 32,
-      };
-    }
-    if (instrument === 'orbs') {
-      const o = this.orbVoices[player];
-      if (!o) return voiceStateZero();
-      return {
-        active: o.energy > 0.02,
-        energy: o.energy,
-        pulse: o.pulse,
-        pitch: o.pitch,
-        expression: o.expression,
-        tension: o.tension,
-        noteIndex: o.lastNoteIdx,
-        noteCount: ORB_GESTURE_NOTES.length,
-      };
-    }
     if (instrument === 'starlace') {
       const s = this.starlaceVoices[player];
       if (!s) return voiceStateZero();
@@ -293,17 +261,17 @@ export class HandSynthEngine {
         noteCount: STARLACE_NOTES.length,
       };
     }
-    const v = this.voices[player];
-    if (!v) return voiceStateZero();
+    const o = this.orbVoices[player];
+    if (!o) return voiceStateZero();
     return {
-      active: v.active,
-      energy: v.energy,
-      pulse: v.pulse,
-      pitch: v.pitch,
-      expression: v.expression,
-      tension: v.tension,
-      noteIndex: v.currentNoteIdx,
-      noteCount: v.scale.length,
+      active: o.energy > 0.02,
+      energy: o.energy,
+      pulse: o.pulse,
+      pitch: o.pitch,
+      expression: o.expression,
+      tension: o.tension,
+      noteIndex: o.lastNoteIdx,
+      noteCount: ORB_GESTURE_NOTES.length,
     };
   }
 
@@ -366,25 +334,16 @@ export class HandSynthEngine {
 
     for (const key of PLAYER_KEYS) {
       const instrument = this.pendingInstruments[key];
-      if (instrument === 'chime') {
-        // Loom voice held silent; chime updates only the filter/wet from warmth.
-        this.ensureChimeVoice(key);
-        this.silenceVoice(key);
-        this.updateChimeVoice(key, delta);
-      } else if (instrument === 'orbs') {
-        this.ensureOrbVoice(key);
-        this.silenceVoice(key);
-        this.updateOrbVoice(key, delta);
-      } else if (instrument === 'starlace') {
+      if (instrument === 'starlace') {
         this.ensureStarlaceVoice(key);
-        this.silenceVoice(key);
         this.updateStarlaceVoice(key, delta);
       } else {
-        this.ensureLoomVoice(key);
-        const input = key === 'local' ? localInput : remoteInput;
-        this.updateVoice(key, input, delta);
+        this.ensureOrbVoice(key);
+        this.updateOrbVoice(key, delta);
       }
     }
+    void localInput;
+    void remoteInput;
     this.updateDuetResonator(delta);
 
     this.master.gain.rampTo(this.tone.dbToGain(this.params.volumeDb), PARAM_RAMP);
@@ -441,28 +400,7 @@ export class HandSynthEngine {
     if (this.running) this.ensureInstrumentVoice(player);
     this.applyInstrumentRouting(player);
 
-    // Audible confirmation when switching to chime — fires one bell so the
-    // user can verify the audio chain works without depending on motion-driven
-    // collisions. Only when audio is running.
-    if (id === 'chime' && this.running && this.tone) {
-      const chime = this.chimeVoices[player];
-      if (chime) {
-        // Bring dry path up immediately so the test ping isn't swallowed by
-        // the gain ramp on the first updateChimeVoice() pass.
-        try {
-          chime.dryGain.gain.cancelScheduledValues?.(this.tone.now());
-          chime.dryGain.gain.setValueAtTime?.(0.95, this.tone.now());
-        } catch { /* fallback to ramp via updateChimeVoice */ }
-        try {
-          chime.synth.triggerAttackRelease(528, '4n', undefined, 0.9);
-          console.debug('[handSynth] chime test ping fired', { player });
-        } catch (err) {
-          console.warn('[handSynth] chime test ping failed', err);
-        }
-      }
-    }
-
-    if (id === 'orbs' && this.running && this.tone) {
+    if (id === 'drum' && this.running && this.tone) {
       const orb = this.orbVoices[player];
       if (orb) {
         try {
@@ -497,10 +435,8 @@ export class HandSynthEngine {
 
   private ensureInstrumentVoice(player: PlayerKey): void {
     const instrument = this.pendingInstruments[player];
-    if (instrument === 'chime') this.ensureChimeVoice(player);
-    else if (instrument === 'orbs') this.ensureOrbVoice(player);
-    else if (instrument === 'starlace') this.ensureStarlaceVoice(player);
-    else this.ensureLoomVoice(player);
+    if (instrument === 'starlace') this.ensureStarlaceVoice(player);
+    else this.ensureOrbVoice(player);
   }
 
   private ensureLoomVoice(player: PlayerKey): Voice | null {
@@ -559,50 +495,12 @@ export class HandSynthEngine {
     this.hitBudgetLogAt = this.elapsed;
   }
 
-  /** Called by the WindChime visual when two gems collide or a gem is poked.
-   *  Triggers a brief bell on the chime voice for the given player. */
-  triggerChimeHit(player: PlayerKey, frequency: number, velocity: number, gemIndex = -1): void {
-    if (!this.running || !this.tone) {
-      // Surface this once so it's debuggable from devtools — silent failures
-      // here are the most common reason a player reports "no sound".
-      if (!this._loggedChimeBlock) {
-        console.warn('[handSynth] chime hit blocked: audio not started yet');
-        this._loggedChimeBlock = true;
-      }
-      return;
-    }
-    if (this.muted[player]) return;
-    if (this.pendingInstruments[player] !== 'chime') return;
-    const chime = this.ensureChimeVoice(player);
-    if (!chime) return;
-    if (!Number.isFinite(frequency) || frequency <= 0) return;
-    if (!this.allowHit(this.chimeBudgets[player], CHIME_MAX_HITS_PER_WINDOW, chime.synth?.activeVoices ?? 0, CHIME_MAX_ACTIVE_VOICES)) {
-      return;
-    }
-    const v = clamp(velocity, 0, 1);
-    // Velocity floor at 0.4 so a soft brush still gives an audible bell.
-    const synthVel = 0.4 + v * 0.6;
-    try {
-      const now = this.tone.now();
-      chime.dryGain.gain.cancelScheduledValues?.(now);
-      chime.dryGain.gain.setValueAtTime?.(0.95, now);
-      chime.wetSend.gain.rampTo(clamp(0.22 + chime.energy * 0.6, 0, 1) * this.params.reverbWetMax, 0.02);
-      chime.synth.triggerAttackRelease(frequency, '4n', undefined, synthVel);
-    } catch (err) {
-      console.warn('[handSynth] chime trigger failed', err);
-      return;
-    }
-    if (!this._loggedChimeFirstHit) {
-      console.debug('[handSynth] first chime hit', { player, frequency, velocity: synthVel });
-      this._loggedChimeFirstHit = true;
-    }
-    chime.pulse = Math.min(1, chime.pulse + 0.55 + v * 0.45);
-    chime.energy = Math.min(1, chime.energy + 0.14 + v * 0.18);
-    chime.lastNoteIdx = gemIndex >= 0 ? gemIndex % 32 : chime.lastHitCount % 32;
-    chime.lastHitCount += 1;
+  // Chime instrument retired in drum+starlace migration — method kept as a
+  // no-op stub so any stale call sites don't crash. Remove fully once we've
+  // confirmed no remaining callers.
+  triggerChimeHit(_player: PlayerKey, _frequency: number, _velocity: number, _gemIndex = -1): void {
+    return;
   }
-  private _loggedChimeFirstHit = false;
-  private _loggedChimeBlock = false;
 
   /** Set the left-hand-driven warmth for a player's chime voice. 0 = darker,
    *  1 = brighter. Smoothing is handled internally. */
@@ -637,7 +535,7 @@ export class HandSynthEngine {
       return;
     }
     if (this.muted[player]) return;
-    if (this.pendingInstruments[player] !== 'orbs') return;
+    if (this.pendingInstruments[player] !== 'drum') return;
     const orb = this.ensureOrbVoice(player);
     if (!orb) return;
     const activeVoices = Math.max(orb.fund?.activeVoices ?? 0, orb.fifth?.activeVoices ?? 0);
@@ -939,21 +837,11 @@ export class HandSynthEngine {
     const chime = this.chimeVoices[player];
     const orb = this.orbVoices[player];
     const starlace = this.starlaceVoices[player];
-    if (instrument === 'chime') {
-      if (voice) this.releaseVoice(voice, false);
-      if (orb) this.silenceOrb(player);
-      if (starlace) this.silenceStarlace(player);
-    } else if (instrument === 'orbs') {
-      if (voice) this.releaseVoice(voice, false);
-      if (chime) this.silenceChime(player);
-      if (starlace) this.silenceStarlace(player);
-    } else if (instrument === 'starlace') {
-      if (voice) this.releaseVoice(voice, false);
-      if (chime) this.silenceChime(player);
+    if (voice) this.releaseVoice(voice, false);
+    if (chime) this.silenceChime(player);
+    if (instrument === 'starlace') {
       if (orb) this.silenceOrb(player);
     } else {
-      if (chime) this.silenceChime(player);
-      if (orb) this.silenceOrb(player);
       if (starlace) this.silenceStarlace(player);
     }
   }
@@ -1063,7 +951,7 @@ export class HandSynthEngine {
     }
 
     const gesture = this.orbGestures[player];
-    const gestureActive = gesture.active && this.pendingInstruments[player] === 'orbs';
+    const gestureActive = gesture.active && this.pendingInstruments[player] === 'drum';
     if (gestureActive) {
       const angleN = (gesture.angle + Math.PI) / (Math.PI * 2);
       const heightN = clamp(gesture.y * 0.5 + 0.5, 0, 1);

@@ -39,8 +39,8 @@ export class Hud {
   private mixerPanel: MixerPanel;
   private localInstrumentListeners = new Set<(id: InstrumentId) => void>();
   private localInstrumentPicker: InstrumentPicker;
-  private localInstrument: InstrumentId = 'loom';
-  private partnerInstrument: InstrumentId = 'loom';
+  private localInstrument: InstrumentId = 'drum';
+  private partnerInstrument: InstrumentId = 'starlace';
   private localCreaturePicker: CreaturePicker;
   private localCreatureListeners = new Set<(id: CreatureId) => void>();
   private sharePopover: SharePopover;
@@ -114,7 +114,7 @@ export class Hud {
     this.playerLeft = new PlayerPlaque({
       side: 'left',
       name: 'AVA',
-      voice: INSTRUMENTS.loom.label,
+      voice: INSTRUMENTS.drum.label,
       kind: 'conductor',
     });
     this.uiEl.appendChild(this.playerLeft.el);
@@ -122,7 +122,7 @@ export class Hud {
     this.playerRight = new PlayerPlaque({
       side: 'right',
       name: 'KORO·v3',
-      voice: INSTRUMENTS.loom.label,
+      voice: INSTRUMENTS.drum.label,
       kind: 'automaton',
     });
     this.uiEl.appendChild(this.playerRight.el);

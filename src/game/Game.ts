@@ -9,13 +9,10 @@ import { HandTracker } from './handTracking';
 import { clamp } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
-import { HarmonicLoom } from './visuals/HarmonicLoom';
-import { WindChime } from './visuals/WindChime';
-import { OrbDrums } from './visuals/OrbDrums';
-import { StarlaceHarp } from './visuals/StarlaceHarp';
-import { CenterStage } from './CenterStage';
+import { Drum } from './visuals/Drum';
+import { Starlace } from './visuals/Starlace';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
-import { isInstrumentId } from './instruments';
+import { isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
 import { makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
@@ -52,7 +49,7 @@ const CABIN_DEFS = {
 } as const;
 
 const ILLUSTRATED_CABIN_TEXTURE = '/cabin/illustrated-cabin-plate-v2-color.webp';
-const ILLUSTRATED_CABIN_ALPHA_TEXTURE = '/cabin/illustrated-cabin-plate-v2-alpha.webp';
+const ILLUSTRATED_CABIN_MASK_TEXTURE = '/cabin/illustrated-cabin-plate-v2-alpha.webp';
 const ILLUSTRATED_CABIN_ASPECT = 1672 / 941;
 const ILLUSTRATED_CABIN_DISTANCE = 3.35;
 const ILLUSTRATED_CABIN_OVERSCAN = 1.015;
@@ -155,9 +152,8 @@ export class Game {
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
   private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
-  private centerStage?: CenterStage;
   private playerVisuals: Record<PlayerSlot, PlayerVisual | null> = { local: null, remote: null };
-  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'loom', remote: 'loom' };
+  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'drum' };
   private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
@@ -169,7 +165,7 @@ export class Game {
   private cabinGroup?: THREE.Group;
   private cabinPlate?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   private cabinPlateTexture?: THREE.Texture;
-  private cabinPlateAlphaTexture?: THREE.Texture;
+  private cabinPlateMaskTexture?: THREE.Texture;
   private readonly cabinParams = makeParams(CABIN_DEFS);
   private playersTweaks?: ReturnType<typeof registerTweaks<typeof PLAYERS_DEFS>>;
   private readonly playersParams = makeParams(PLAYERS_DEFS);
@@ -279,8 +275,7 @@ export class Game {
     await this.renderer.init();
     this.setupOrbitControls();
     this.particles.initialize(this.renderer);
-    this.centerStage = new CenterStage(this.scene, this.sculptureTarget, this.paneDock);
-    this.installLoomVisuals();
+    this.installPlayerVisuals();
     this.setupShadowsPane();
     this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
@@ -439,7 +434,6 @@ export class Game {
     this.webrtc.dispose();
     this.robotMotion.dispose();
     this.scenery.dispose();
-    this.centerStage?.dispose();
     this.playerVisuals.local?.dispose();
     this.playerVisuals.remote?.dispose();
     this.audio.dispose();
@@ -566,18 +560,20 @@ export class Game {
     texture.generateMipmaps = true;
     this.cabinPlateTexture = texture;
 
-    const alphaTexture = new THREE.TextureLoader().load(ILLUSTRATED_CABIN_ALPHA_TEXTURE, tex => {
+    const maskTexture = new THREE.TextureLoader().load(ILLUSTRATED_CABIN_MASK_TEXTURE, tex => {
       tex.colorSpace = THREE.NoColorSpace;
       tex.needsUpdate = true;
     });
-    alphaTexture.colorSpace = THREE.NoColorSpace;
-    alphaTexture.generateMipmaps = true;
-    this.cabinPlateAlphaTexture = alphaTexture;
+    maskTexture.colorSpace = THREE.NoColorSpace;
+    maskTexture.generateMipmaps = true;
+    this.cabinPlateMaskTexture = maskTexture;
 
     const material = new THREE.MeshBasicMaterial({
       map: texture,
-      alphaMap: alphaTexture,
+      alphaMap: maskTexture,
       transparent: true,
+      alphaTest: 0.5,
+      blending: THREE.NoBlending,
       depthWrite: false,
       side: THREE.DoubleSide,
       toneMapped: false,
@@ -616,10 +612,10 @@ export class Game {
     this.cabinPlate.geometry.dispose();
     this.cabinPlate.material.dispose();
     this.cabinPlateTexture?.dispose();
-    this.cabinPlateAlphaTexture?.dispose();
+    this.cabinPlateMaskTexture?.dispose();
     this.cabinPlate = undefined;
     this.cabinPlateTexture = undefined;
-    this.cabinPlateAlphaTexture = undefined;
+    this.cabinPlateMaskTexture = undefined;
   }
 
   private buildCabinGeometry(): void {
@@ -805,7 +801,7 @@ export class Game {
     });
   }
 
-  private installLoomVisuals(): void {
+  private installPlayerVisuals(): void {
     this.installPlayerVisual('local', this.playerInstruments.local);
     this.installPlayerVisual('remote', this.playerInstruments.remote);
   }
@@ -814,21 +810,18 @@ export class Game {
     this.playerVisuals[player]?.dispose();
     this.playerInstruments[player] = id;
 
-    if (id === 'chime') {
-      const chime = new WindChime(this.scene, this.paneDock, `chime-${player}`, {
+    if (id === 'starlace') {
+      this.playerVisuals[player] = new Starlace(this.scene, this.paneDock, `starlace-${player}`, {
         palette: player,
-        title: `Wind Chime (${player === 'local' ? 'Local' : 'Partner'})`,
-        onHit: hit => {
-          // Forward gem-on-gem and hand-on-gem hits straight to the chime
-          // synth voice for this player.
-          this.handSynth.triggerChimeHit(player, hit.frequency, hit.velocity, hit.gemIndex);
+        title: `Starlace (${player === 'local' ? 'Local' : 'Partner'})`,
+        onPluck: pluck => {
+          this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
         },
       });
-      this.playerVisuals[player] = chime;
-    } else if (id === 'orbs') {
-      const orbs = new OrbDrums(this.scene, this.paneDock, `orbs-${player}`, {
+    } else {
+      this.playerVisuals[player] = new Drum(this.scene, this.paneDock, `drum-${player}`, {
         palette: player,
-        title: `Ripple Orb (${player === 'local' ? 'Local' : 'Partner'})`,
+        title: `Drum (${player === 'local' ? 'Local' : 'Partner'})`,
         camera: player === 'local' ? this.camera : undefined,
         canvas: player === 'local' ? this.canvas : undefined,
         onHit: hit => {
@@ -837,21 +830,6 @@ export class Game {
         onGesture: gesture => {
           this.handSynth.setOrbGesture(player, gesture);
         },
-      });
-      this.playerVisuals[player] = orbs;
-    } else if (id === 'starlace') {
-      const starlace = new StarlaceHarp(this.scene, this.paneDock, `starlace-${player}`, {
-        palette: player,
-        title: `Starlace Harp (${player === 'local' ? 'Local' : 'Partner'})`,
-        onPluck: pluck => {
-          this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
-        },
-      });
-      this.playerVisuals[player] = starlace;
-    } else {
-      this.playerVisuals[player] = new HarmonicLoom(this.scene, this.paneDock, `loom-${player}`, {
-        palette: player,
-        title: `Aurora Loom (${player === 'local' ? 'Local' : 'Partner'})`,
       });
     }
     this.handSynth.setInstrument(player, id);
@@ -928,7 +906,6 @@ export class Game {
 
     const links = this.updateLinks();
     this.updatePlayerVisuals(delta);
-    this.centerStage?.update(delta, elapsed);
     this.particles.update(this.renderer, links, elapsed);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
@@ -984,19 +961,6 @@ export class Game {
 
     this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta, localContacts);
     this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta, remoteContacts);
-
-    // Push each chime's left-hand warmth into the audio engine so the chime
-    // synth's filter cutoff tracks the left-hand y position.
-    const localVisual = this.playerVisuals.local;
-    if (localVisual instanceof WindChime) {
-      this.handSynth.setChimeWarmth('local', localVisual.getWarmth());
-    }
-    const remoteVisual = this.playerVisuals.remote;
-    if (remoteVisual instanceof WindChime) {
-      this.handSynth.setChimeWarmth('remote', remoteVisual.getWarmth());
-    }
-
-    this.centerStage?.setInputs(localLeft, localRight, localVoice, remoteLeft, remoteRight, remoteVoice);
   }
 
   private updateVisualContacts(

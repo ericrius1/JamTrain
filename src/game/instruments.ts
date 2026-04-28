@@ -1,9 +1,9 @@
 import type * as THREE from 'three/webgpu';
 import type { FingerJointName, FingerName, Handedness } from './types';
 
-export type InstrumentId = 'loom' | 'chime' | 'orbs' | 'starlace';
+export type InstrumentId = 'drum' | 'starlace';
 
-export const INSTRUMENT_IDS: readonly InstrumentId[] = ['loom', 'chime', 'orbs', 'starlace'];
+export const INSTRUMENT_IDS: readonly InstrumentId[] = ['drum', 'starlace'];
 
 export type VoiceState = {
   /** True between attack and release for at least one held note. */
@@ -77,38 +77,34 @@ export type InstrumentMeta = {
 };
 
 export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
-  loom: {
-    id: 'loom',
-    label: 'Aurora Loom',
-    subtitle: 'strings · waves · resonance',
-    color: '#68f4ff',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7c4.4 3.8 11.6 3.8 16 0"/><path d="M4 12c4.4-3.8 11.6-3.8 16 0"/><path d="M4 17c4.4 3.8 11.6 3.8 16 0"/><path d="M7 4v16M17 4v16"/><circle cx="12" cy="12" r="1.8" fill="currentColor" stroke="none"/></svg>`,
-  },
-  chime: {
-    id: 'chime',
-    label: 'Wind Chime',
-    subtitle: 'ring · gems · wind',
-    color: '#ffd166',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="1.8"/><path d="M6.4 6.6v6.5M9.4 6.9v9.2M12 7v11M14.6 6.9v9.2M17.6 6.6v6.5"/><circle cx="6.4" cy="13.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="9.4" cy="16.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="12" cy="18.4" r="1.05" fill="currentColor" stroke="none"/><circle cx="14.6" cy="16.6" r="1.05" fill="currentColor" stroke="none"/><circle cx="17.6" cy="13.6" r="1.05" fill="currentColor" stroke="none"/></svg>`,
-  },
-  orbs: {
-    id: 'orbs',
-    label: 'Ripple Orb',
-    subtitle: 'move · dive · resonate',
-    color: '#9be7ff',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.2"/><circle cx="12" cy="12" r="3.2" opacity="0.7"/><path d="M4.8 12c3.4-2.3 10.1-2.3 14.4 0"/><path d="M4.8 12c3.4 2.3 10.1 2.3 14.4 0"/><circle cx="14.2" cy="9.2" r="1.1" fill="currentColor" stroke="none"/></svg>`,
+  drum: {
+    id: 'drum',
+    label: 'Drum',
+    subtitle: 'rhythm · pulse · spark',
+    color: '#ff9a3c',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="9" rx="8" ry="2.4"/><path d="M4 9v6c0 1.32 3.6 2.4 8 2.4s8-1.08 8-2.4V9"/><path d="M8.5 11.4l1.4 2.6M15.5 11.4l-1.4 2.6"/></svg>`,
   },
   starlace: {
     id: 'starlace',
-    label: 'Starlace Harp',
-    subtitle: 'swipe · stars · glissando',
+    label: 'Starlace',
+    subtitle: 'melody · constellation · glissando',
     color: '#ff8cf0',
     iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7.5 10 4l5.6 2.7 3.9 4.8-2.2 5.6-6 2.9-5.8-2.4-2-5.4 1-4.7Z"/><path d="M4.5 7.5 11.3 20M10 4l1.3 16M15.6 6.7l-10.1 10.9M19.5 11.5 5.5 17.6M4.5 7.5l15 4M10 4l7.3 13.1"/><circle cx="4.5" cy="7.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="10" cy="4" r="1.15" fill="currentColor" stroke="none"/><circle cx="15.6" cy="6.7" r="1.15" fill="currentColor" stroke="none"/><circle cx="19.5" cy="11.5" r="1.15" fill="currentColor" stroke="none"/><circle cx="17.3" cy="17.1" r="1.15" fill="currentColor" stroke="none"/><circle cx="11.3" cy="20" r="1.15" fill="currentColor" stroke="none"/><circle cx="5.5" cy="17.6" r="1.15" fill="currentColor" stroke="none"/></svg>`,
   },
 };
 
 export function isInstrumentId(value: string): value is InstrumentId {
-  return value === 'loom' || value === 'chime' || value === 'orbs' || value === 'starlace';
+  return value === 'drum' || value === 'starlace';
+}
+
+/**
+ * Map any string (including legacy 'loom'/'chime'/'orbs') to a valid
+ * InstrumentId. Used at every read boundary that might receive stale data
+ * (e.g. SpacetimeDB partner instrument from an older client).
+ */
+export function normalizeInstrumentId(value: string | undefined | null): InstrumentId {
+  if (value === 'starlace') return 'starlace';
+  return 'drum';
 }
 
 /**

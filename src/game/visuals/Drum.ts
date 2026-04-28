@@ -21,7 +21,7 @@ import type { HandContactPoint, OrbGestureState, PlayerVisual, VoiceState } from
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
-export const ORB_DRUMS_DEFS = {
+export const DRUM_DEFS = {
   orbRadius:       { default: 0.285, min: 0.16, max: 0.52, step: 0.001, label: 'orb radius' },
   ringRadius:      { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'ring radius', hidden: true },
   bobAmount:       { default: 0.018, min: 0,    max: 0.06, step: 0.001, label: 'bob amount' },
@@ -43,7 +43,7 @@ export const ORB_DRUMS_DEFS = {
   hotColor:        { type: 'color', default: '#fff8d6', label: 'hot' },
 } as const;
 
-export type OrbDrumsParams = ParamsOf<typeof ORB_DRUMS_DEFS>;
+export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
 
 export type OrbHit = {
   /** Scale field selected from the strike point on the single orb. */
@@ -54,10 +54,10 @@ export type OrbHit = {
   velocity: number;
 };
 
-type OrbDrumsPalette = 'local' | 'remote';
+type DrumPalette = 'local' | 'remote';
 
-type OrbDrumsOptions = {
-  palette?: OrbDrumsPalette;
+type DrumOptions = {
+  palette?: DrumPalette;
   title?: string;
   onHit?: (event: OrbHit) => void;
   onGesture?: (gesture: OrbGestureState) => void;
@@ -98,7 +98,7 @@ function makeOrbOffsets(ringRadius: number): THREE.Vector3[] {
   return [new THREE.Vector3(0, 0, 0)];
 }
 
-function createOrbUniforms(params: OrbDrumsParams) {
+function createOrbUniforms(params: DrumParams) {
   return {
     baseColor:    uniform(new THREE.Color(params.baseColor)),
     rimColor:     uniform(new THREE.Color(params.rimColor)),
@@ -156,9 +156,9 @@ const _rayBack = new THREE.Vector3();
 const _sphereCenter = new THREE.Vector3();
 const _raycaster = new THREE.Raycaster();
 
-export class OrbDrums implements PlayerVisual {
+export class Drum implements PlayerVisual {
   readonly mesh: THREE.Group;
-  readonly params: OrbDrumsParams;
+  readonly params: DrumParams;
 
   private orbs: Orb[] = [];
   private elapsed = 0;
@@ -196,13 +196,13 @@ export class OrbDrums implements PlayerVisual {
 
   private onHitCallback?: (e: OrbHit) => void;
   private onGestureCallback?: (gesture: OrbGestureState) => void;
-  private registered?: ReturnType<typeof registerTweaks<typeof ORB_DRUMS_DEFS>>;
+  private registered?: ReturnType<typeof registerTweaks<typeof DRUM_DEFS>>;
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
   private fixedAnchor?: THREE.Vector3;
 
-  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'orbDrums', opts: OrbDrumsOptions = {}) {
-    this.params = { ...Object.fromEntries(Object.entries(ORB_DRUMS_DEFS).map(([k, d]) => [k, d.default])) } as OrbDrumsParams;
+  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'drum', opts: DrumOptions = {}) {
+    this.params = { ...Object.fromEntries(Object.entries(DRUM_DEFS).map(([k, d]) => [k, d.default])) } as DrumParams;
     applyPaletteDefaults(this.params, opts.palette ?? 'local');
     this.onHitCallback = opts.onHit;
     this.onGestureCallback = opts.onGesture;
@@ -252,8 +252,8 @@ export class OrbDrums implements PlayerVisual {
       });
     }
 
-    this.registered = registerTweaks(paneDock, paneKey, ORB_DRUMS_DEFS, {
-      title: opts.title ?? 'Ripple Orb',
+    this.registered = registerTweaks(paneDock, paneKey, DRUM_DEFS, {
+      title: opts.title ?? 'Drum',
       params: this.params,
       onChange: {
         baseColor:    () => this.uniforms.baseColor.value.set(this.params.baseColor),
@@ -774,7 +774,7 @@ export class OrbDrums implements PlayerVisual {
   }
 }
 
-function applyPaletteDefaults(params: OrbDrumsParams, palette: OrbDrumsPalette): void {
+function applyPaletteDefaults(params: DrumParams, palette: DrumPalette): void {
   if (palette === 'remote') {
     params.baseColor = '#37183a';
     params.rimColor = '#ff7ad6';

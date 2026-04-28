@@ -1,17 +1,35 @@
 import * as THREE from 'three/webgpu';
+import { Fn, color, float, floor, fract, mix, smoothstep, time, uniform, uv } from 'three/tsl';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 import { clamp } from './math';
-import { BiomeScheduler } from './biomes';
-import { FOREGROUND_BIOMES, type ForegroundBiomeId } from './biomes';
+import {
+  BACKGROUND_BIOMES,
+  BiomeScheduler,
+  FOREGROUND_BIOMES,
+  silhouetteParams,
+  timeOfDayPhase,
+  type BackgroundBiomeId,
+  type ForegroundBiomeId,
+  type MagicEvent,
+  type SilhouetteParams,
+} from './biomes';
 import { SpriteAtlas } from './spriteAtlas';
 import { SkyLife } from './skyLife';
-import { timeOfDayPhase } from './biomes';
 
 const FG_OPTIONS: Record<string, string> = (() => {
   const o: Record<string, string> = { auto: 'auto' };
   for (const id of Object.keys(FOREGROUND_BIOMES)) o[id] = id;
   return o;
 })();
+const BG_OPTIONS: Record<string, string> = (() => {
+  const o: Record<string, string> = { auto: 'auto' };
+  for (const id of Object.keys(BACKGROUND_BIOMES)) o[id] = id;
+  return o;
+})();
+
+const TERRAIN_LAYER_MIN = 0;
+const TERRAIN_LAYER_MAX = 9;
+const TERRAIN_LAYER_DEFAULT = 0;
 const PAINTED_TERRAIN_CHUNKS = [
   { id: 'alpine-lake', texture: '/scenery/far-terrain-chunk-01-alpine-lake.webp' },
   { id: 'fog-forest', texture: '/scenery/far-terrain-chunk-02-fog-forest.webp' },
@@ -34,7 +52,7 @@ const PAINTED_TERRAIN_BLEND_WIDTH = 2.4;
 const PAINTED_TERRAIN_CHUNK_STRIDE = PAINTED_TERRAIN_CHUNK_WIDTH - PAINTED_TERRAIN_BLEND_WIDTH;
 const PAINTED_TERRAIN_HEIGHT = 3.15;
 const PAINTED_TERRAIN_X_DISTANCE = 4.86;
-const PAINTED_TERRAIN_Y = 1.34;
+const PAINTED_TERRAIN_Y = 1.10;
 const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 360;
 const PAINTED_TERRAIN_MAX_SPEED = 3;
 const PAINTED_TERRAIN_VISIBLE_PANELS = 2;
@@ -43,8 +61,15 @@ export const SCENERY_DEFS = {
   cycleLengthSeconds: { default: 240,  min: 30,  max: 600,  step: 1,     label: 'day/night sec' },
   cycleOffset:        { default: 0.50, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
   trainSpeed:         { default: 1.1,  min: 0,   max: 3,    step: 0.01,  label: 'train speed' },
+  hillAmplitude:      { default: 1.18, min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape', folder: 'Terrain' },
+  terrainLayers:      { default: TERRAIN_LAYER_DEFAULT, min: TERRAIN_LAYER_MIN, max: TERRAIN_LAYER_MAX, step: 1, label: 'proc layers', folder: 'Terrain' },
   paintedTerrainOpacity: { default: 0.92, min: 0, max: 1, step: 0.01, label: 'painted layer', folder: 'Terrain' },
+  auroraIntensity:    { default: 0.42, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
+  starIntensity:      { default: 0.9,  min: 0,   max: 1,    step: 0.01,  label: 'stars' },
+  moonSize:           { default: 0.34, min: 0.12, max: 0.58, step: 0.01, label: 'moon size' },
+  moonPhase:          { type: 'string', default: '', readonly: true, label: 'moon phase' },
   foreground:      { type: 'select', default: 'lake', options: FG_OPTIONS, folder: 'Biomes' },
+  background:      { type: 'select', default: 'alpinePeaks', options: BG_OPTIONS, folder: 'Biomes' },
   transitionSpeed: { default: 1, min: 0.1, max: 10, step: 0.1,  folder: 'Biomes' },
   recencyPenalty:  { default: 1, min: 0,   max: 2,  step: 0.05, folder: 'Biomes' },
 } as const;
@@ -59,6 +84,51 @@ type Atmosphere = {
 export type SceneryOptions = {
   roomSeed: number;
 };
+
+interface BackgroundPanel {
+  mesh: THREE.Mesh;
+  geometry: THREE.BufferGeometry;
+  layer: BackgroundDepthLayer;
+  layerIndex: number;
+  side: number;
+  scrollOffset: number;
+  segments: number;
+  width: number;
+  panelHeight: number;
+}
+
+interface BackgroundDepthLayer {
+  id: string;
+  xDistance: number;
+  widthScale: number;
+  heightScale: number;
+  yOffset: number;
+  frequencyScale: number;
+  phaseOffset: number;
+  scrollSpeed: number;
+  mist: number;
+  fogScale: number;
+  brightness: number;
+  alpha: number;
+  snowBias: number;
+  ridgeGlow: number;
+  renderOrder: number;
+}
+
+interface BackgroundFogBand {
+  y: number;
+  height: number;
+  intensity: number;
+  drift: number;
+  minLayers: number;
+  renderOrder: number;
+}
+
+interface BackgroundFogPanel {
+  mesh: THREE.Mesh;
+  band: BackgroundFogBand;
+  side: number;
+}
 
 interface PaintedTerrainPanel {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;

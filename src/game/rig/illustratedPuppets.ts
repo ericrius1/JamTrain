@@ -15,7 +15,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
   lion: {
     name: 'Lion',
     body: {
-      url: `${LION_ROOT}/body.png`,
+      url: `${LION_ROOT}/body.webp`,
       width: LION_BODY_HEIGHT * (856 / 990),
       aspect: 990 / 856,
       position: [0.03, 0.78, -0.02],
@@ -40,7 +40,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       },
       elbowBlend: 0.5,
       upper: {
-        url: `${LION_ROOT}/upper-arm.png`,
+        url: `${LION_ROOT}/upper-arm.webp`,
         width: 0.18,
         aspect: 460 / 288,
         from: { x: 0.36, y: 0.16 },
@@ -50,7 +50,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xf0d5b6,
       },
       forearm: {
-        url: `${LION_ROOT}/forearm.png`,
+        url: `${LION_ROOT}/forearm.webp`,
         width: 0.15,
         aspect: 368 / 310,
         from: { x: 0.28, y: 0.16 },
@@ -60,7 +60,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xf0d5b6,
       },
       hand: {
-        url: `${LION_ROOT}/paw-cupped.png`,
+        url: `${LION_ROOT}/paw-cupped.webp`,
         width: 0.27,
         aspect: 363 / 334,
         from: { x: 0.32, y: 0.51 },
@@ -93,7 +93,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
   elk: {
     name: 'Elk',
     body: {
-      url: `${ELK_ROOT}/body.png`,
+      url: `${ELK_ROOT}/body.webp`,
       width: ELK_BODY_HEIGHT * (802 / 994),
       aspect: 994 / 802,
       position: [0.03, 0.84, -0.02],
@@ -118,7 +118,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       },
       elbowBlend: 0.5,
       upper: {
-        url: `${ELK_ROOT}/upper-arm.png`,
+        url: `${ELK_ROOT}/upper-arm.webp`,
         width: 0.17,
         aspect: 460 / 259,
         from: { x: 0.35, y: 0.15 },
@@ -128,7 +128,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xf1dfc2,
       },
       forearm: {
-        url: `${ELK_ROOT}/forearm.png`,
+        url: `${ELK_ROOT}/forearm.webp`,
         width: 0.15,
         aspect: 352 / 268,
         from: { x: 0.28, y: 0.16 },
@@ -138,7 +138,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xf1dfc2,
       },
       hand: {
-        url: `${ELK_ROOT}/hand-cupped.png`,
+        url: `${ELK_ROOT}/hand-cupped.webp`,
         width: 0.22,
         aspect: 252 / 260,
         from: { x: 0.26, y: 0.6 },
@@ -172,7 +172,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
   fox: {
     name: 'Fox',
     body: {
-      url: `${FOX_ROOT}/body.png`,
+      url: `${FOX_ROOT}/body.webp`,
       width: FOX_BODY_HEIGHT * (674 / 792),
       aspect: 792 / 674,
       position: [0.03, 0.78, -0.02],
@@ -197,7 +197,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       },
       elbowBlend: 0.5,
       upper: {
-        url: `${FOX_ROOT}/upper-arm.png`,
+        url: `${FOX_ROOT}/upper-arm.webp`,
         width: 0.17,
         aspect: 472 / 297,
         from: { x: 0.36, y: 0.15 },
@@ -207,7 +207,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xffd2b3,
       },
       forearm: {
-        url: `${FOX_ROOT}/forearm.png`,
+        url: `${FOX_ROOT}/forearm.webp`,
         width: 0.145,
         aspect: 379 / 242,
         from: { x: 0.28, y: 0.16 },
@@ -217,7 +217,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xffd2b3,
       },
       hand: {
-        url: `${FOX_ROOT}/hand-cupped.png`,
+        url: `${FOX_ROOT}/hand-cupped.webp`,
         width: 0.23,
         aspect: 272 / 279,
         from: { x: 0.26, y: 0.61 },
@@ -251,7 +251,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
   robot: {
     name: 'Robot',
     body: {
-      url: `${ROBOT_ROOT}/body.png`,
+      url: `${ROBOT_ROOT}/body.webp`,
       width: ROBOT_BODY_HEIGHT * (762 / 949),
       aspect: 949 / 762,
       position: [0.03, 0.82, -0.02],
@@ -276,7 +276,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       },
       elbowBlend: 0.5,
       upper: {
-        url: `${ROBOT_ROOT}/upper-arm.png`,
+        url: `${ROBOT_ROOT}/upper-arm.webp`,
         width: 0.15,
         aspect: 441 / 221,
         from: { x: 0.54, y: 0.16 },
@@ -286,7 +286,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xffefd5,
       },
       forearm: {
-        url: `${ROBOT_ROOT}/forearm.png`,
+        url: `${ROBOT_ROOT}/forearm.webp`,
         width: 0.15,
         aspect: 326 / 285,
         from: { x: 0.24, y: 0.22 },
@@ -296,7 +296,7 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         color: 0xffefd5,
       },
       hand: {
-        url: `${ROBOT_ROOT}/hand-cupped.png`,
+        url: `${ROBOT_ROOT}/hand-cupped.webp`,
         width: 0.22,
         aspect: 243 / 256,
         from: { x: 0.18, y: 0.7 },

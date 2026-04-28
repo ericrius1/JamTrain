@@ -1,6 +1,7 @@
 import { Identity } from 'spacetimedb';
 import { DbConnection, tables, type ErrorContext } from '../module_bindings';
 import type { Player, WebrtcSignal } from '../module_bindings/types';
+import { isInstrumentId, normalizeInstrumentId, type InstrumentId } from './instruments';
 import { pickRandomRoomName, sanitizeRoomName } from './roomNames';
 import type { ConnectionState } from './types';
 
@@ -41,9 +42,9 @@ export class MultiplayerClient {
   private partnerIdentityHex: string | null = null;
   private signalListeners = new Set<SignalListener>();
   private partnerIdentityListeners = new Set<PartnerIdentityListener>();
-  private localInstrument: string = 'loom';
+  private localInstrument: InstrumentId = 'drum';
   private localInstrumentDirty = false;
-  private partnerInstrument: string = 'loom';
+  private partnerInstrument: InstrumentId = 'starlace';
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
   private localCreature: string = 'lion';
@@ -138,14 +139,29 @@ export class MultiplayerClient {
   }
 
   private acceptLocalInstrument(instrumentId: string): void {
-    if (!instrumentId || this.localInstrument === instrumentId) return;
-    this.localInstrument = instrumentId;
-    for (const listener of this.localInstrumentListeners) listener(instrumentId);
+    const norm = normalizeInstrumentId(instrumentId);
+    if (this.localInstrument === norm) return;
+    this.localInstrument = norm;
+    for (const listener of this.localInstrumentListeners) listener(norm);
+    // While solo (no real partner online), the robot mirrors the opposite
+    // instrument so the duet pairing always holds.
+    if (this.partnerIdentityHex === null) {
+      const robot = this.oppositeInstrument(norm);
+      if (this.partnerInstrument !== robot) {
+        this.partnerInstrument = robot;
+        for (const l of this.partnerInstrumentListeners) l(robot);
+      }
+    }
   }
 
   private acceptServerLocalInstrument(instrumentId: string): void {
-    if (this.localInstrumentDirty && instrumentId !== this.localInstrument) return;
-    this.acceptLocalInstrument(instrumentId);
+    const norm = normalizeInstrumentId(instrumentId);
+    if (this.localInstrumentDirty && norm !== this.localInstrument) return;
+    this.acceptLocalInstrument(norm);
+  }
+
+  private oppositeInstrument(id: InstrumentId): InstrumentId {
+    return id === 'drum' ? 'starlace' : 'drum';
   }
 
   private async pushLocalInstrument(): Promise<void> {
@@ -269,9 +285,12 @@ export class MultiplayerClient {
             this.partnerIdentityHex = null;
             for (const listener of this.partnerIdentityListeners) listener(null);
           }
-          if (this.partnerInstrument !== 'loom') {
-            this.partnerInstrument = 'loom';
-            for (const listener of this.partnerInstrumentListeners) listener('loom');
+          // While disconnected we present the robot partner; default it to the
+          // opposite of the local instrument so the duet pairing still holds.
+          const robotPartner = this.oppositeInstrument(this.localInstrument);
+          if (this.partnerInstrument !== robotPartner) {
+            this.partnerInstrument = robotPartner;
+            for (const listener of this.partnerInstrumentListeners) listener(robotPartner);
           }
           if (this.partnerCreature !== ROBOT_PARTNER_CREATURE) {
             this.partnerCreature = ROBOT_PARTNER_CREATURE;
@@ -440,7 +459,7 @@ export class MultiplayerClient {
     // ONLINE partner in our cabin. Stale/offline rows don't count.
     let nextName: string | null = null;
     let nextIdentity: string | null = null;
-    let nextInstrument: string = 'loom';
+    let realPartnerInstrument: InstrumentId | null = null;
     let nextCreature: string = ROBOT_PARTNER_CREATURE;
     if (this.connection) {
       for (const row of this.connection.db.player.iter()) {
@@ -450,7 +469,7 @@ export class MultiplayerClient {
         if (!row.online) continue;
         nextName = row.displayName || 'Player';
         nextIdentity = id;
-        nextInstrument = row.instrument || 'loom';
+        realPartnerInstrument = normalizeInstrumentId(row.instrument);
         nextCreature = row.creature || 'lion';
         break;
       }
@@ -462,6 +481,9 @@ export class MultiplayerClient {
       for (const listener of this.partnerIdentityListeners) listener(nextIdentity);
     }
 
+    // No real partner online → fall back to the robot, mirroring the opposite
+    // of the local instrument so the duet pairing always holds.
+    const nextInstrument: InstrumentId = realPartnerInstrument ?? this.oppositeInstrument(this.localInstrument);
     if (nextInstrument !== this.partnerInstrument) {
       this.partnerInstrument = nextInstrument;
       for (const listener of this.partnerInstrumentListeners) listener(nextInstrument);
@@ -498,7 +520,7 @@ export class MultiplayerClient {
     if (row.identity.toHexString() !== this.localId) return;
     this.setRoomId(row.roomId);
     this.setLocalSeat(row.seatIndex);
-    this.acceptServerLocalInstrument(row.instrument || 'loom');
+    this.acceptServerLocalInstrument(row.instrument || '');
   }
 
   private setLocalSeat(seatIndex: number): void {
