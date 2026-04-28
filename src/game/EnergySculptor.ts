@@ -40,10 +40,11 @@ export const SCULPTOR_DEFS = {
   speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
   stretchScale:         { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
   containmentStrength:  { default: 6.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
-  lifeSeconds:          { default: 22,    min: 4,    max: 240,  step: 0.5, label: 'life seconds' },
-  fadeFraction:         { default: 0.5,   min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
+  lifeSeconds:          { default: 100,   min: 8,    max: 240,  step: 0.5, label: 'life seconds' },
+  fadeFraction:         { default: 0.18,  min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
+  fieldMemorySeconds:   { default: 18,    min: 2,    max: 90,   step: 0.5, label: 'field memory' },
   settleAmount:         { default: 1.0,   min: 0,    max: 1,    step: 0.01, label: 'settle amount' },
-  settleStart:          { default: 0.0,   min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
+  settleStart:          { default: 0.08,  min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
   fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
   fieldBreathAmount:    { default: 0.15,  min: 0,    max: 0.5,  step: 0.01, label: 'field breath' },
   duetBoost:            { default: 0.45,  min: 0,    max: 1.5,  step: 0.01, label: 'duet boost' },
@@ -147,6 +148,7 @@ export class EnergySculptor implements EnergySink {
   private containmentStrengthUniform = uniform(6);
   private lifeMaxUniform = uniform(28);
   private fadeFractionUniform = uniform(0.25);
+  private fieldMemorySecondsUniform = uniform(18);
   private dissolveModeUniform = uniform(0);
   private dissolveBurstUniform = uniform(6);
   private musicPulseUniform = uniform(0);
@@ -258,6 +260,7 @@ export class EnergySculptor implements EnergySink {
     this.containmentStrengthUniform.value = this.params.containmentStrength;
     this.lifeMaxUniform.value = this.params.lifeSeconds;
     this.fadeFractionUniform.value = this.params.fadeFraction;
+    this.fieldMemorySecondsUniform.value = this.params.fieldMemorySeconds;
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
     this.duetBoostUniform.value = this.params.duetBoost;
     this.speedGlowUniform.value = this.params.speedGlow;
@@ -267,7 +270,7 @@ export class EnergySculptor implements EnergySink {
     this.fieldRotationRate = this.params.fieldRotationRate;
     this.fieldBreathAmount = this.params.fieldBreathAmount;
 
-    this.registered = registerTweaks(paneDock, 'energySculptor', SCULPTOR_DEFS, {
+    this.registered = registerTweaks(paneDock, 'energySculptorMemoryTrace', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
@@ -287,6 +290,7 @@ export class EnergySculptor implements EnergySink {
         containmentStrength: v => { this.containmentStrengthUniform.value = v; },
         lifeSeconds: v => { this.lifeMaxUniform.value = v; },
         fadeFraction: v => { this.fadeFractionUniform.value = v; },
+        fieldMemorySeconds: v => { this.fieldMemorySecondsUniform.value = v; },
         settleAmount: v => { this.settleAmountUniform.value = v; },
         settleStart: v => { this.settleStartUniform.value = v; },
         fieldRotationRate: v => { this.fieldRotationRate = v; },
@@ -507,43 +511,45 @@ export class EnergySculptor implements EnergySink {
 
       // Age fraction (0 born → 1 dead).
       const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
-
-      // Settling. Three things have to happen for a particle to actually
-      // freeze in place rather than drift toward an attractor fixed point:
-      //   (1) targetVel damped — so the inertial blend stops pulling toward
-      //       residual flow (which converges to the attractor's equilibria),
-      //   (2) containment damped — so particles near the safe-radius edge
-      //       aren't yanked inward by a velocity-magnitude push every frame,
-      //   (3) position step damped — so the rotating field can't re-aim a
-      //       low-but-nonzero velocity at a new direction each frame.
-      // Without (2) and (3) the sediment all collapses into the same handful
-      // of fixed-point clusters even though velocity goes near-zero.
       const fadeStart = float(1).sub(this.fadeFractionUniform);
-      const settleT = smoothstep(this.settleStartUniform, fadeStart, lifeT);
-      const settleStop = float(1).sub(settleT.mul(this.settleAmountUniform));
+
+      // Field memory is absolute time, not a fraction of visual lifetime. A
+      // particle lives around 100s, but the current attractor only has strong
+      // authority for its first fieldMemorySeconds; after that the particle is
+      // mostly a trace of the path it already drew. This keeps old layers from
+      // continuing to collapse into attractor equilibria while newer emissions
+      // keep the sculpture moving.
+      const memoryAge = m.x.div(this.fieldMemorySecondsUniform.max(0.0001)).clamp(0, 1);
+      const settledT = smoothstep(this.settleStartUniform, 1.0, memoryAge)
+        .mul(this.settleAmountUniform)
+        .clamp(0, 1);
+      const fieldInfluence = float(1).sub(settledT);
+      const traceMotion = fieldInfluence.add(settledT.mul(0.12)).clamp(0, 1);
 
       // Smoothly blend velocity toward flow so trajectories feel inertial
       // rather than instantaneously snapping to dp/dt.
-      const targetVel = flow.mul(speedGain).mul(settleStop);
+      const targetVel = flow.mul(speedGain).mul(fieldInfluence);
       const newVel = mix(targetVel, vel, this.velocityBlendUniform).toVar();
 
       // Soft containment: when a particle drifts past the safe radius for
       // this attractor, push it back so we don't accumulate runaways. Gated
-      // by settleStop so settled particles aren't dragged off their resting
+      // by fieldInfluence so settled particles aren't dragged off their resting
       // positions, but active particles still stay bounded.
       const r = pos.length();
       const overshoot = smoothstep(this.containmentRadiusUniform.mul(0.85), this.containmentRadiusUniform, r);
       const inward = pos.normalize().negate().mul(overshoot).mul(this.containmentStrengthUniform);
-      newVel.addAssign(inward.mul(settleStop));
+      newVel.addAssign(inward.mul(fieldInfluence));
 
       // Dissolve burst: blow particles outward away from origin and shorten life.
       const dm = this.dissolveModeUniform;
       const outward = pos.normalize().mul(this.dissolveBurstUniform);
       newVel.assign(mix(newVel, outward, dm));
 
-      // Step. Position update scaled by settleStop so settled particles truly
-      // freeze; dissolve overrides settling so the burst can still throw them.
-      const moveScale = mix(settleStop, float(1), dm);
+      // Step. Settled particles retain a small coasting tail while velocity
+      // decays, preserving graceful streaks without letting the live field keep
+      // steering them. Dissolve overrides memory so the burst can still throw
+      // every particle outward.
+      const moveScale = mix(traceMotion, float(1), dm);
       const newPos = pos.add(newVel.mul(this.dtUniform).mul(moveScale));
 
       // Age + alpha.
@@ -601,8 +607,12 @@ export class EnergySculptor implements EnergySink {
     // X axis (after billboarding) can be aligned with the on-screen velocity
     // direction. Length-zero velocities (just-spawned, frozen) fall back to
     // angle 0 — the speedRamp gate above already disables their stretch.
-    const worldVel = vel.mul(this.worldScaleUniform);
-    const viewVel = cameraViewMatrix.mul(vec4(worldVel, 0));
+    const viewVel = cameraViewMatrix.mul(vec4(
+      vel.x.mul(this.worldScaleUniform),
+      vel.y.mul(this.worldScaleUniform),
+      vel.z.mul(this.worldScaleUniform),
+      0,
+    ));
     const angle = atan(viewVel.y, viewVel.x);
     material.rotationNode = angle;
 

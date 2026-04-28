@@ -106,15 +106,15 @@ const _colorB = new THREE.Color();
 const _colorC = new THREE.Color();
 
 const STARLACE_NOTE_PALETTE = [
-  '#d99a43',
-  '#c76b42',
-  '#c94f72',
-  '#ad4692',
-  '#7d63c7',
-  '#4d78bb',
-  '#3299b0',
-  '#55a889',
-  '#c58336',
+  '#e4a64c',
+  '#d67b4f',
+  '#dd5e85',
+  '#c458aa',
+  '#9274df',
+  '#5c8bd2',
+  '#3fb2c4',
+  '#68bd9a',
+  '#d7963f',
 ] as const;
 
 const STARLACE_DUSK_COOL = new THREE.Color('#376f8e');
@@ -690,12 +690,12 @@ export class Starlace implements PlayerVisual {
       const material = new THREE.MeshStandardMaterial({
         color: STARLACE_NOTE_PALETTE[paletteIndex],
         emissive: STARLACE_NOTE_PALETTE[paletteIndex],
-        emissiveIntensity: 0.18,
+        emissiveIntensity: 0.26,
         flatShading: true,
-        roughness: 0.52,
-        metalness: 0.08,
+        roughness: 0.44,
+        metalness: 0.06,
         transparent: true,
-        opacity: 0.92,
+        opacity: 0.96,
         blending: THREE.NormalBlending,
         depthWrite: false,
       });
@@ -833,13 +833,13 @@ export class Starlace implements PlayerVisual {
       _colorA.lerp(_colorB, 0.10 + twinkle * 0.045);
       _colorA.lerp(this.gold, hash(node.seed * 29.1 + node.noteIndex) > 0.80 ? 0.08 : 0.015);
       const flash = Math.pow(pulse, 1.55);
-      _colorC.copy(_colorA).lerp(this.hot, 0.12 + flash * 0.16).multiplyScalar(0.90 + flash * 0.46);
-      _colorC.r = Math.min(_colorC.r, 1.10);
-      _colorC.g = Math.min(_colorC.g, 1.04);
-      _colorC.b = Math.min(_colorC.b, 1.12);
+      _colorC.copy(_colorA).lerp(this.hot, 0.08 + flash * 0.18).multiplyScalar(1.04 + flash * 0.56);
+      _colorC.r = Math.min(_colorC.r, 1.22);
+      _colorC.g = Math.min(_colorC.g, 1.16);
+      _colorC.b = Math.min(_colorC.b, 1.24);
       material.color.copy(_colorC);
       material.emissive.copy(_colorC);
-      material.emissiveIntensity = 0.16 + flash * 0.76;
+      material.emissiveIntensity = 0.24 + flash * 1.02;
     }
   }
 
@@ -1105,14 +1105,7 @@ export class Starlace implements PlayerVisual {
   private fireNode(nodeIndex: number, velocity: number): void {
     const node = this.nodes[nodeIndex];
     node.lastHitAt = this.elapsed;
-    node.pulse = Math.min(1, node.pulse + 0.65 + velocity * 0.45);
-
-    const neighbors = this.adjacency[nodeIndex];
-    for (let i = 0; i < Math.min(neighbors.length, 5); i += 1) {
-      const neighborIndex = neighbors[(i + Math.floor(node.seed * neighbors.length)) % neighbors.length];
-      this.addSpark(nodeIndex, neighborIndex, velocity);
-      this.nodes[neighborIndex].pulse = Math.min(1, this.nodes[neighborIndex].pulse + velocity * 0.32);
-    }
+    node.pulse = Math.min(1, node.pulse + 0.78 + velocity * 0.52);
 
     if (this.onPluckCallback) {
       this.onPluckCallback({
@@ -1332,8 +1325,13 @@ export class Starlace implements PlayerVisual {
     if (dir.lengthSq() < 1e-4) dir.set(0, 0.1, 0);
     dir.normalize();
     this.noteColorForNode(node, _colorA);
-    _colorA.lerp(this.gold, hash(node.seed * 37.7 + node.noteIndex * 2.9) > 0.72 ? 0.16 : 0.04);
-    _colorA.lerp(this.hot, Math.min(0.18, velocity * 0.10));
+    _colorB.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
+    _colorA.lerp(_colorB, 0.10);
+    _colorA.lerp(this.gold, hash(node.seed * 37.7 + node.noteIndex * 2.9) > 0.78 ? 0.10 : 0.025);
+    _colorA.lerp(this.hot, Math.min(0.10, velocity * 0.055)).multiplyScalar(1.10);
+    _colorA.r = Math.min(_colorA.r, 1.12);
+    _colorA.g = Math.min(_colorA.g, 1.08);
+    _colorA.b = Math.min(_colorA.b, 1.14);
     sink.emit({
       kind: 'starlace',
       origin: node.world.clone(),

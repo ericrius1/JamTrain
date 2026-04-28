@@ -93,6 +93,11 @@ const RESET_COOLDOWN_S = 1;
 const POINTER_LAG_SECONDS = 0.075;
 const POINTER_ACTIVE_SECONDS = 1.4;
 const POINTER_IDLE_CONFIDENCE = 0.35;
+const MIC_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: false,
+  noiseSuppression: false,
+  autoGainControl: false,
+};
 
 export class HandTracker {
   private video?: HTMLVideoElement;
@@ -145,12 +150,8 @@ export class HandTracker {
 
     let stream: MediaStream | undefined;
     try {
-      // Video-only on purpose. Asking for `audio: true` here would put the OS
-      // shared audio device into voice-processing mode (AEC/NS/AGC) for the
-      // entire session, which makes Tone.js's WebAudio output crackle on
-      // macOS — even after the user toggles the camera back off, because the
-      // mic track stays alive. Mic is acquired separately in startMic() the
-      // first time the user explicitly clicks the Mic button.
+      // Video-only on purpose. Mic capture is acquired separately with plain
+      // audio constraints when the user explicitly clicks the Mic button.
       stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 960 }, height: { ideal: 540 }, facingMode: 'user' },
       });
@@ -327,12 +328,14 @@ export class HandTracker {
   }
 
   // Acquired lazily on the first Mic toggle so the mic doesn't sit live the
-  // whole time the camera is on. See startCamera() for the macOS audio reason.
+  // whole time the camera is on.
   private async startMic(): Promise<boolean> {
     if (this.micStream) return true;
     if (!navigator.mediaDevices?.getUserMedia) return false;
     try {
-      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      this.micStream = await navigator.mediaDevices.getUserMedia({
+        audio: MIC_AUDIO_CONSTRAINTS,
+      });
       return true;
     } catch (err) {
       console.warn('[webrtc] mic unavailable', err);

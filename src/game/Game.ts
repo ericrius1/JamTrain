@@ -772,8 +772,9 @@ export class Game {
     const seatIndex = player === 'local' ? this.multiplayer.localSeatIndex : this.multiplayer.partnerSeatIndex;
     const anchor = this.computeInstrumentAnchor(seatIndex);
     let visual: PlayerVisual;
+    const paneDock = player === 'local' ? this.paneDock : undefined;
     if (id === 'starlace') {
-      visual = new Starlace(this.scene, this.paneDock, `starlace-${player}`, {
+      visual = new Starlace(this.scene, paneDock, `starlace-${player}`, {
         palette: player,
         title: `Starlace (${player === 'local' ? 'Local' : 'Partner'})`,
         sculptor: this.sculptor,
@@ -795,7 +796,7 @@ export class Game {
         },
       });
     } else {
-      visual = new Drum(this.scene, this.paneDock, `drum-${player}`, {
+      visual = new Drum(this.scene, paneDock, `drum-${player}`, {
         palette: player,
         title: `Drum (${player === 'local' ? 'Local' : 'Partner'})`,
         camera: player === 'local' ? this.camera : undefined,
