@@ -10,7 +10,7 @@ export class WaterStrip {
   private meshes: { mesh: THREE.Mesh; side: number }[] = [];
   private coverage = uniform(0);
   private tint = uniform(new THREE.Color(0xb6d6e6));
-  private skyTint = uniform(new THREE.Color(0x6a90b0));
+  private skyTint = uniform(new THREE.Color(0x3b5060));
 
   constructor(private scene: THREE.Scene) {}
 
@@ -27,7 +27,7 @@ export class WaterStrip {
       // Slow horizontal jitter band for shimmer.
       const shimmer = sin(u.x.mul(34).add(time.mul(0.6))).mul(0.06).add(sin(u.x.mul(13).sub(time.mul(0.8))).mul(0.04));
       const shine = mix(color(0xffffff), color(0x8aa8c0), u.y).mul(shimmer.mul(0.5).add(0.5));
-      return baseTint.mul(0.85).add(shine.mul(0.15));
+      return baseTint.mul(0.58).add(shine.mul(0.10));
     })();
     material.opacityNode = this.coverage;
 

@@ -46,7 +46,7 @@ const CAMERA_DOLLY_DEFS = {
 } as const;
 
 const PLAYERS_DEFS = {
-  backOffset: { default: -0.14, min: -0.4, max: 0.8, step: 0.01, label: 'back offset' },
+  backOffset: { default: 0.08, min: -0.4, max: 0.8, step: 0.01, label: 'back offset' },
 } as const;
 
 const CABIN_DEFS = {
@@ -54,6 +54,12 @@ const CABIN_DEFS = {
   furnitureBevel: { default: 0.10, min: 0, max: 0.18, step: 0.005, label: 'furniture bevel' },
   bevelSegments:  { default: 4,    min: 1, max: 8,    step: 1,     label: 'bevel smoothness' },
 } as const;
+
+const ILLUSTRATED_CABIN_TEXTURE = '/cabin/illustrated-cabin-plate-v2-color.webp';
+const ILLUSTRATED_CABIN_ALPHA_TEXTURE = '/cabin/illustrated-cabin-plate-v2-alpha.webp';
+const ILLUSTRATED_CABIN_ASPECT = 1672 / 941;
+const ILLUSTRATED_CABIN_DISTANCE = 3.35;
+const ILLUSTRATED_CABIN_OVERSCAN = 1.015;
 
 type GameUi = {
   connectionStatus: HTMLElement;
@@ -103,6 +109,7 @@ export class Game {
   private readonly designCameraPos = new THREE.Vector3(1.66, 1.34, 0.02);
   private readonly designCameraTarget = new THREE.Vector3(-0.12, 1.06, 0);
   private readonly _backDir = new THREE.Vector3();
+  private readonly _cabinPlateForward = new THREE.Vector3();
   private readonly cameraDolly = makeParams(CAMERA_DOLLY_DEFS);
   private dollyT = 0;
   private cameraTweaks?: ReturnType<typeof registerTweaks<typeof CAMERA_DOLLY_DEFS>>;
@@ -141,6 +148,9 @@ export class Game {
   private readonly shadowParams = makeParams(SHADOWS_DEFS);
   private cabinTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_DEFS>>;
   private cabinGroup?: THREE.Group;
+  private cabinPlate?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  private cabinPlateTexture?: THREE.Texture;
+  private cabinPlateAlphaTexture?: THREE.Texture;
   private readonly cabinParams = makeParams(CABIN_DEFS);
   private playersTweaks?: ReturnType<typeof registerTweaks<typeof PLAYERS_DEFS>>;
   private readonly playersParams = makeParams(PLAYERS_DEFS);
@@ -432,6 +442,7 @@ export class Game {
     this.shadowsTweaks?.dispose();
     this.cabinTweaks?.dispose();
     this.playersTweaks?.dispose();
+    this.disposeCabinPlate();
     this.paneDock.remove();
     this.renderer.dispose();
   }
@@ -495,6 +506,7 @@ export class Game {
     this.camera.position.copy(this.gameCameraPosition);
     this.camera.lookAt(this.gameCameraTarget);
     this.camera.updateProjectionMatrix();
+    this.updateCabinPlateTransform();
   }
 
   private setupShadowsPane(): void {
@@ -526,8 +538,8 @@ export class Game {
   }
 
   private createCabin(): void {
-    this.buildCabinGeometry();
     this.scenery.build();
+    this.buildIllustratedCabinPlate();
     this.scenery.setThunderHandler(delay => this.audio.playThunder(delay));
 
     for (const z of [-4.65, -3.1, -1.55, 0, 1.55, 3.1, 4.65]) {
@@ -538,8 +550,6 @@ export class Game {
       this.scene.add(light);
       this.cabinLights.push({ light, baseIntensity });
     }
-
-    this.setupCabinPane();
 
     this.ambientLight = new THREE.AmbientLight(0x7d5a35, 0.72);
     this.scene.add(this.ambientLight);
@@ -563,6 +573,72 @@ export class Game {
     this.keyLight.shadow.normalBias = this.shadowParams.normalBias;
     this.keyLight.shadow.blurSamples = this.shadowParams.blurSamples;
     this.scene.add(this.keyLight);
+  }
+
+  private buildIllustratedCabinPlate(): void {
+    this.disposeCabinPlate();
+    const texture = new THREE.TextureLoader().load(ILLUSTRATED_CABIN_TEXTURE, tex => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.needsUpdate = true;
+    });
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.generateMipmaps = true;
+    this.cabinPlateTexture = texture;
+
+    const alphaTexture = new THREE.TextureLoader().load(ILLUSTRATED_CABIN_ALPHA_TEXTURE, tex => {
+      tex.colorSpace = THREE.NoColorSpace;
+      tex.needsUpdate = true;
+    });
+    alphaTexture.colorSpace = THREE.NoColorSpace;
+    alphaTexture.generateMipmaps = true;
+    this.cabinPlateAlphaTexture = alphaTexture;
+
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      alphaMap: alphaTexture,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+    });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+    mesh.name = 'illustrated-cabin-plate';
+    mesh.frustumCulled = false;
+    mesh.renderOrder = -6;
+    this.cabinPlate = mesh;
+    this.scene.add(mesh);
+    this.updateCabinPlateTransform();
+  }
+
+  private updateCabinPlateTransform(): void {
+    if (!this.cabinPlate) return;
+    const fovRadians = THREE.MathUtils.degToRad(this.camera.fov);
+    const viewHeight = 2 * Math.tan(fovRadians * 0.5) * ILLUSTRATED_CABIN_DISTANCE;
+    const viewWidth = viewHeight * this.camera.aspect;
+    let width = viewWidth;
+    let height = width / ILLUSTRATED_CABIN_ASPECT;
+    if (height < viewHeight) {
+      height = viewHeight;
+      width = height * ILLUSTRATED_CABIN_ASPECT;
+    }
+    this.cabinPlate.scale.set(width * ILLUSTRATED_CABIN_OVERSCAN, height * ILLUSTRATED_CABIN_OVERSCAN, 1);
+    this.camera.getWorldDirection(this._cabinPlateForward);
+    this.cabinPlate.position
+      .copy(this.camera.position)
+      .addScaledVector(this._cabinPlateForward, ILLUSTRATED_CABIN_DISTANCE);
+    this.cabinPlate.quaternion.copy(this.camera.quaternion);
+  }
+
+  private disposeCabinPlate(): void {
+    if (!this.cabinPlate) return;
+    this.scene.remove(this.cabinPlate);
+    this.cabinPlate.geometry.dispose();
+    this.cabinPlate.material.dispose();
+    this.cabinPlateTexture?.dispose();
+    this.cabinPlateAlphaTexture?.dispose();
+    this.cabinPlate = undefined;
+    this.cabinPlateTexture = undefined;
+    this.cabinPlateAlphaTexture = undefined;
   }
 
   private buildCabinGeometry(): void {
@@ -739,7 +815,7 @@ export class Game {
 
   private setupPlayersPane(): void {
     if (this.playersTweaks) return;
-    this.playersTweaks = registerTweaks(this.paneDock, 'players', PLAYERS_DEFS, {
+    this.playersTweaks = registerTweaks(this.paneDock, 'players-v2', PLAYERS_DEFS, {
       title: 'Players',
       params: this.playersParams,
       onChange: {

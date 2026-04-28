@@ -33,18 +33,18 @@ const TERRAIN_LAYER_MAX = 9;
 const TERRAIN_LAYER_DEFAULT = 9;
 
 export const SCENERY_DEFS = {
-  cycleLengthSeconds: { default: 180,  min: 30,  max: 600,  step: 1,     label: 'day/night sec' },
-  cycleOffset:        { default: 0.08, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
+  cycleLengthSeconds: { default: 240,  min: 30,  max: 600,  step: 1,     label: 'day/night sec' },
+  cycleOffset:        { default: 0.50, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
   trainSpeed:         { default: 1.1,  min: 0,   max: 3,    step: 0.01,  label: 'train speed' },
-  hillAmplitude:      { default: 1.0,  min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape', folder: 'Terrain' },
+  hillAmplitude:      { default: 1.18, min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape', folder: 'Terrain' },
   terrainLayers:      { default: TERRAIN_LAYER_DEFAULT, min: TERRAIN_LAYER_MIN, max: TERRAIN_LAYER_MAX, step: 1, label: 'layers', folder: 'Terrain' },
-  auroraIntensity:    { default: 0.28, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
-  starIntensity:      { default: 0.78, min: 0,   max: 1,    step: 0.01,  label: 'stars' },
+  auroraIntensity:    { default: 0.42, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
+  starIntensity:      { default: 0.9,  min: 0,   max: 1,    step: 0.01,  label: 'stars' },
   moonSize:           { default: 0.34, min: 0.12, max: 0.58, step: 0.01, label: 'moon size' },
   moonPhase:          { type: 'string', default: '', readonly: true, label: 'moon phase' },
 
-  foreground:      { type: 'select', default: 'auto', options: FG_OPTIONS, folder: 'Biomes' },
-  background:      { type: 'select', default: 'auto', options: BG_OPTIONS, folder: 'Biomes' },
+  foreground:      { type: 'select', default: 'lake', options: FG_OPTIONS, folder: 'Biomes' },
+  background:      { type: 'select', default: 'alpinePeaks', options: BG_OPTIONS, folder: 'Biomes' },
   transitionSpeed: { default: 1, min: 0.1, max: 10, step: 0.1,  folder: 'Biomes' },
   recencyPenalty:  { default: 1, min: 0,   max: 2,  step: 0.05, folder: 'Biomes' },
 } as const;
@@ -313,6 +313,7 @@ export class ScenerySystem {
   private cloudCanopy!: CloudCanopy;
   private underwater!: UnderwaterRealm;
   private onThunder?: (delay: number) => void;
+  private readonly cycleStartedAt = Date.now() / 1000;
   private lastCycle = 0;
   private atmosphere = {
     background: new THREE.Color(0x10202d),
@@ -338,7 +339,7 @@ export class ScenerySystem {
       () => this.lastCycle,
     );
 
-    this.registered = registerTweaks(paneContainer, 'scenery', SCENERY_DEFS, {
+    this.registered = registerTweaks(paneContainer, 'scenery-v2', SCENERY_DEFS, {
       title: 'Scenery',
       params: this.params,
       onChange: {
@@ -422,7 +423,8 @@ export class ScenerySystem {
 
   update(delta: number, _elapsed: number): Atmosphere {
     const wallElapsed = Date.now() / 1000;
-    const cycle = ((wallElapsed / Math.max(this.params.cycleLengthSeconds, 1) + this.params.cycleOffset) % 1 + 1) % 1;
+    const cycleElapsed = wallElapsed - this.cycleStartedAt;
+    const cycle = ((cycleElapsed / Math.max(this.params.cycleLengthSeconds, 1) + this.params.cycleOffset) % 1 + 1) % 1;
     this.lastCycle = cycle;
     const sunWave = Math.sin(cycle * fullTurn);
     const daylight = clamp(sunWave * 0.58 + 0.48, 0, 1);
@@ -532,13 +534,13 @@ export class ScenerySystem {
       const snow = smoothstep(snowThreshold.sub(0.04), snowThreshold.add(0.02), u.y).mul(this.bgSnowMix);
       baseColor.assign(mix(baseColor, this.bgSnowTint, snow));
 
-      const coolMist = mix(color(0xd2e3de), color(0x071014), this.skyNight);
-      const fogTint = mix(coolMist, color(0xf0c183), this.skySunset.mul(0.38));
+      const coolMist = mix(color(0xa8b6b0), color(0x071014), this.skyNight);
+      const fogTint = mix(coolMist, color(0xb46b36), this.skySunset.mul(0.36));
       const crestGlow = smoothstep(0.56, 0.96, u.y).mul(float(layer.ridgeGlow));
       const crestTint = mix(fogTint, this.bgSnowTint, this.bgSnowMix.mul(0.74).add(0.10).clamp(0, 1));
-      baseColor.assign(mix(baseColor, fogTint, float(layer.mist)));
+      baseColor.assign(mix(baseColor, fogTint, float(layer.mist * 0.74)));
       baseColor.assign(mix(baseColor, crestTint, crestGlow));
-      baseColor.assign(mix(baseColor, fogTint, u.y.mul(this.bgFog).mul(float(layer.fogScale)).clamp(0, 1)));
+      baseColor.assign(mix(baseColor, fogTint, u.y.mul(this.bgFog).mul(float(layer.fogScale * 0.58)).clamp(0, 1)));
 
       // Ocean shimmer band (applies at low u.y, dims into nothing higher up).
       const shimmerBand = float(1).sub(smoothstep(0.0, 0.18, u.y)).mul(this.bgShimmer).mul(0.45);
@@ -611,8 +613,8 @@ export class ScenerySystem {
     material.fog = false;
 
     material.colorNode = Fn(() => {
-      const coolMist = mix(color(0xd7e9e0), color(0x071014), this.skyNight);
-      return mix(coolMist, color(0xf3c58b), this.skySunset.mul(0.42));
+      const coolMist = mix(color(0xa6b7af), color(0x071014), this.skyNight);
+      return mix(coolMist, color(0xbf733c), this.skySunset.mul(0.36));
     })();
 
     material.opacityNode = Fn(() => {
@@ -622,8 +624,8 @@ export class ScenerySystem {
       const wispA = u.x.mul(13.0).add(time.mul(band.drift)).sin().mul(0.5).add(0.5);
       const wispB = u.x.mul(31.0).sub(time.mul(band.drift * 0.72)).sin().mul(0.5).add(0.5);
       const wisps = wispA.mul(0.45).add(wispB.mul(0.24)).add(0.34).clamp(0, 1);
-      const weatherFog = this.bgFog.mul(0.80).add(0.24).clamp(0, 1);
-      return verticalFade.mul(wisps).mul(weatherFog).mul(float(band.intensity));
+      const weatherFog = this.bgFog.mul(0.54).add(0.16).clamp(0, 1);
+      return verticalFade.mul(wisps).mul(weatherFog).mul(float(band.intensity * 0.72));
     })();
 
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(BG_WIDTH, band.height), material);

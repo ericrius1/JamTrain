@@ -6,10 +6,9 @@ import { Skeleton } from './skeleton';
 import { buildHumanHead, type HumanHeadHandles } from './humanHead';
 import { buildHumanBody, type HumanBodyHandles } from './humanBody';
 import { buildLionHead, type LionHeadHandles } from './lionHead';
-import { buildLionMane, type LionManeHandles } from './lionMane';
-import { buildLionTail, type LionTailHandles } from './lionTail';
 import { buildLionBody, type LionBodyHandles } from './lionBody';
 import { OtterAvatar } from './otterAvatar';
+import { IllustratedLionAvatar } from './IllustratedLionAvatar';
 
 export type HumanoidRigOptions = {
   seatIndex: number;
@@ -30,9 +29,8 @@ export class HumanoidRig {
   private skeleton!: Skeleton;
   private head!: HeadHandles;
   private body!: BodyHandles;
-  private mane: LionManeHandles | null = null;
-  private tail: LionTailHandles | null = null;
   private otter: OtterAvatar | null = null;
+  private illustratedLion: IllustratedLionAvatar | null = null;
   private accentMaterial!: THREE.MeshBasicNodeMaterial;
   private fingertipNodesVisible = true;
   private elapsed = 0;
@@ -68,8 +66,8 @@ export class HumanoidRig {
     void _robotTarget; // robot overlay was dropped — ignored, kept for caller compat.
     this.elapsed += delta;
     this.skeleton.update(pose, delta);
-    if (this.tail) this.tail.update(this.elapsed);
     if (this.otter) this.otter.update(this.skeleton, pose, this.elapsed);
+    if (this.illustratedLion) this.illustratedLion.update(this.skeleton, pose, this.elapsed);
   }
 
   getPalmWorld(hand: Handedness): THREE.Vector3 {
@@ -117,21 +115,18 @@ export class HumanoidRig {
     if (this.creature === 'lion') {
       this.body = buildLionBody(this.lighting);
       this.head = buildLionHead(this.lighting);
-      this.mane = buildLionMane(this.lighting, this.seatColor, this.seatIndex);
-      this.tail = buildLionTail(this.lighting, this.seatColor);
       this.otter = null;
+      this.illustratedLion = new IllustratedLionAvatar();
     } else if (this.creature === 'otter') {
       this.body = buildLionBody(this.lighting);
       this.head = buildLionHead(this.lighting);
-      this.mane = null;
-      this.tail = null;
       this.otter = new OtterAvatar(this.otterLightLayer);
+      this.illustratedLion = null;
     } else {
       this.body = buildHumanBody(this.lighting, this.seatColor);
       this.head = buildHumanHead(this.lighting);
-      this.mane = null;
-      this.tail = null;
       this.otter = null;
+      this.illustratedLion = null;
     }
 
     this.skeleton = new Skeleton(
@@ -149,11 +144,12 @@ export class HumanoidRig {
     if (this.otter) {
       this.skeleton.root.visible = false;
       this.root.add(this.otter.group);
+    } else if (this.illustratedLion) {
+      this.skeleton.root.visible = false;
+      this.root.add(this.illustratedLion.group);
     } else {
       this.skeleton.bodyAnchor.add(this.body.group);
       this.skeleton.headAnchor.add(this.head.group);
-      if (this.mane) this.skeleton.headAnchor.add(this.mane.group);
-      if (this.tail) this.skeleton.bodyAnchor.add(this.tail.group);
     }
 
     this.root.add(this.skeleton.root);
@@ -163,6 +159,10 @@ export class HumanoidRig {
     if (this.otter) {
       this.otter.dispose();
       this.otter = null;
+    }
+    if (this.illustratedLion) {
+      this.illustratedLion.dispose();
+      this.illustratedLion = null;
     }
     if (this.skeleton) {
       this.root.remove(this.skeleton.root);
@@ -179,16 +179,6 @@ export class HumanoidRig {
       for (const g of this.head.geometries) g.dispose();
       for (const m of this.head.materials) m.dispose();
     }
-    if (this.mane) {
-      for (const g of this.mane.geometries) g.dispose();
-      for (const m of this.mane.materials) m.dispose();
-    }
-    if (this.tail) {
-      for (const g of this.tail.geometries) g.dispose();
-      for (const m of this.tail.materials) m.dispose();
-    }
     if (this.accentMaterial) this.accentMaterial.dispose();
-    this.mane = null;
-    this.tail = null;
   }
 }
