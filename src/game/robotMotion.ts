@@ -13,6 +13,13 @@ type RobotMotionPhase = {
   index: number;
 };
 
+type RobotStrikeCue = {
+  target: Vec3Data;
+  startedAt: number;
+  duration: number;
+  velocity: number;
+};
+
 export const ROBOT_MOTION_DEFS = {
   mode:            { type: 'select',  default: 'auto', options: { auto: 'auto', still: 'still', solo: 'solo', mirror: 'mirror', complement: 'complement', opposite: 'opposite' }, folder: 'Behavior' },
   stillness:       { default: 0.34,   min: 0,    max: 0.9,  step: 0.01, folder: 'Behavior', label: 'stillness' },
@@ -56,6 +63,7 @@ export class RobotMotionController {
   readonly params: RobotMotionParams = makeParams(ROBOT_MOTION_DEFS) as RobotMotionParams;
   private registered?: ReturnType<typeof registerTweaks<typeof ROBOT_MOTION_DEFS>>;
   private previousHands?: Record<Handedness, HandPose>;
+  private strikeCues: Partial<Record<Handedness, RobotStrikeCue>> = {};
   private manualKind?: RobotMotionKind;
   private phase: RobotMotionPhase = {
     kind: 'still',
@@ -85,6 +93,17 @@ export class RobotMotionController {
 
   dispose(): void {
     this.registered?.dispose();
+  }
+
+  cueStrike(handedness: Handedness, target: Vec3Data, velocity: number, elapsed: number): void {
+    if (!Number.isFinite(target.x) || !Number.isFinite(target.y) || !Number.isFinite(target.z)) return;
+    const v = clamp(velocity, 0, 1);
+    this.strikeCues[handedness] = {
+      target: cloneVec(target),
+      startedAt: elapsed - 0.10,
+      duration: lerp(0.72, 1.05, v),
+      velocity: v,
+    };
   }
 
   private resolveKind(elapsed: number): RobotMotionKind {
@@ -185,7 +204,72 @@ export class RobotMotionController {
     }
 
     this.applyPlayerInfluence(kind, handedness, playerPose, wrist, curls, moveEnvelope);
-    return this.buildHand(handedness, wrist, curls);
+    const hand = this.buildHand(handedness, wrist, curls);
+    this.applyStrikeCue(hand, elapsed);
+    return hand;
+  }
+
+  private applyStrikeCue(hand: HandPose, elapsed: number): void {
+    const cue = this.strikeCues[hand.handedness];
+    if (!cue) return;
+
+    const t = clamp((elapsed - cue.startedAt) / Math.max(0.001, cue.duration), 0, 1);
+    if (t >= 1) {
+      delete this.strikeCues[hand.handedness];
+      return;
+    }
+
+    const attack = smoothstepScalar(0, 0.14, t);
+    const release = 1 - smoothstepScalar(0.62, 1, t);
+    const amount = clamp(attack * release * (0.72 + cue.velocity * 0.28), 0, 1);
+    if (amount <= 0.001) return;
+
+    const side = hand.handedness === 'left' ? -1 : 1;
+    const target = {
+      x: clamp(cue.target.x, -0.92, 0.92),
+      y: clamp(cue.target.y, 0.18, 1.58),
+      z: clamp(cue.target.z, -0.36, 0.95),
+    };
+    const palmTarget = vec(
+      clamp(target.x - side * 0.025, -0.95, 0.95),
+      clamp(target.y - 0.07 + cue.velocity * 0.018, 0.12, 1.38),
+      clamp(target.z + 0.015, -0.36, 0.95),
+    );
+    const wristTarget = vec(
+      clamp(palmTarget.x - side * 0.09, -1.0, 1.0),
+      clamp(palmTarget.y - 0.16, 0.04, 1.18),
+      clamp(palmTarget.z + 0.055, -0.34, 0.98),
+    );
+
+    hand.wrist = lerpVec(hand.wrist, wristTarget, amount);
+    hand.palm = lerpVec(hand.palm, palmTarget, amount);
+
+    for (const finger of fingerNames) {
+      const index = fingerNames.indexOf(finger);
+      const lead = finger === 'index' || finger === 'middle' ? 1 : finger === 'ring' ? 0.55 : 0.34;
+      const spread = fingerSpread[finger] * side;
+      const tipTarget = vec(
+        clamp(target.x + spread * 0.075 * (1 - lead * 0.45), -0.98, 0.98),
+        clamp(target.y - (1 - lead) * 0.045 + Math.sin(t * Math.PI) * 0.016 * lead, 0.16, 1.5),
+        clamp(target.z + (1 - lead) * 0.045, -0.38, 0.98),
+      );
+      const baseTarget = vec(
+        hand.palm.x + spread * 0.32,
+        hand.palm.y + 0.035 + index * 0.005,
+        hand.palm.z + 0.006,
+      );
+      const midTarget = vec(
+        baseTarget.x + (tipTarget.x - baseTarget.x) * 0.54,
+        baseTarget.y + (tipTarget.y - baseTarget.y) * 0.58 + 0.035 * lead,
+        baseTarget.z + (tipTarget.z - baseTarget.z) * 0.55,
+      );
+      const pose = hand.fingers[finger];
+      const fingerAmount = clamp(amount * (0.55 + lead * 0.45), 0, 1);
+      pose.base = lerpVec(pose.base, baseTarget, fingerAmount);
+      pose.mid = lerpVec(pose.mid, midTarget, fingerAmount);
+      pose.tip = lerpVec(pose.tip, tipTarget, fingerAmount);
+      pose.curl = lerp(pose.curl, clamp(0.05 + (1 - lead) * 0.28, 0.04, 0.48), fingerAmount);
+    }
   }
 
   private applyPlayerInfluence(

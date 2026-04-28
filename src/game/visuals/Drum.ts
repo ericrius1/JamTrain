@@ -66,6 +66,8 @@ export type OrbHit = {
   frequency: number;
   /** 0..1 normalized hit velocity. */
   velocity: number;
+  /** Hand that caused a contact hit. Pointer / keyboard hits leave this empty. */
+  hand?: HandContactPoint['hand'];
   /** World-space position of the strike (used by the sound-sculpture emitter). */
   worldPosition: THREE.Vector3;
 };
@@ -842,7 +844,13 @@ export class Drum implements PlayerVisual {
     return true;
   }
 
-  private dispatchHit(orbIndex: number, velocity: number, worldPosition: THREE.Vector3, rippleBurst = false): void {
+  private dispatchHit(
+    orbIndex: number,
+    velocity: number,
+    worldPosition: THREE.Vector3,
+    rippleBurst = false,
+    hand?: HandContactPoint['hand'],
+  ): void {
     const orb = this.orbs[orbIndex];
     if (!orb) return;
     orb.lastHitAt = this.elapsed;
@@ -859,7 +867,7 @@ export class Drum implements PlayerVisual {
     const frequency = this.frequencyForOrb(orbIndex);
     const worldStrike = worldPosition.clone();
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike });
+      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike, hand });
     }
     this.emitSparks(worldStrike, velocity);
   }
@@ -993,7 +1001,7 @@ export class Drum implements PlayerVisual {
     const frequency = this.frequencyForOrb(orbIndex);
     const worldStrike = _strikePoint.clone().add(this.mesh.position);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike });
+      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike, hand: contact.hand });
     }
     this.emitSparks(worldStrike, velocity);
   }

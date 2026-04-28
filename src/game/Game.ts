@@ -25,7 +25,7 @@ import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { keyDirector } from './keyDirector';
 import { hashString } from './seedRandom';
-import { fingerJointNames, fingerNames, handednesses, type PlayerPose } from './types';
+import { fingerJointNames, fingerNames, handednesses, type Handedness, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 
@@ -163,7 +163,7 @@ export class Game {
   private localPose?: PlayerPose;
   private remotePose?: PlayerPose;
   private partnerPresent = false;
-  private robotJamMuted = true;
+  private robotJamMuted = false;
   private readonly localLeftPalm = new THREE.Vector3();
   private readonly localRightPalm = new THREE.Vector3();
   private readonly remoteLeftPalm = new THREE.Vector3();
@@ -403,7 +403,9 @@ export class Game {
   }
 
   private applyRobotMute(): void {
-    this.handSynth.setMuted('remote', !this.partnerPresent && this.robotJamMuted);
+    const robotActive = !this.partnerPresent;
+    this.handSynth.setRobotPartnerActive(robotActive);
+    this.handSynth.setMuted('remote', robotActive && this.robotJamMuted);
   }
 
   setDisplayName(name: string): void {
@@ -809,6 +811,7 @@ export class Game {
             pluck.y,
             pluck.noteIndex,
           );
+          this.cueRobotInstrumentStrike(player, pluck.hand, pluck.worldPosition, pluck.velocity);
           this.lastStarlacePluckAt = performance.now() / 1000;
           this.checkSynchrony();
         },
@@ -824,6 +827,7 @@ export class Game {
         onOrbCountChange: player === 'local' ? count => this.setLocalDrumOrbCount(count) : undefined,
         onHit: hit => {
           this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
+          this.cueRobotInstrumentStrike(player, hit.hand, hit.worldPosition, hit.velocity);
           this.lastDrumHitAt = performance.now() / 1000;
           this.checkSynchrony();
         },
@@ -942,6 +946,18 @@ export class Game {
       this.lastSynchronyAt = now;
       this.sculptor?.fireSynchrony();
     }
+  }
+
+  private cueRobotInstrumentStrike(
+    player: PlayerSlot,
+    hand: Handedness | undefined,
+    worldPosition: THREE.Vector3 | undefined,
+    velocity: number,
+  ): void {
+    if (player !== 'remote' || this.partnerPresent || !hand || !worldPosition) return;
+    const target = this.remoteRig.worldToPosePoint(hand, worldPosition);
+    const elapsed = (performance.now() - this.startedAt) / 1000;
+    this.robotMotion.cueStrike(hand, target, clamp(velocity, 0, 1), elapsed);
   }
 
   setPlayerInstrument(player: PlayerSlot, id: string): void {
@@ -1113,6 +1129,12 @@ export class Game {
       chordProgress: this.audio.getChordProgress(),
       groovePhase: this.audio.getGroovePhase(),
     });
+
+    // Sample the master FFT (full mix: backing track + player synths + fx)
+    // and forward per-band level/pulse into the sculptor so different
+    // frequency ranges drive their own particle bands.
+    const spectrum = this.audioGraph.updateSpectrum(delta);
+    this.sculptor?.setMusicSpectrum(spectrum);
   }
 
   // Intro/active state. While intro is enabled the scenery's bird system is

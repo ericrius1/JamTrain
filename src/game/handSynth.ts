@@ -216,6 +216,7 @@ export class HandSynthEngine {
   private pendingOrbHits: PendingOrbHit[] = [];
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'drum', remote: 'drum' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
+  private robotPartnerActive = false;
   private duetSynth?: any;
   private duetFilter?: any;
   private duetGain?: any;
@@ -460,6 +461,10 @@ export class HandSynthEngine {
     }
   }
 
+  setRobotPartnerActive(active: boolean): void {
+    this.robotPartnerActive = active;
+  }
+
   setInstrument(player: PlayerKey, id: InstrumentId): void {
     if (this.pendingInstruments[player] === id) return;
     this.pendingInstruments[player] = id;
@@ -672,13 +677,15 @@ export class HandSynthEngine {
     const chord = this.starlaceChordForIndex(chordIndex);
     this.absorbStarlaceGesture(starlace, v, x, y);
 
-    const noteGap = Math.max(0.04, this.params.starlaceNoteGap);
+    const robotFill = this.isRobotPartner(player);
+    const noteGap = Math.max(0.04, this.params.starlaceNoteGap * (robotFill ? 1.65 : 1));
     if (this.elapsed - starlace.lastAudioAt < noteGap) return;
 
     const activeVoices = starlace.pluck?.activeVoices ?? 0;
     const playableChord = this.starlacePlayableChord(chord, v, activeVoices);
     if (playableChord.length === 0) return;
-    if (!this.allowHit(this.starlaceBudgets[player], STARLACE_MAX_HITS_PER_WINDOW, activeVoices + playableChord.length, this.starlaceVoiceCap())) {
+    const maxHits = robotFill ? 3 : STARLACE_MAX_HITS_PER_WINDOW;
+    if (!this.allowHit(this.starlaceBudgets[player], maxHits, activeVoices + playableChord.length, this.starlaceVoiceCap())) {
       return;
     }
 
@@ -693,6 +700,10 @@ export class HandSynthEngine {
   }
   private _loggedStarlaceFirstHit = false;
   private _loggedStarlaceBlock = false;
+
+  private isRobotPartner(player: PlayerKey): boolean {
+    return player === 'remote' && this.robotPartnerActive;
+  }
 
   private absorbStarlaceGesture(starlace: StarlaceVoice, velocity: number, x: number, y: number): void {
     starlace.pulse = Math.min(1, starlace.pulse + 0.58 + velocity * 0.42);

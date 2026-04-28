@@ -1345,3 +1345,149 @@
   letter-spacing: 0.02em;
   line-height: 1.3;
 }
+
+/* ── Mobile / touch layout ────────────────────────────────────────────────
+   Phones can't host the full plaque-and-video desk. We hide the camera
+   surfaces (touch playback doesn't need hand tracking), shrink the chrome,
+   and tighten positioning so the scaled scene stays the focus and stays
+   touchable. Triggers on small viewports OR coarse-pointer devices without
+   hover (true phones), so iPad-class touchscreens keep the desktop layout. */
+@media (max-width: 768px), (pointer: coarse) and (hover: none) {
+  /* Camera surfaces — no role on a touch device. */
+  .video-panel,
+  .video-panel-toolbar,
+  .video-panel-empty,
+  .video-panel-share-warn { display: none !important; }
+
+  /* Decorative outer frame — eats screen real estate on small phones. */
+  #stage-wrap::before { display: none; }
+
+  /* Title plaque: condense; show only "Jam Train" + room. The footer
+     metadata gets compacted via title-footer rules below. */
+  .title-plaque {
+    top: 10px;
+    left: 10px;
+    min-width: 0;
+    max-width: 52vw;
+    padding: 10px 12px 9px;
+  }
+  .title-plaque .stamp { font-size: 9px; margin-bottom: 2px !important; }
+  .title-name { font-size: 18px; }
+  .title-tagline { display: none; }
+  .title-plaque .hline { display: none; }
+  .title-footer { gap: 10px; }
+  .title-footer .label { font-size: 8px; letter-spacing: 0.18em; }
+  .title-footer .room { font-size: 11px; }
+  .title-footer .line { display: none; }
+  .title-footer > div:last-child { display: none; }
+
+  /* Share — keep, but smaller and tighter to the corner. */
+  .share-button {
+    top: 12px;
+    right: 12px;
+    padding: 6px 10px 5px;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+  }
+  .share-popover {
+    top: 50px;
+    right: 12px;
+    left: 12px;
+    width: auto;
+    padding: 14px 14px 12px;
+  }
+
+  /* Player plaques: compact pill in each top corner, below the title row. */
+  .player-plaque {
+    top: 110px;
+    width: 130px;
+    padding: 8px 10px;
+  }
+  .player-plaque.left  { left: 10px; }
+  .player-plaque.right { right: 10px; }
+  .player-plaque .stamp { font-size: 8px; letter-spacing: 0.18em; }
+  .player-plaque .name { font-size: 14px; margin-top: 2px; }
+  .player-plaque .voice { font-size: 10px; margin-top: 2px; }
+  .player-plaque .medallion { width: 24px; height: 24px; top: 8px; }
+  .player-plaque.left  .medallion { right: -12px; }
+  .player-plaque.right .medallion { left:  -12px; }
+  .player-plaque .role-badge { font-size: 8px; padding: 1px 6px; top: -7px; }
+  /* In-plaque pickers were optimized for the wide desktop plaque; on mobile
+     they bloat the column. The picker children escape via position:fixed
+     (rules further down), so collapse the slot wrappers to nothing rather
+     than display:none — display:none would also hide the children. */
+  .player-plaque .picker-slot,
+  .player-plaque .creature-picker-slot {
+    margin: 0;
+    min-height: 0;
+  }
+
+  /* Controls panel: bottom-center between the instrument and creature pickers.
+     Pinned to the viewport (position: fixed) so it doesn't fight the scaled
+     stage. Default-closed on touch (see ControlsPanel.ts), so usually it shows
+     just a small "Controls — Drum" pill; expanding reveals the simplified
+     "Swipe — across the orbs" row. */
+  .controls-panel {
+    position: fixed;
+    top: auto;
+    bottom: 68px;
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    width: auto;
+    max-width: 50vw;
+  }
+  .controls-panel-summary { padding: 7px 10px 6px; gap: 6px; }
+  .controls-panel-eyebrow { font-size: 9px; letter-spacing: 0.2em; }
+  .controls-panel-instrument { font-size: 10px; }
+  .controls-panel-blurb { font-size: 11px; margin: 6px 0; }
+  .controls-panel-hint { font-size: 11px; }
+
+  /* Mixer panel: hide on phones. Voice/backing balance is a desktop nicety;
+     the partner-audio default is already sensible. */
+  .mixer-panel { display: none; }
+
+  /* Bottom rail for local pickers — instrument + creature side by side.
+     The InstrumentPicker / CreaturePicker live inside the local PlayerPlaque
+     by default, so we re-pin them to the viewport bottom on mobile via the
+     in-plaque pickers' parent rules (above hide them) and these absolute
+     overrides on the picker elements themselves. */
+  .player-plaque .instrument-picker,
+  .player-plaque .creature-picker {
+    position: fixed;
+    bottom: 12px;
+    background: rgba(8, 16, 28, 0.7);
+    backdrop-filter: blur(6px);
+    padding: 6px 8px;
+    gap: 6px;
+  }
+  .player-plaque .instrument-picker { left: 12px; right: auto; }
+  .player-plaque .creature-picker   { right: 12px; left: auto; }
+  .player-plaque .instrument-picker-btn,
+  .player-plaque .creature-picker-btn {
+    width: 36px;
+    height: 36px;
+  }
+  .player-plaque .instrument-picker-btn svg,
+  .player-plaque .creature-picker-btn svg { width: 20px; height: 20px; }
+
+  /* Corner filigree — tasteful at full size; visual noise on phones. */
+  .corner-filigree { display: none; }
+
+  /* Announcement toast: smaller letter-spacing so long room names fit. */
+  .announcement-toast {
+    top: 64px;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    padding: 7px 14px 6px;
+    max-width: calc(100vw - 24px);
+    white-space: normal;
+    text-align: center;
+  }
+}
+
+/* Even tighter rules for very short landscape phones (e.g. iPhone in
+   landscape ≈ 800×370). The plaques stack against the title otherwise. */
+@media (max-height: 440px) and (orientation: landscape) {
+  .player-plaque { top: 70px; }
+}

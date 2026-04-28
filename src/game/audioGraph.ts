@@ -33,7 +33,7 @@ export class JamAudioGraph {
   // routes through the master gain), so the spectrum reflects the full song
   // including whatever the players are doing.
   private analyser?: AnalyserNode;
-  private analyserBytes?: Uint8Array;
+  private analyserBytes?: Uint8Array<ArrayBuffer>;
   // Aggregated, smoothed band data — read by visuals each frame.
   private spectrumLevels = new Float32Array(SPECTRUM_BAND_COUNT);
   private spectrumPulses = new Float32Array(SPECTRUM_BAND_COUNT);
@@ -84,7 +84,10 @@ export class JamAudioGraph {
     const masterOut = (this.master.output as AudioNode | undefined) ?? (this.master as unknown as AudioNode);
     masterOut.connect(analyser);
     this.analyser = analyser;
-    this.analyserBytes = new Uint8Array(analyser.frequencyBinCount);
+    // Construct on a real ArrayBuffer (not ArrayBufferLike) so the resulting
+    // Uint8Array is accepted by analyser.getByteFrequencyData under TS's
+    // current AudioContext typings.
+    this.analyserBytes = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
     this.computeBandRanges(ctx.sampleRate, analyser.frequencyBinCount);
   }
 

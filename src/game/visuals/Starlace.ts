@@ -32,6 +32,8 @@ export type StarlacePluck = {
   noteIndex: number;
   frequency: number;
   velocity: number;
+  hand?: HandContactPoint['hand'];
+  worldPosition: THREE.Vector3;
   x: number;
   y: number;
 };
@@ -1067,7 +1069,7 @@ export class Starlace implements PlayerVisual {
         if (this.elapsed - node.lastHitAt < this.params.hitCooldown) continue;
 
         const velocity = clamp(0.18 + speed / 1.7, 0.2, 1);
-        this.fireNode(i, velocity);
+        this.fireNode(i, velocity, contact.hand);
         hitsThisFrame += 1;
         if (hitsThisFrame >= MAX_HITS_PER_FRAME) break;
       }
@@ -1080,7 +1082,7 @@ export class Starlace implements PlayerVisual {
     for (const key of this.currentContactKeys) this.activeContactKeys.add(key);
   }
 
-  private fireNode(nodeIndex: number, velocity: number): void {
+  private fireNode(nodeIndex: number, velocity: number, hand?: HandContactPoint['hand']): void {
     const node = this.nodes[nodeIndex];
     node.lastHitAt = this.elapsed;
     node.pulse = Math.min(1, node.pulse + 0.78 + velocity * 0.52);
@@ -1091,6 +1093,8 @@ export class Starlace implements PlayerVisual {
         noteIndex: node.noteIndex,
         frequency: this.hzTable[node.noteIndex],
         velocity,
+        hand,
+        worldPosition: node.world.clone(),
         x: clamp(node.u + 0.5, 0, 1),
         y: clamp(node.v + 0.5, 0, 1),
       });

@@ -411,6 +411,10 @@ export class EnergySculptor implements EnergySink {
     this.musicLevelUniform.value = this.musicField.drumLevel;
     this.musicIntensityUniform.value = this.musicField.intensity;
     this.grooveUniform.value = this.musicField.groovePhase * TAU;
+    // Spectrum oscillator phase advances unconditionally — bands modulate
+    // its amplitude, but the time base must stay smooth even when bands go
+    // silent so the wobble doesn't snap between frames.
+    this.spectrumTimeUniform.value = this.elapsed;
     this.tickSynchronyRing(delta);
     this.updateProjectorRing();
     this.tickSampleRotation();
@@ -559,10 +563,28 @@ export class EnergySculptor implements EnergySink {
       const flowLen = tangentialFlow.length();
       const flow = tangentialFlow.div(flowLen.max(0.0001)).mul(flowLen.clamp(0, 3.25));
 
+      // Per-particle band assignment: stable through the particle's life so
+      // its motion belongs to one slice of the spectrum. instanceIndex is
+      // uint; element() takes a uint, so the cast happens implicitly.
+      const bandIdx = instanceIndex.mod(uint(SPECTRUM_BAND_COUNT));
+      const bandLevel = this.spectrumLevelUniform.element(bandIdx).toVar();
+      const bandPulse = this.spectrumPulseUniform.element(bandIdx).toVar();
+      // Each band oscillates at its own rate so low frequencies wobble slowly
+      // and high frequencies shimmer fast — gives the visible "different
+      // frequencies behave differently" reading the user is after.
+      const bandIdxF = bandIdx.toFloat();
+      const bandRate = float(2.4).add(bandIdxF.mul(2.6));
+      const bandPhase = bandIdxF.mul(0.7);
+      const bandWave = sin(this.spectrumTimeUniform.mul(bandRate).add(bandPhase));
+
       // Music modulation: pulse boosts flow speed; sustained adds gentle swirl.
+      // Per-band level layers on top so loud bass / loud highs each push their
+      // own particles harder.
+      const fftFlow = bandLevel.mul(this.spectrumFlowGainUniform);
       const musicGain = float(1)
         .add(this.musicPulseUniform.mul(0.55))
-        .add(this.musicIntensityUniform.mul(0.18));
+        .add(this.musicIntensityUniform.mul(0.18))
+        .add(fftFlow);
       const synchronyGain = float(1).add(this.synchronyBoostUniform.mul(this.duetBoostUniform));
       const speedGain = this.flowSpeedUniform.mul(musicGain).mul(synchronyGain);
 
@@ -602,9 +624,31 @@ export class EnergySculptor implements EnergySink {
         r,
       ));
       const coreRepel = radial.mul(innerCore).mul(this.containmentStrengthUniform).mul(0.28);
+      // Per-band impulse split: low bands get a radial kick (kick drum, sub
+      // → bass shells push outward), high bands get a tangential shimmer
+      // (hi-hats, cymbals → swirl on the surface). The mix shifts smoothly
+      // across the band index.
+      const bandT = bandIdxF.div(float(Math.max(1, SPECTRUM_BAND_COUNT - 1)));
+      const radialMix = float(1).sub(bandT).mul(0.85).add(0.15);
+      const tangentMix = bandT.mul(1.05).add(0.1);
+      // Stable side vector for tangential motion: cross of radial with the
+      // sample-rotation Y axis. Picks an axis that drifts with the field,
+      // so the shimmer stays visually coherent with the orbit.
+      const upRef = this.sampleRotUniform.mul(vec3(0, 1, 0));
+      const sideRaw = radial.cross(upRef);
+      const side = sideRaw.div(sideRaw.length().max(0.0001));
+      const pulseMag = bandPulse.mul(this.spectrumPulseGainUniform);
+      const radialKick = radial.mul(pulseMag.mul(radialMix));
+      const tangentKick = side.mul(pulseMag.mul(tangentMix));
+      // Sustained per-band oscillation: a small wobble along `side` whose
+      // amplitude scales with the band's running level. Gives a continuous
+      // "the spectrum is breathing through me" feel even between transients.
+      const oscillation = side.mul(bandWave.mul(bandLevel).mul(this.spectrumOscillationUniform));
+
       const accel = flow.mul(speedGain).mul(flowInfluence)
         .add(inward.mul(containInfluence))
-        .add(coreRepel.mul(flowInfluence.add(this.residualFieldUniform)));
+        .add(coreRepel.mul(flowInfluence.add(this.residualFieldUniform)))
+        .add(radialKick.add(tangentKick).add(oscillation).mul(flowInfluence));
       const dragFactor = float(1).div(float(1).add(drag.mul(this.dtUniform)));
       const newVel = vel.add(accel.mul(this.dtUniform)).mul(dragFactor).toVar();
       // Young particles need to actually travel from emit origin into the
@@ -689,17 +733,29 @@ export class EnergySculptor implements EnergySink {
     const angle = atan(viewVel.y, viewVel.x);
     material.rotationNode = angle;
 
-    // Sprite scale: base size * sqrt(alpha) so dying particles shrink, then
-    // stretch one axis and squish the other for the kinetic feel.
-    const sizeBase = this.particleSizeUniform.mul(alpha.sqrt().add(0.15));
+    // Sprite scale: a lifted-then-faded curve so newborn particles bloom in
+    // and dying ones shrink all the way to nothing instead of leaving a small
+    // residual disc. fadeShape = alpha * (0.4 + 0.6*alpha) — close to 1 in
+    // the middle of life, monotonically → 0 at end so the particle smoothly
+    // disappears. No size floor, so the visible "pop" at lifeMax is gone.
+    const fadeShape = alpha.mul(float(0.4).add(alpha.mul(0.6)));
+    const sizeBase = this.particleSizeUniform.mul(fadeShape);
     material.scaleNode = vec2(sizeBase.mul(stretchSafe), sizeBase.div(stretchSafe));
 
-    // Color: base color, brightened by speed and music pulse, multiplied by
-    // alphaLife so dead particles contribute nothing under additive blending.
+    // Per-particle band lookup for the render brightness term. Same band the
+    // integrate pass used, so brightness and motion line up.
+    const renderBandIdx = instanceIndex.mod(uint(SPECTRUM_BAND_COUNT));
+    const renderBandLevel = this.spectrumLevelUniform.element(renderBandIdx);
+    const renderBandPulse = this.spectrumPulseUniform.element(renderBandIdx);
+
+    // Color: base color, brightened by speed, music pulse, and per-band fft
+    // energy. Multiplied by alphaLife so dead particles contribute nothing
+    // under additive blending.
     const baseColor = this.colorsBuffer.toAttribute();
     const speedTerm = speed.mul(0.05).clamp(0, 1).mul(this.speedGlowUniform);
     const musicTerm = this.musicPulseUniform.mul(0.35);
-    const glow = float(0.55).add(speedTerm).add(musicTerm);
+    const fftTerm = renderBandLevel.mul(0.45).add(renderBandPulse.mul(this.spectrumGlowGainUniform));
+    const glow = float(0.55).add(speedTerm).add(musicTerm).add(fftTerm);
     const lit = baseColor.mul(glow).mul(alpha);
     material.colorNode = lit;
 

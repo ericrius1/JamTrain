@@ -7,6 +7,7 @@ import {
 
 const STORAGE_KEY = 'jamtrain.controlsPanel.collapsed';
 const DEFAULT_DRUM_ORB_COUNT = drumOrbCountForBaseRow(DRUM_DEFAULT_BASE_ROW);
+const TOUCH_QUERY = '(max-width: 768px), (pointer: coarse) and (hover: none)';
 
 type ControlEntry = {
   /** Lead glyph(s) — usually keycap letters but can be any short token. */
@@ -29,19 +30,43 @@ const STARLACE_CONTROLS: ControlsContent = {
   ],
 };
 
+const STARLACE_TOUCH_CONTROLS: ControlsContent = {
+  blurb: 'Swipe across the lace to sing.',
+  rows: [{ keys: ['Swipe'], hint: 'across the stars' }],
+};
+
+function drumTouchControls(orbCount: number): ControlsContent {
+  const hint = orbCount === 1 ? 'across the orb' : `across the ${orbCount} orbs`;
+  return {
+    blurb: 'Swipe across the orbs to play.',
+    rows: [{ keys: ['Swipe'], hint }],
+  };
+}
+
 export class ControlsPanel {
   readonly el: HTMLDetailsElement;
   private summaryTitleEl: HTMLSpanElement;
   private bodyEl: HTMLDivElement;
   private current: InstrumentId = 'drum';
   private drumOrbCount = DEFAULT_DRUM_ORB_COUNT;
+  private touchMql?: MediaQueryList;
+  private touchListener?: () => void;
 
   constructor(opts: { initial: InstrumentId }) {
     this.current = opts.initial;
 
     this.el = document.createElement('details');
     this.el.className = 'controls-panel plaque';
-    this.el.open = readCollapsedState() === false;
+    // Default closed on touch/narrow viewports — the bottom-rail hint already
+    // tells the user how to play; opening is opt-in.
+    const touch = matchMedia(TOUCH_QUERY).matches;
+    this.el.open = touch ? false : readCollapsedState() === false;
+
+    if (typeof matchMedia === 'function') {
+      this.touchMql = matchMedia(TOUCH_QUERY);
+      this.touchListener = () => this.render();
+      this.touchMql.addEventListener('change', this.touchListener);
+    }
 
     const summary = document.createElement('summary');
     summary.className = 'controls-panel-summary';
@@ -89,9 +114,10 @@ export class ControlsPanel {
   }
 
   private render(): void {
+    const touch = this.touchMql?.matches ?? matchMedia(TOUCH_QUERY).matches;
     const content = this.current === 'drum'
-      ? drumControlsForOrbCount(this.drumOrbCount)
-      : STARLACE_CONTROLS;
+      ? (touch ? drumTouchControls(this.drumOrbCount) : drumControlsForOrbCount(this.drumOrbCount))
+      : (touch ? STARLACE_TOUCH_CONTROLS : STARLACE_CONTROLS);
     this.summaryTitleEl.textContent = labelFor(this.current);
 
     this.bodyEl.replaceChildren();

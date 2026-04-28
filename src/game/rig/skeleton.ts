@@ -140,6 +140,16 @@ export class Skeleton {
     return source ? target.copy(source) : target.set(0, 0, 0);
   }
 
+  worldToPosePoint(handedness: Handedness, point: THREE.Vector3, target: Vec3Data = { x: 0, y: 0, z: 0 }): Vec3Data {
+    const side = handedness === 'left' ? -1 : 1;
+    tempA.copy(point);
+    this.root.worldToLocal(tempA);
+    target.x = (tempA.x - side * 0.04) / 0.54;
+    target.y = (tempA.y - 0.54) / 0.68;
+    target.z = (-0.42 - handDepthConfig.worldDepthOffset - tempA.z) / (0.85 * Math.max(0.0001, handDepthConfig.worldDepthScale));
+    return target;
+  }
+
   getAllFingertips(): THREE.Vector3[] {
     const out: THREE.Vector3[] = [];
     for (const handedness of handednesses) {
