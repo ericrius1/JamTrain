@@ -31,12 +31,14 @@ export const HAND_SYNTH_DEFS = {
 
 export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
 
-// D major pentatonic plus color tones. It stays consonant against the train
-// bed but gives enough stepwise motion for the visual strings to feel played.
+// D major pentatonic (D E F# A B). All voices share this scale so every hand
+// note is consonant against the bed, which lives strictly in D major. The
+// orb scale used to drift into F natural / C natural — those clashed
+// against F# in the bed (a tritone away) and made the duet feel out of key.
 const SCALE_NOTES_LOCAL: string[] = ['D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5'];
 const SCALE_NOTES_REMOTE: string[] = SCALE_NOTES_LOCAL.map(transposeOctaveDown);
 const DUET_NOTES: string[] = ['D2', 'A2', 'D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'A4', 'D5', 'E5'];
-const ORB_GESTURE_NOTES: string[] = ['D2', 'A2', 'D3', 'F3', 'G3', 'A3', 'C4', 'D4', 'F4', 'G4', 'A4', 'C5', 'D5'];
+const ORB_GESTURE_NOTES: string[] = ['D2', 'A2', 'D3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5'];
 const STARLACE_NOTES: string[] = ['D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5', 'F#5', 'A5'];
 
 const PRESENCE_THRESHOLD = 0.5;

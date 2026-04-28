@@ -1208,3 +1208,147 @@
   background: rgba(200, 154, 75, 0.08);
 }
 .player-plaque .instrument-picker-btn svg { width: 18px; height: 18px; }
+
+/* ── Controls panel (bottom-right info card) ──────────────────────────────
+   Sits above where the remote video panel would appear so it never collides
+   with a partner's feed. <details>/summary handles open/closed state; we
+   persist the user's choice in localStorage. */
+.controls-panel {
+  position: absolute;
+  right: 24px;
+  bottom: 224px;
+  width: 268px;
+  padding: 0;
+  z-index: 11;
+  pointer-events: auto;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.controls-panel[open] { padding-bottom: 12px; }
+
+.controls-panel-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px 9px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  position: relative;
+  z-index: 1;
+}
+.controls-panel-summary::-webkit-details-marker { display: none; }
+.controls-panel-summary:hover .controls-panel-eyebrow { color: #ffd06a; }
+
+.controls-panel-summary-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+.controls-panel-eyebrow {
+  font-family: 'IM Fell English SC', serif;
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--sun);
+  transition: color 0.18s ease;
+}
+.controls-panel-instrument {
+  font-family: 'IM Fell English', serif;
+  font-style: italic;
+  font-size: 12px;
+  color: var(--brass);
+  letter-spacing: 0.04em;
+}
+
+.controls-panel-chevron {
+  width: 14px;
+  height: 14px;
+  display: inline-block;
+  position: relative;
+  color: var(--brass);
+  transition: transform 0.2s ease, color 0.18s ease;
+}
+.controls-panel-chevron::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 4px;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-135deg);
+  transform-origin: center;
+  transition: transform 0.2s ease;
+}
+.controls-panel[open] .controls-panel-chevron::before {
+  transform: rotate(45deg);
+}
+.controls-panel-summary:hover .controls-panel-chevron { color: var(--sun); }
+
+.controls-panel-body {
+  padding: 4px 14px 4px;
+  border-top: 1px solid rgba(200, 154, 75, 0.18);
+  position: relative;
+  z-index: 1;
+}
+.controls-panel-blurb {
+  font-family: 'IM Fell English', 'Fraunces', serif;
+  font-style: italic;
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 8px 0 8px;
+  line-height: 1.35;
+}
+.controls-panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.controls-panel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.controls-panel-keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+.controls-panel-key {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--parchment);
+  background: linear-gradient(180deg, #3a2812 0%, #1f1509 100%);
+  border: 1px solid var(--brass-3);
+  border-radius: 3px;
+  min-width: 18px;
+  padding: 2px 5px;
+  text-align: center;
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.22),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+  text-transform: uppercase;
+}
+.controls-panel-key.wide {
+  min-width: auto;
+  letter-spacing: 0.12em;
+  padding: 2px 7px;
+  text-transform: none;
+  font-family: 'IM Fell English SC', serif;
+  font-size: 10px;
+  color: var(--sun);
+}
+.controls-panel-hint {
+  font-family: 'IM Fell English', 'Fraunces', serif;
+  font-size: 12px;
+  color: var(--parchment);
+  letter-spacing: 0.02em;
+  line-height: 1.3;
+}
