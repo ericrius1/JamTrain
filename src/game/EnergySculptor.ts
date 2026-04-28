@@ -19,7 +19,10 @@ export const SCULPTOR_DEFS = {
   velocityDamping:      { default: 0.985, min: 0.9,  max: 1,    step: 0.001, label: 'velocity damping' },
   crossCurrentStrength: { default: 0.55,  min: 0,    max: 2,    step: 0.01, label: 'cross-current' },
   duetBonusGain:        { default: 1.2,   min: 0,    max: 2,    step: 0.05, label: 'duet bonus gain' },
+  dissolveBurstSpeed:   { default: 3,     min: 0,    max: 8,    step: 0.1,  label: 'dissolve burst' },
+  timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'timer ring radius' },
   synchronyRingColor:   { type: 'color', default: '#fff5d6', label: 'synchrony ring' },
+  timerRingColor:       { type: 'color', default: '#ffd166', label: 'timer ring' },
 } as const;
 
 export type SculptorParams = ParamsOf<typeof SCULPTOR_DEFS>;
@@ -81,6 +84,15 @@ export class EnergySculptor implements EnergySink {
   private synchronyRingMaterial?: THREE.MeshBasicMaterial;
   private synchronyRingAge = 1; // start "old" so it's invisible at boot
 
+  // Dissolve mode (1 during round-boundary outburst, else 0).
+  private dissolveMode = 0;
+
+  // In-world round timer ring.
+  private static TIMER_SEGMENTS = 96;
+  private timerRingLine?: THREE.Line;
+  private timerRingMaterial?: THREE.LineBasicMaterial;
+  private timerRingPositions?: Float32Array;
+
   constructor(scene: THREE.Scene, center: THREE.Vector3, paneDock?: HTMLElement) {
     this.center = center.clone();
     this.params = { ...Object.fromEntries(Object.entries(SCULPTOR_DEFS).map(([k, d]) => [k, d.default])) } as SculptorParams;
@@ -139,16 +151,60 @@ export class EnergySculptor implements EnergySink {
     this.synchronyRing.renderOrder = 33;
     scene.add(this.synchronyRing);
 
+    // In-world round timer ring — a Line that draws an arc from 0 to
+    // progress*TAU each frame using setDrawRange.
+    this.timerRingPositions = new Float32Array((EnergySculptor.TIMER_SEGMENTS + 1) * 3);
+    const timerGeom = new THREE.BufferGeometry();
+    timerGeom.setAttribute('position', new THREE.BufferAttribute(this.timerRingPositions, 3));
+    this.refreshTimerRingGeometry();
+    this.timerRingMaterial = new THREE.LineBasicMaterial({
+      color: this.params.timerRingColor,
+      transparent: true,
+      opacity: 0.55,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.timerRingLine = new THREE.Line(timerGeom, this.timerRingMaterial);
+    this.timerRingLine.position.copy(this.center);
+    this.timerRingLine.frustumCulled = false;
+    this.timerRingLine.renderOrder = 34;
+    scene.add(this.timerRingLine);
+
     this.registered = registerTweaks(paneDock, 'energySculptor', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
         synchronyRingColor: v => this.synchronyRingMaterial?.color.set(v),
+        timerRingColor: v => this.timerRingMaterial?.color.set(v),
+        timerRingRadius: () => this.refreshTimerRingGeometry(),
       },
     });
   }
 
+  private refreshTimerRingGeometry(): void {
+    if (!this.timerRingPositions) return;
+    const r = this.params.timerRingRadius;
+    const segs = EnergySculptor.TIMER_SEGMENTS;
+    for (let i = 0; i <= segs; i += 1) {
+      const theta = (i / segs) * Math.PI * 2 - Math.PI / 2; // start at top
+      const x = Math.cos(theta) * r;
+      const z = Math.sin(theta) * r;
+      const o = i * 3;
+      this.timerRingPositions[o] = x;
+      this.timerRingPositions[o + 1] = 0;
+      this.timerRingPositions[o + 2] = z;
+    }
+    if (this.timerRingLine) {
+      const attr = this.timerRingLine.geometry.getAttribute('position') as THREE.BufferAttribute;
+      attr.needsUpdate = true;
+    }
+  }
+
   emit(req: EmitRequest): void {
+    // During dissolve we drop emits on the floor — particles emitted now
+    // would immediately be blown outward and waste pool slots that are about
+    // to be needed by the new round.
+    if (this.dissolveMode > 0) return;
     this.pendingEmits.push(req);
   }
 
@@ -173,13 +229,32 @@ export class EnergySculptor implements EnergySink {
     return this.synchronyBoost;
   }
 
+  beginDissolve(): void {
+    this.dissolveMode = 1;
+  }
+
+  endDissolve(): void {
+    this.dissolveMode = 0;
+  }
+
   update(delta: number): void {
     if (delta <= 0) return;
     this.drainEmits();
     this.refreshDensityGrids();
     this.integrate(delta);
     this.tickSynchrony(delta);
+    this.updateTimerRing();
     this.writeMatrices();
+  }
+
+  private updateTimerRing(): void {
+    if (!this.timerRingLine || !this.timerRingMaterial) return;
+    const segs = EnergySculptor.TIMER_SEGMENTS;
+    const drawCount = this.dissolveMode > 0
+      ? segs + 1
+      : Math.max(2, Math.floor((1 - this.roundProgress) * segs) + 1);
+    this.timerRingLine.geometry.setDrawRange(0, drawCount);
+    this.timerRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.55;
   }
 
   dispose(): void {
@@ -191,6 +266,11 @@ export class EnergySculptor implements EnergySink {
       this.synchronyRing.geometry.dispose();
       this.synchronyRingMaterial?.dispose();
       this.synchronyRing.removeFromParent();
+    }
+    if (this.timerRingLine) {
+      this.timerRingLine.geometry.dispose();
+      this.timerRingMaterial?.dispose();
+      this.timerRingLine.removeFromParent();
     }
   }
 
@@ -310,6 +390,9 @@ export class EnergySculptor implements EnergySink {
     const boost = this.synchronyBoost;
     const pull = baseAttractor * (1 + boost * duet);
     const size = this.size;
+    const dissolving = this.dissolveMode > 0;
+    const burstSpeed = this.params.dissolveBurstSpeed;
+    const lifeAccel = dissolving ? 5 : 1;
     for (let i = 0; i < size; i += 1) {
       if (this.lifeCurrent[i] <= 0) continue;
       const o3 = i * 3;
@@ -324,9 +407,24 @@ export class EnergySculptor implements EnergySink {
       let dz = tz - pz;
       const dist = Math.hypot(dx, dy, dz) || 0.001;
       dx /= dist; dy /= dist; dz /= dist;
-      let vx = this.velocities[o3] + dx * pull * delta;
-      let vy = this.velocities[o3 + 1] + dy * pull * delta;
-      let vz = this.velocities[o3 + 2] + dz * pull * delta;
+      let vx = this.velocities[o3];
+      let vy = this.velocities[o3 + 1];
+      let vz = this.velocities[o3 + 2];
+      if (dissolving) {
+        // Outward burst from center; ignores attractor.
+        let ox = px - this.center.x;
+        let oy = py - this.center.y;
+        let oz = pz - this.center.z;
+        const olen = Math.hypot(ox, oy, oz) || 1;
+        ox /= olen; oy /= olen; oz /= olen;
+        vx += ox * burstSpeed * delta;
+        vy += oy * burstSpeed * delta;
+        vz += oz * burstSpeed * delta;
+      } else {
+        vx += dx * pull * delta;
+        vy += dy * pull * delta;
+        vz += dz * pull * delta;
+      }
       // Cross-current: deflect from the other kind's local density. We use a
       // tangent of the to-target direction as the deflection axis so streams
       // visibly bend around each other rather than just slowing down.
@@ -352,7 +450,7 @@ export class EnergySculptor implements EnergySink {
       this.positions[o3] = px + vx * delta;
       this.positions[o3 + 1] = py + vy * delta;
       this.positions[o3 + 2] = pz + vz * delta;
-      this.lifeCurrent[i] -= delta;
+      this.lifeCurrent[i] -= delta * lifeAccel;
       if (this.lifeCurrent[i] <= 0) {
         this.lifeCurrent[i] = 0;
         this.freeList.push(i);

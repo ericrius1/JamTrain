@@ -292,6 +292,10 @@ export class Game {
       }
       this.pendingPartnerInstrument = null;
       this.refreshArchetype();
+      this.sculptor.endDissolve();
+    });
+    this.roundDirector.onDissolvingStart(() => {
+      this.sculptor.beginDissolve();
     });
     this.installPlayerVisuals();
     this.refreshArchetype();
