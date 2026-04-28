@@ -105,13 +105,35 @@ function findAvailableVariant(ctx: any, baseName: string): string {
   return baseName;
 }
 
+const PICKABLE_CREATURES = ['lion', 'elk', 'fox'];
+
+// On a fresh insert, pick a creature that no online partner in the room has
+// already taken. The client passes its localStorage preference as `desired`;
+// we honor it when free, otherwise rotate to the next available picker
+// option. `robot` is reserved as the partner-absent placeholder, so we never
+// auto-assign it here.
+function pickAvailableCreature(ctx: any, roomId: string, desired: string): string {
+  const taken = new Set<string>();
+  for (const row of ctx.db.player.player_room_id.filter(roomId)) {
+    if (row.identity.isEqual(ctx.sender)) continue;
+    if (!row.online) continue;
+    taken.add(row.creature);
+  }
+  if (PICKABLE_CREATURES.includes(desired) && !taken.has(desired)) return desired;
+  for (const c of PICKABLE_CREATURES) {
+    if (!taken.has(c)) return c;
+  }
+  return PICKABLE_CREATURES.includes(desired) ? desired : 'lion';
+}
+
 export const request_seat = spacetimedb.reducer(
   {
     preferredRoom: t.string(),
     fallbackName: t.string(),
     displayName: t.string(),
+    desiredCreature: t.string(),
   },
-  (ctx, { preferredRoom, fallbackName, displayName }) => {
+  (ctx, { preferredRoom, fallbackName, displayName, desiredCreature }) => {
     const cleanName = displayName.trim().slice(0, 32) || 'Player';
     const cleanFallback = sanitizeRoom(fallbackName) || 'cabin';
     const cleanPreferred = sanitizeRoom(preferredRoom);
@@ -150,7 +172,7 @@ export const request_seat = spacetimedb.reducer(
       seatIndex,
       online: true,
       instrument: 'loom',
-      creature: 'lion',
+      creature: pickAvailableCreature(ctx, target, desiredCreature),
       connectedAt: ctx.timestamp,
       updatedAt: ctx.timestamp,
     });

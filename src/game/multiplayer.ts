@@ -48,6 +48,12 @@ export class MultiplayerClient {
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
   private localCreature: string = 'lion';
+  // True once the user explicitly picks a creature (via the HUD picker). The
+  // localStorage-restored value on boot is a soft *preference* — we hand it
+  // to the server as a hint but let the server override it when the partner
+  // already has that creature, so the second player never auto-spawns as a
+  // twin of the first.
+  private localCreatureDirty = false;
   private partnerCreature: string = ROBOT_PARTNER_CREATURE;
   private localCreatureListeners = new Set<CreatureListener>();
   private partnerCreatureListeners = new Set<CreatureListener>();
@@ -192,12 +198,36 @@ export class MultiplayerClient {
   }
 
   async setLocalCreature(creatureId: string): Promise<void> {
+    this.localCreatureDirty = true;
+    this.acceptLocalCreature(creatureId);
+    await this.pushLocalCreature();
+  }
+
+  // Soft hint from a previous session's localStorage. Updates the local
+  // value (so the rig and the `desiredCreature` we pass to request_seat
+  // reflect the preference), but does not mark the value as dirty — the
+  // server is still free to swap us to a different creature if our partner
+  // already has this one.
+  setLocalCreaturePreference(creatureId: string): void {
+    this.acceptLocalCreature(creatureId);
+  }
+
+  private acceptLocalCreature(creatureId: string): void {
     if (this.localCreature === creatureId) return;
     this.localCreature = creatureId;
     for (const listener of this.localCreatureListeners) listener(creatureId);
+  }
+
+  private acceptServerLocalCreature(creatureId: string): void {
+    if (!creatureId) return;
+    if (this.localCreatureDirty && creatureId !== this.localCreature) return;
+    this.acceptLocalCreature(creatureId);
+  }
+
+  private async pushLocalCreature(): Promise<void> {
     if (!this.connection?.isActive) return;
     try {
-      await this.connection.reducers.updateCreature({ creature: creatureId });
+      await this.connection.reducers.updateCreature({ creature: this.localCreature });
     } catch (err) {
       console.warn('[jam-train] update_creature failed', err);
     }
@@ -353,6 +383,7 @@ export class MultiplayerClient {
         preferredRoom: sanitizeRoomName(preferredRoom),
         fallbackName: pickRandomRoomName(this.roomId),
         displayName: this.displayName,
+        desiredCreature: this.localCreature,
       })
       .catch(error => console.warn('SpacetimeDB request_seat failed', error));
   }
@@ -396,9 +427,7 @@ export class MultiplayerClient {
         // Push the local loadout only when it was deliberately chosen before
         // the subscription came up; otherwise let an existing server row win.
         if (this.localInstrumentDirty) void this.pushLocalInstrument();
-        void conn.reducers
-          .updateCreature({ creature: this.localCreature })
-          .catch(err => console.warn('[jam-train] update_creature failed', err));
+        if (this.localCreatureDirty) void this.pushLocalCreature();
         console.info('[jam-train] subscription applied; room', this.roomId, 'partners', this.knownPlayers.size);
       })
       .onError(ctx => {
@@ -521,6 +550,7 @@ export class MultiplayerClient {
     this.setRoomId(row.roomId);
     this.setLocalSeat(row.seatIndex);
     this.acceptServerLocalInstrument(row.instrument || '');
+    this.acceptServerLocalCreature(row.creature || '');
   }
 
   private setLocalSeat(seatIndex: number): void {

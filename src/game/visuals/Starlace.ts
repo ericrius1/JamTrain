@@ -828,15 +828,8 @@ export class Starlace implements PlayerVisual {
 
       const material = this.nodeMaterials[i];
       if (!material) continue;
-      this.noteColorForNode(node, _colorA);
-      _colorB.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
-      _colorA.lerp(_colorB, 0.10 + twinkle * 0.045);
-      _colorA.lerp(this.gold, hash(node.seed * 29.1 + node.noteIndex) > 0.80 ? 0.08 : 0.015);
       const flash = Math.pow(pulse, 1.55);
-      _colorC.copy(_colorA).lerp(this.hot, 0.08 + flash * 0.18).multiplyScalar(1.04 + flash * 0.56);
-      _colorC.r = Math.min(_colorC.r, 1.22);
-      _colorC.g = Math.min(_colorC.g, 1.16);
-      _colorC.b = Math.min(_colorC.b, 1.24);
+      this.nodeVisualColor(node, pulse, twinkle, _colorC);
       material.color.copy(_colorC);
       material.emissive.copy(_colorC);
       material.emissiveIntensity = 0.24 + flash * 1.02;
@@ -1324,22 +1317,17 @@ export class Starlace implements PlayerVisual {
     const dir = _scratch.copy(sink.center).sub(node.world);
     if (dir.lengthSq() < 1e-4) dir.set(0, 0.1, 0);
     dir.normalize();
-    this.noteColorForNode(node, _colorA);
-    _colorB.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
-    _colorA.lerp(_colorB, 0.10);
-    _colorA.lerp(this.gold, hash(node.seed * 37.7 + node.noteIndex * 2.9) > 0.78 ? 0.10 : 0.025);
-    _colorA.lerp(this.hot, Math.min(0.10, velocity * 0.055)).multiplyScalar(1.10);
-    _colorA.r = Math.min(_colorA.r, 1.12);
-    _colorA.g = Math.min(_colorA.g, 1.08);
-    _colorA.b = Math.min(_colorA.b, 1.14);
+    const pulse = clamp(node.pulse + velocity * 0.20, 0, 1);
+    const twinkle = 0.5 + Math.sin(this.elapsed * (1.2 + node.seed * 1.7) + node.seed * TAU) * 0.5;
+    this.nodeVisualColor(node, pulse, twinkle, _colorA);
     sink.emit({
       kind: 'starlace',
       origin: node.world.clone(),
       direction: dir.clone(),
       color: { r: _colorA.r, g: _colorA.g, b: _colorA.b },
-      count: Math.round(20 + velocity * 14),
-      intensity: 0.5 + velocity * 0.5,
-      speed: 1.1 + velocity * 0.6,
+      count: Math.round(52 + velocity * 58),
+      intensity: 0.72 + velocity * 0.48,
+      speed: 1.85 + velocity * 1.05,
     });
   }
 
@@ -1380,6 +1368,19 @@ export class Starlace implements PlayerVisual {
     const maxNote = Math.max(1, this.hzTable.length - 1);
     const palettePos = (node.noteIndex / maxNote) * (STARLACE_NOTE_PALETTE.length - 1);
     return clamp(Math.round(palettePos), 0, STARLACE_NOTE_PALETTE.length - 1);
+  }
+
+  private nodeVisualColor(node: StarNode, pulse: number, twinkle: number, target: THREE.Color): THREE.Color {
+    this.noteColorForNode(node, target);
+    _colorB.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
+    target.lerp(_colorB, 0.10 + twinkle * 0.045);
+    target.lerp(this.gold, hash(node.seed * 29.1 + node.noteIndex) > 0.80 ? 0.08 : 0.015);
+    const flash = Math.pow(pulse, 1.55);
+    target.lerp(this.hot, 0.08 + flash * 0.18).multiplyScalar(1.04 + flash * 0.56);
+    target.r = Math.min(target.r, 1.22);
+    target.g = Math.min(target.g, 1.16);
+    target.b = Math.min(target.b, 1.24);
+    return target;
   }
 
   private noteColorForNode(node: StarNode, target: THREE.Color): THREE.Color {

@@ -326,7 +326,9 @@ async function createRuntime(): Promise<RuntimeApi> {
   const storedCreature = localStorage.getItem(LOCAL_CREATURE_KEY);
   if (storedCreature !== null && isCreatureId(storedCreature)) {
     game.setPlayerCreature('local', storedCreature);
-    void game.multiplayer.setLocalCreature(storedCreature);
+    // Soft hint — handed to the server as a preference. The server will
+    // still pick a different creature if the partner already has this one.
+    game.multiplayer.setLocalCreaturePreference(storedCreature);
   }
 
   hud.onLocalInstrumentChange(id => {

@@ -14,4 +14,5 @@ export default {
   preferredRoom: __t.string(),
   fallbackName: __t.string(),
   displayName: __t.string(),
+  desiredCreature: __t.string(),
 };
