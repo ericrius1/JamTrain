@@ -52,6 +52,8 @@ export type OrbHit = {
   frequency: number;
   /** 0..1 normalized hit velocity. */
   velocity: number;
+  /** World-space position of the strike (used by the sound-sculpture emitter). */
+  worldPosition: THREE.Vector3;
 };
 
 type DrumPalette = 'local' | 'remote';
@@ -146,6 +148,7 @@ const _hitDir = new THREE.Vector3();
 const _contactDelta = new THREE.Vector3();
 const _orbCenter = new THREE.Vector3();
 const _strikePoint = new THREE.Vector3();
+const _sparkDir = new THREE.Vector3();
 const _segment = new THREE.Vector3();
 const _pointToStart = new THREE.Vector3();
 const _pointerWorld = new THREE.Vector3();
@@ -201,6 +204,11 @@ export class Drum implements PlayerVisual {
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
   private fixedAnchor?: THREE.Vector3;
+  private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
+  private palette: DrumPalette;
+  private static SPARK_COLOR_LOCAL = { r: 1.00, g: 0.62, b: 0.24 };
+  private static SPARK_COLOR_REMOTE = { r: 1.00, g: 0.78, b: 0.36 };
+  private keyDownListener?: (e: KeyboardEvent) => void;
 
   constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'drum', opts: DrumOptions = {}) {
     this.params = { ...Object.fromEntries(Object.entries(DRUM_DEFS).map(([k, d]) => [k, d.default])) } as DrumParams;
@@ -210,6 +218,8 @@ export class Drum implements PlayerVisual {
     this.camera = opts.camera;
     this.canvas = opts.canvas;
     this.fixedAnchor = opts.anchor?.clone();
+    this.sculptor = opts.sculptor;
+    this.palette = opts.palette ?? 'local';
 
     this.mesh = new THREE.Group();
     this.mesh.name = `orb-drums-${opts.palette ?? 'local'}`;
@@ -275,6 +285,7 @@ export class Drum implements PlayerVisual {
     });
 
     if (this.camera && this.canvas) this.attachPointerEvents(this.canvas);
+    if (this.palette === 'local') this.attachKeyboardEvents();
   }
 
   setVisible(visible: boolean): void {
@@ -349,6 +360,7 @@ export class Drum implements PlayerVisual {
   dispose(): void {
     this.registered?.dispose();
     this.detachPointerEvents();
+    this.detachKeyboardEvents();
     for (const orb of this.orbs) {
       orb.mesh.geometry.dispose();
       orb.material.dispose();
@@ -411,6 +423,56 @@ export class Drum implements PlayerVisual {
     this.pointerDownListener = undefined;
     this.pointerUpListener = undefined;
     this.pointerLeaveListener = undefined;
+  }
+
+  // Middle-row keyboard binding for the local player. A-S-D-F-G-H-J-K-L map to
+  // 9 strike points around the orb, picking notes from ORB_HZ in pitch order.
+  // Each key press synthesizes a hit at a fixed direction on the orb's surface.
+  private static KEY_MAP: ReadonlyMap<string, number> = new Map([
+    ['a', 0], ['s', 1], ['d', 2], ['f', 3],
+    ['g', 4], ['h', 5], ['j', 6], ['k', 7], ['l', 8],
+  ]);
+
+  private attachKeyboardEvents(): void {
+    this.keyDownListener = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      // Don't fire when typing in an input/textarea or any contenteditable.
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
+      const idx = Drum.KEY_MAP.get(e.key.toLowerCase());
+      if (idx === undefined) return;
+      this.fireKeyboardHit(idx);
+    };
+    window.addEventListener('keydown', this.keyDownListener);
+  }
+
+  private detachKeyboardEvents(): void {
+    if (this.keyDownListener) {
+      window.removeEventListener('keydown', this.keyDownListener);
+      this.keyDownListener = undefined;
+    }
+  }
+
+  private fireKeyboardHit(noteIdx: number): void {
+    const orb = this.orbs[0];
+    if (!orb) return;
+    const noteIndex = Math.min(ORB_HZ.length - 1, Math.max(0, noteIdx));
+    // Strike point: pick a direction around the orb's "equator" varying by key
+    // index so each key visually lands somewhere different on the surface.
+    const angle = (noteIndex / ORB_HZ.length) * Math.PI * 2;
+    _hitDir.set(Math.cos(angle), Math.sin(angle * 0.5) * 0.4, Math.sin(angle));
+    if (_hitDir.lengthSq() < 1e-6) _hitDir.set(0, 1, 0);
+    _hitDir.normalize();
+    this.collisionBVH.getPoint(0, _orbCenter);
+    _strikePoint.copy(_orbCenter).addScaledVector(_hitDir, this.params.orbRadius);
+    const velocity = 0.7;
+    this.addRippleAt(_strikePoint, velocity);
+    orb.lastHitAt = this.elapsed;
+    orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
+    if (this.onHitCallback) {
+      this.onHitCallback({ orbIndex: noteIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
+    }
+    this.emitSparks(_strikePoint, velocity);
   }
 
   private updatePointerGesture(delta: number): void {
@@ -604,10 +666,29 @@ export class Drum implements PlayerVisual {
     this.addRippleAt(_strikePoint, velocity);
 
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
+    const noteIndex = this.noteIndexForPoint(_strikePoint);
     if (this.onHitCallback) {
-      const noteIndex = this.noteIndexForPoint(_strikePoint);
-      this.onHitCallback({ orbIndex: noteIndex, frequency: ORB_HZ[noteIndex], velocity });
+      this.onHitCallback({ orbIndex: noteIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
     }
+    this.emitSparks(_strikePoint, velocity);
+  }
+
+  private emitSparks(worldPosition: THREE.Vector3, velocity: number): void {
+    if (!this.sculptor) return;
+    const sink = this.sculptor;
+    const dir = _sparkDir.copy(sink.center).sub(worldPosition);
+    if (dir.lengthSq() < 1e-4) dir.set(0, 0.1, 0);
+    dir.normalize();
+    sink.emit({
+      kind: 'drum',
+      origin: worldPosition.clone(),
+      direction: dir.clone(),
+      color: this.palette === 'local' ? Drum.SPARK_COLOR_LOCAL : Drum.SPARK_COLOR_REMOTE,
+      count: Math.round(40 + velocity * 40),
+      intensity: 0.6 + velocity * 0.4,
+      speed: 0.9 + velocity * 1.4,
+      lifetime: 1.2 + velocity * 0.6,
+    });
   }
 
   private contactKey(contactId: string, orbIndex: number): string {

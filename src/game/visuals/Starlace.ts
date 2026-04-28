@@ -4,16 +4,16 @@ import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments'
 import { clamp, hash } from '../math';
 
 export const STARLACE_DEFS = {
-  width:           { default: 0.82,  min: 0.36, max: 1.35, step: 0.01,  label: 'width' },
-  height:          { default: 0.54,  min: 0.24, max: 1.05, step: 0.01,  label: 'height' },
-  depth:           { default: 0.14,  min: 0.00, max: 0.40, step: 0.005, label: 'depth' },
-  nodeRadius:      { default: 0.018, min: 0.006, max: 0.05, step: 0.001, label: 'star size' },
+  width:           { default: 0.78,  min: 0.36, max: 1.35, step: 0.01,  label: 'width' },
+  height:          { default: 0.62,  min: 0.24, max: 1.05, step: 0.01,  label: 'height' },
+  depth:           { default: 0.42,  min: 0.00, max: 0.80, step: 0.005, label: 'depth' },
+  nodeRadius:      { default: 0.022, min: 0.006, max: 0.05, step: 0.001, label: 'star size' },
   contactRadius:   { default: 0.085, min: 0.025, max: 0.18, step: 0.001, label: 'hand contact' },
   hitCooldown:     { default: 0.065, min: 0.02,  max: 0.35, step: 0.005, label: 'hit cooldown s' },
   pulseDecay:      { default: 4.8,   min: 1,     max: 14,   step: 0.1,   label: 'star fade' },
   driftSpeed:      { default: 0.58,  min: 0,     max: 2.4,  step: 0.01,  label: 'drift speed' },
   waveAmp:         { default: 0.042, min: 0,     max: 0.16, step: 0.001, label: 'web wave' },
-  linkOpacity:     { default: 0.34,  min: 0,     max: 0.9,  step: 0.01,  label: 'link opacity' },
+  linkOpacity:     { default: 0.46,  min: 0,     max: 0.9,  step: 0.01,  label: 'link opacity' },
   sparkSize:       { default: 0.030, min: 0.006, max: 0.08, step: 0.001, label: 'spark size' },
   anchorSmoothing: { default: 5.5,   min: 0.2,   max: 16,   step: 0.1,   label: 'anchor smoothing s' },
   coolColor:       { type: 'color', default: '#6fe8ff', label: 'blue stars' },
@@ -151,12 +151,17 @@ export class Starlace implements PlayerVisual {
   private gold = new THREE.Color();
   private hot = new THREE.Color();
   private onPluckCallback?: (event: StarlacePluck) => void;
+  private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
+  private keyDownListener?: (e: KeyboardEvent) => void;
+  private palette: StarlacePalette;
   private registered?: ReturnType<typeof registerTweaks<typeof STARLACE_DEFS>>;
 
   constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'starlace', opts: StarlaceOptions = {}) {
     this.params = { ...Object.fromEntries(Object.entries(STARLACE_DEFS).map(([k, d]) => [k, d.default])) } as StarlaceParams;
     applyPaletteDefaults(this.params, opts.palette ?? 'local');
     this.onPluckCallback = opts.onPluck;
+    this.sculptor = opts.sculptor;
+    this.palette = opts.palette ?? 'local';
 
     this.mesh = new THREE.Group();
     this.mesh.name = `starlace-harp-${opts.palette ?? 'local'}`;
@@ -221,6 +226,8 @@ export class Starlace implements PlayerVisual {
 
     this.applyColors();
     this.writeHiddenSparks();
+
+    if (this.palette === 'local') this.attachKeyboardEvents();
 
     this.registered = registerTweaks(paneDock, paneKey, STARLACE_DEFS, {
       title: opts.title ?? 'Starlace',
@@ -287,6 +294,7 @@ export class Starlace implements PlayerVisual {
   }
 
   dispose(): void {
+    this.detachKeyboardEvents();
     this.registered?.dispose();
     this.lineGeometry.dispose();
     this.pulseLineGeometry.dispose();
@@ -300,44 +308,66 @@ export class Starlace implements PlayerVisual {
   }
 
   private createNodes(): void {
-    let cursor = 0;
-    for (let row = 0; row < ROW_COUNTS.length; row += 1) {
-      const count = ROW_COUNTS[row];
-      const vBase = ROW_COUNTS.length <= 1 ? 0 : row / (ROW_COUNTS.length - 1) - 0.5;
-      for (let col = 0; col < count; col += 1) {
-        const uBase = count <= 1 ? 0 : col / (count - 1) - 0.5;
-        const seed = hash(cursor * 9.17 + 0.23);
-        const u = uBase + (hash(cursor * 5.73 + 1.1) - 0.5) * 0.045;
-        const v = vBase + (hash(cursor * 6.91 + 2.2) - 0.5) * 0.050;
-        const z = (hash(cursor * 8.31 + 3.3) - 0.5) * 0.85;
-        const noteT = clamp((v + 0.5) * 0.72 + (u + 0.5) * 0.28, 0, 1);
-        this.nodes.push({
-          u,
-          v,
-          z,
-          seed,
-          noteIndex: clamp(Math.round(noteT * (STARLACE_HZ.length - 1)), 0, STARLACE_HZ.length - 1),
-          pulse: 0,
-          lastHitAt: -100,
-          world: new THREE.Vector3(),
-        });
-        cursor += 1;
-      }
+    // 3D radial cluster: deterministic Halton-ish sampling over an ellipsoid,
+    // density-biased toward the center so the constellation reads as a
+    // star-cluster rather than a uniform cloud.
+    const NODE_COUNT = 36;
+    for (let i = 0; i < NODE_COUNT; i += 1) {
+      const r1 = hash(i * 9.17 + 0.23);
+      const r2 = hash(i * 5.73 + 1.10);
+      const r3 = hash(i * 6.91 + 2.20);
+      const r4 = hash(i * 8.31 + 3.30);
+      // Spherical sample with bias: smaller exponent -> denser core.
+      const radius = Math.pow(r1, 0.55);
+      const theta = r2 * TAU;
+      const phi = Math.acos(2 * r3 - 1);
+      // Convert to ellipsoidal u/v/z in [-0.5, 0.5].
+      const u = 0.5 * radius * Math.sin(phi) * Math.cos(theta);
+      const v = 0.5 * radius * Math.cos(phi);
+      const z = 0.5 * radius * Math.sin(phi) * Math.sin(theta);
+      const seed = r4;
+      const noteT = clamp((v + 0.5) * 0.78 + (u + 0.5) * 0.22, 0, 1);
+      this.nodes.push({
+        u,
+        v,
+        z,
+        seed,
+        noteIndex: clamp(Math.round(noteT * (STARLACE_HZ.length - 1)), 0, STARLACE_HZ.length - 1),
+        pulse: 0,
+        lastHitAt: -100,
+        world: new THREE.Vector3(),
+      });
     }
   }
 
   private createEdges(): void {
-    const maxDist = 0.265;
+    // k-nearest-neighbor graph in u/v/z space (z weighted slightly less so the
+    // graph still feels planar-ish when viewed head-on).
+    const K = 5;
+    type Pair = { i: number; j: number; d: number };
+    const distances: Pair[] = [];
     for (let i = 0; i < this.nodes.length; i += 1) {
       for (let j = i + 1; j < this.nodes.length; j += 1) {
         const a = this.nodes[i];
         const b = this.nodes[j];
         const du = a.u - b.u;
         const dv = a.v - b.v;
-        const dz = (a.z - b.z) * 0.18;
-        const dist = Math.sqrt(du * du + dv * dv + dz * dz);
-        if (dist <= maxDist) this.edges.push([i, j]);
+        const dz = (a.z - b.z) * 0.85;
+        const d = Math.sqrt(du * du + dv * dv + dz * dz);
+        distances.push({ i, j, d });
       }
+    }
+    distances.sort((a, b) => a.d - b.d);
+    const degree = new Array(this.nodes.length).fill(0);
+    const seen = new Set<string>();
+    for (const p of distances) {
+      const key = `${p.i}:${p.j}`;
+      if (seen.has(key)) continue;
+      if (degree[p.i] >= K && degree[p.j] >= K) continue;
+      this.edges.push([p.i, p.j]);
+      seen.add(key);
+      degree[p.i] += 1;
+      degree[p.j] += 1;
     }
     this.adjacency = Array.from({ length: this.nodes.length }, () => []);
     for (const [a, b] of this.edges) {
@@ -540,6 +570,62 @@ export class Starlace implements PlayerVisual {
         y: clamp(node.v + 0.5, 0, 1),
       });
     }
+    this.emitStreak(node, velocity);
+  }
+
+  private static KEY_MAP: ReadonlyArray<string> = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+
+  private attachKeyboardEvents(): void {
+    this.keyDownListener = (e: KeyboardEvent) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tag = (e.target as HTMLElement | null)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
+      const idx = Starlace.KEY_MAP.indexOf(e.key.toLowerCase());
+      if (idx < 0) return;
+      // Pick the i-th node in pitch order (sorted by noteIndex), so keys
+      // ascend the scale predictably across the constellation.
+      const sorted = this.nodes
+        .map((n, i) => ({ i, note: n.noteIndex }))
+        .sort((a, b) => a.note - b.note);
+      const target = sorted[Math.min(idx, sorted.length - 1)];
+      if (!target) return;
+      this.fireNode(target.i, 0.7);
+    };
+    window.addEventListener('keydown', this.keyDownListener);
+  }
+
+  private detachKeyboardEvents(): void {
+    if (this.keyDownListener) {
+      window.removeEventListener('keydown', this.keyDownListener);
+      this.keyDownListener = undefined;
+    }
+  }
+
+  private emitStreak(node: StarNode, velocity: number): void {
+    if (!this.sculptor) return;
+    const sink = this.sculptor;
+    const dir = _scratch.copy(sink.center).sub(node.world);
+    if (dir.lengthSq() < 1e-4) dir.set(0, 0.1, 0);
+    dir.normalize();
+    // Pick a palette color based on node seed so the constellation's
+    // multi-color identity carries into the sculpture.
+    const phase = node.seed * 3;
+    const idx = Math.floor(phase) % 3;
+    const palette = idx === 0
+      ? this.cool   // cyan
+      : idx === 1
+        ? this.warm // magenta
+        : this.gold;
+    sink.emit({
+      kind: 'starlace',
+      origin: node.world.clone(),
+      direction: dir.clone(),
+      color: { r: palette.r, g: palette.g, b: palette.b },
+      count: Math.round(20 + velocity * 14),
+      intensity: 0.5 + velocity * 0.5,
+      speed: 1.1 + velocity * 0.6,
+      lifetime: 1.6 + velocity * 0.4,
+    });
   }
 
   private addSpark(from: number, to: number, intensity: number): void {
