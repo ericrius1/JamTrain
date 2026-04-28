@@ -1119,15 +1119,15 @@ export class HandSynthEngine {
     const Tone = this.tone!;
     const panner = new Tone.Panner(key === 'local' ? -0.20 : 0.20).connect(this.master);
     const dryGain = new Tone.Gain(0).connect(panner);
-    const reverbReturn = new Tone.Gain(0.78).connect(panner);
+    const reverbReturn = new Tone.Gain(0.82).connect(panner);
     const reverb = new Tone.Reverb({
-      decay: 7.2,
-      preDelay: 0.035,
+      decay: 8.4,
+      preDelay: 0.045,
       wet: 1,
     }).connect(reverbReturn);
     const wetSend = new Tone.Gain(0).connect(reverb);
     const filter = new Tone.Filter({
-      frequency: 5600,
+      frequency: 6200,
       type: 'lowpass',
       rolloff: -12,
       Q: 0.8,
@@ -1137,7 +1137,7 @@ export class HandSynthEngine {
 
     const pluck = new Tone.PolySynth(Tone.FMSynth, {
       harmonicity: 1.5,
-      modulationIndex: 5.5,
+      modulationIndex: 4.2,
       oscillator: { type: 'sine' },
       envelope: {
         attack: 0.004,
@@ -1159,16 +1159,16 @@ export class HandSynthEngine {
         sustain: 0,
         release: Math.max(0.3, this.params.starlaceDecay * 0.25),
       },
-      volume: this.params.starlaceDb - 12,
+      volume: this.params.starlaceDb - 17,
     }).connect(filter);
     glint.maxPolyphony = STARLACE_MAX_ACTIVE_VOICES;
 
     const auraGain = new Tone.Gain(0).connect(filter);
     const auraSynth = new Tone.Synth({
-      oscillator: { type: 'fatsine4', count: 5, spread: 30 } as any,
-      envelope: { attack: 0.42, decay: 0.5, sustain: 0.78, release: 2.8 },
+      oscillator: { type: 'fatsine4', count: 4, spread: 24 } as any,
+      envelope: { attack: 0.55, decay: 0.55, sustain: 0.74, release: 3.4 },
       portamento: 0.10,
-      volume: this.params.starlaceDb - 10,
+      volume: this.params.starlaceDb - 13,
     }).connect(auraGain);
 
     return {
@@ -1223,13 +1223,13 @@ export class HandSynthEngine {
     }
 
     const glow = clamp(this.params.starlaceGlow, 0, 1);
-    const filterHz = 900 + starlace.expression * 2100 + starlace.energy * 4200 + starlace.tension * 1800;
+    const filterHz = 850 + starlace.expression * 1850 + starlace.energy * 3600 + starlace.tension * 1450;
     starlace.filter.frequency.rampTo(clamp(filterHz, 500, 9500), PARAM_RAMP);
     starlace.filter.Q.rampTo(0.65 + starlace.tension * 2.1, PARAM_RAMP);
     starlace.panner.pan.rampTo(clamp((player === 'local' ? -0.18 : 0.18) + (starlace.expression - 0.5) * 0.32, -0.85, 0.85), PARAM_RAMP);
-    starlace.auraGain.gain.rampTo(clamp(starlace.energy * (0.24 + glow * 0.34), 0, 0.58), PARAM_RAMP * 2);
-    starlace.wetSend.gain.rampTo(clamp(0.20 + starlace.energy * 0.70 + glow * 0.12, 0, 1) * this.params.reverbWetMax, PARAM_RAMP * 2);
-    starlace.dryGain.gain.rampTo(0.95, PARAM_RAMP);
+    starlace.auraGain.gain.rampTo(clamp(starlace.energy * (0.22 + glow * 0.30), 0, 0.52), PARAM_RAMP * 2);
+    starlace.wetSend.gain.rampTo(clamp(0.28 + starlace.energy * 0.60 + glow * 0.14, 0, 1) * this.params.reverbWetMax, PARAM_RAMP * 2);
+    starlace.dryGain.gain.rampTo(0.82, PARAM_RAMP);
 
     starlace.pulse = Math.max(0, starlace.pulse - delta * 3.0);
     starlace.energy += (0 - starlace.energy) * (1 - Math.exp(-delta * 2.8));
@@ -1286,9 +1286,9 @@ export class HandSynthEngine {
     const fifthHz = frequency * 3;
     try {
       starlace.pluck.triggerAttackRelease(frequency, this.params.starlaceDecay, undefined, synthVel);
-      starlace.glint.triggerAttackRelease(octaveHz, Math.max(0.28, this.params.starlaceDecay * 0.28), undefined, synthVel * 0.42);
+      starlace.glint.triggerAttackRelease(octaveHz, Math.max(0.28, this.params.starlaceDecay * 0.28), undefined, synthVel * 0.26);
       if (velocity > 0.52) {
-        starlace.glint.triggerAttackRelease(fifthHz, '8n', undefined, synthVel * 0.26);
+        starlace.glint.triggerAttackRelease(fifthHz, '8n', undefined, synthVel * 0.16);
       }
     } catch (err) {
       console.warn('[handSynth] starlace trigger failed', err);
@@ -1575,10 +1575,10 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const o = this.orbVoices[key];
       if (o?.fund?.volume) o.fund.volume.rampTo(this.params.orbDb, PARAM_RAMP);
-      if (o?.fifth?.volume) o.fifth.volume.rampTo(this.params.orbDb - 14, PARAM_RAMP);
-      if (o?.auraSynth?.volume) o.auraSynth.volume.rampTo(this.params.orbDb - 8, PARAM_RAMP);
-      if (o?.subSynth?.volume) o.subSynth.volume.rampTo(this.params.orbDb - 12, PARAM_RAMP);
-      if (o?.shimmerSynth?.volume) o.shimmerSynth.volume.rampTo(this.params.orbDb - 18, PARAM_RAMP);
+      if (o?.fifth?.volume) o.fifth.volume.rampTo(this.params.orbDb - 18, PARAM_RAMP);
+      if (o?.auraSynth?.volume) o.auraSynth.volume.rampTo(this.params.orbDb - 10, PARAM_RAMP);
+      if (o?.subSynth?.volume) o.subSynth.volume.rampTo(this.params.orbDb - 16, PARAM_RAMP);
+      if (o?.shimmerSynth?.volume) o.shimmerSynth.volume.rampTo(this.params.orbDb - 22, PARAM_RAMP);
     }
   }
 
@@ -1586,8 +1586,8 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const s = this.starlaceVoices[key];
       if (s?.pluck?.volume) s.pluck.volume.rampTo(this.params.starlaceDb, PARAM_RAMP);
-      if (s?.glint?.volume) s.glint.volume.rampTo(this.params.starlaceDb - 12, PARAM_RAMP);
-      if (s?.auraSynth?.volume) s.auraSynth.volume.rampTo(this.params.starlaceDb - 10, PARAM_RAMP);
+      if (s?.glint?.volume) s.glint.volume.rampTo(this.params.starlaceDb - 17, PARAM_RAMP);
+      if (s?.auraSynth?.volume) s.auraSynth.volume.rampTo(this.params.starlaceDb - 13, PARAM_RAMP);
     }
   }
 }

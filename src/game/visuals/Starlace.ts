@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
+import { JAM_STARLACE_HZ } from '../harmony';
 import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments';
 import { clamp, hash } from '../math';
 
@@ -65,22 +66,7 @@ const MAX_SPARKS = 64;
 const MAX_HITS_PER_FRAME = 10;
 const TAU = Math.PI * 2;
 
-const STARLACE_HZ: number[] = [
-  146.832, // D3
-  164.814, // E3
-  184.997, // F#3
-  220.000, // A3
-  246.942, // B3
-  293.665, // D4
-  329.628, // E4
-  369.994, // F#4
-  440.000, // A4
-  493.883, // B4
-  587.330, // D5
-  659.255, // E5
-  739.989, // F#5
-  880.000, // A5
-];
+const STARLACE_HZ: readonly number[] = JAM_STARLACE_HZ;
 
 const _worldUp = new THREE.Vector3(0, 1, 0);
 const _contactDelta = new THREE.Vector3();
@@ -92,6 +78,11 @@ const _scratch2 = new THREE.Vector3();
 const _dummy = new THREE.Object3D();
 const _colorA = new THREE.Color();
 const _colorB = new THREE.Color();
+
+const smoothstep01 = (x: number): number => {
+  const t = clamp(x, 0, 1);
+  return t * t * (3 - 2 * t);
+};
 
 export class Starlace implements PlayerVisual {
   readonly mesh: THREE.Group;
@@ -116,6 +107,23 @@ export class Starlace implements PlayerVisual {
   private elapsed = 0;
   private active = true;
   private initialized = false;
+  // Intro/outro reveal: a "front" sweeps outward (or inward) from a chosen
+  // origin node. Each node's reveal scale ramps as the front passes it, and
+  // edges grow from their already-revealed endpoint toward the other node so
+  // the whole structure self-assembles like crystal forming.
+  private revealStartedAt = -Infinity;
+  private revealDirection: 1 | -1 = 1;
+  private revealActive = false;
+  private revealedFully = false;
+  private revealResolveOutro?: () => void;
+  private nodeDistance: number[] = [];
+  private maxNodeDistance = 1;
+  private nodeRevealT: number[] = [];
+  private edgeRevealT: number[] = [];
+  private revealOriginIndex = 0;
+  private static readonly REVEAL_DURATION_IN = 1.55;
+  private static readonly REVEAL_DURATION_OUT = 0.85;
+  private static readonly REVEAL_FRONT_SOFTNESS = 0.85;
   private anchor = new THREE.Vector3();
   private left = new THREE.Vector3();
   private right = new THREE.Vector3();
@@ -253,6 +261,146 @@ export class Starlace implements PlayerVisual {
     }
   }
 
+  startHidden(): void {
+    this.mesh.visible = false;
+    this.revealedFully = false;
+    this.revealActive = false;
+    this.fillRevealValues(0);
+  }
+
+  playIntroAnimation(): void {
+    this.pickRevealOrigin();
+    this.revealStartedAt = this.elapsed;
+    this.revealDirection = 1;
+    this.revealActive = true;
+    this.revealedFully = false;
+    this.fillRevealValues(0);
+    this.mesh.visible = true;
+  }
+
+  playOutroAnimation(): Promise<void> {
+    if (!this.mesh.visible) return Promise.resolve();
+    // Outro picks a fresh origin so the dissolve doesn't read as a literal
+    // rewind of the intro — gives the second instrument a different "feel."
+    this.pickRevealOrigin();
+    this.revealStartedAt = this.elapsed;
+    this.revealDirection = -1;
+    this.revealActive = true;
+    this.revealedFully = false;
+    return new Promise(resolve => {
+      this.revealResolveOutro = resolve;
+    });
+  }
+
+  isInteractive(): boolean {
+    return this.revealedFully && !this.revealActive;
+  }
+
+  private pickRevealOrigin(): void {
+    if (this.nodes.length === 0) return;
+    this.revealOriginIndex = Math.floor(Math.random() * this.nodes.length);
+    this.computeRevealDistances();
+  }
+
+  // BFS hop-count distance from the origin. Hop count gives clean, bandy
+  // contours that feel like a ripple rather than the noisy world-space-radius
+  // alternative — the structure is irregular enough that geodesic hops
+  // matches the eye's intuition for "how far out is this node."
+  private computeRevealDistances(): void {
+    const n = this.nodes.length;
+    this.nodeDistance = new Array(n).fill(Infinity);
+    this.nodeDistance[this.revealOriginIndex] = 0;
+    const queue: number[] = [this.revealOriginIndex];
+    let head = 0;
+    while (head < queue.length) {
+      const cur = queue[head++];
+      const next = this.nodeDistance[cur] + 1;
+      for (const nb of this.adjacency[cur] ?? []) {
+        if (next < this.nodeDistance[nb]) {
+          this.nodeDistance[nb] = next;
+          queue.push(nb);
+        }
+      }
+    }
+    let max = 1;
+    for (let i = 0; i < n; i += 1) {
+      if (Number.isFinite(this.nodeDistance[i])) max = Math.max(max, this.nodeDistance[i]);
+    }
+    this.maxNodeDistance = max;
+    this.nodeRevealT = new Array(n).fill(0);
+    this.edgeRevealT = new Array(this.edges.length).fill(0);
+  }
+
+  private fillRevealValues(value: number): void {
+    if (this.nodeRevealT.length !== this.nodes.length) {
+      this.nodeRevealT = new Array(this.nodes.length).fill(value);
+    } else {
+      this.nodeRevealT.fill(value);
+    }
+    if (this.edgeRevealT.length !== this.edges.length) {
+      this.edgeRevealT = new Array(this.edges.length).fill(value);
+    } else {
+      this.edgeRevealT.fill(value);
+    }
+  }
+
+  // Computes per-node + per-edge reveal scalars from the sweep front. Called
+  // once per frame. Off the front (already-passed nodes) hold at 1; nodes
+  // ahead of the front hold at 0; nodes inside the soft band ramp up.
+  private updateRevealValues(): void {
+    if (!this.revealActive && !this.revealedFully) {
+      this.fillRevealValues(0);
+      return;
+    }
+    if (!this.revealActive && this.revealedFully) {
+      this.fillRevealValues(1);
+      return;
+    }
+    const isIn = this.revealDirection === 1;
+    const total = isIn ? Starlace.REVEAL_DURATION_IN : Starlace.REVEAL_DURATION_OUT;
+    const localT = clamp((this.elapsed - this.revealStartedAt) / Math.max(total, 0.0001), 0, 1);
+    // Front sweeps from -softness to maxDistance + softness so the boundary
+    // can fully clear the farthest nodes by the end.
+    const softness = Starlace.REVEAL_FRONT_SOFTNESS;
+    const span = this.maxNodeDistance + softness * 2;
+    const frontIn = -softness + span * localT;
+    // Outro: same sweep direction, but fades nodes from 1 → 0 as the front
+    // passes them. Visually reads as "structure dissolves outward".
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      const d = this.nodeDistance[i];
+      const t = isIn
+        ? smoothstep01((frontIn - d) / softness)
+        : 1 - smoothstep01((frontIn - d) / softness);
+      this.nodeRevealT[i] = t;
+    }
+    // Edge reveal lags the slower of its two endpoints — the line "draws"
+    // from the already-present node out to the newly-arriving one.
+    for (let e = 0; e < this.edges.length; e += 1) {
+      const [a, b] = this.edges[e];
+      this.edgeRevealT[e] = Math.min(this.nodeRevealT[a], this.nodeRevealT[b]);
+    }
+  }
+
+  private tickReveal(): void {
+    if (!this.revealActive) return;
+    const total = this.revealDirection === 1
+      ? Starlace.REVEAL_DURATION_IN
+      : Starlace.REVEAL_DURATION_OUT;
+    if (this.elapsed - this.revealStartedAt < total + 0.05) return;
+    this.revealActive = false;
+    if (this.revealDirection === 1) {
+      this.revealedFully = true;
+      this.fillRevealValues(1);
+    } else {
+      this.revealedFully = false;
+      this.fillRevealValues(0);
+      this.mesh.visible = false;
+      const resolve = this.revealResolveOutro;
+      this.revealResolveOutro = undefined;
+      resolve?.();
+    }
+  }
+
   update(
     leftPalm: THREE.Vector3,
     rightPalm: THREE.Vector3,
@@ -296,11 +444,15 @@ export class Starlace implements PlayerVisual {
 
     this.resolveAxes();
     this.writeNodePositions();
-    this.processContacts(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
+    this.updateRevealValues();
+    if (this.revealedFully && !this.revealActive) {
+      this.processContacts(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
+    }
     this.decayPulses(delta);
     this.writeLines();
     this.writeNodes();
     this.writeSparks();
+    this.tickReveal();
   }
 
   dispose(): void {
@@ -418,28 +570,40 @@ export class Starlace implements PlayerVisual {
   private writeLines(): void {
     let maxPulse = 0;
     let cursor = 0;
-    for (const [aIdx, bIdx] of this.edges) {
+    let avgEdgeReveal = 0;
+    for (let e = 0; e < this.edges.length; e += 1) {
+      const [aIdx, bIdx] = this.edges[e];
       const a = this.nodes[aIdx];
       const b = this.nodes[bIdx];
+      // Edge "draws" from the already-revealed endpoint toward the
+      // newly-arriving one. With both endpoints fully revealed, t=1 and the
+      // line spans the full edge as before.
+      const t = this.edgeRevealT[e] ?? 1;
+      const eased = smoothstep01(t);
+      const bx = a.world.x + (b.world.x - a.world.x) * eased;
+      const by = a.world.y + (b.world.y - a.world.y) * eased;
+      const bz = a.world.z + (b.world.z - a.world.z) * eased;
       this.linePositions[cursor] = a.world.x;
       this.pulseLinePositions[cursor++] = a.world.x;
       this.linePositions[cursor] = a.world.y;
       this.pulseLinePositions[cursor++] = a.world.y;
       this.linePositions[cursor] = a.world.z;
       this.pulseLinePositions[cursor++] = a.world.z;
-      this.linePositions[cursor] = b.world.x;
-      this.pulseLinePositions[cursor++] = b.world.x;
-      this.linePositions[cursor] = b.world.y;
-      this.pulseLinePositions[cursor++] = b.world.y;
-      this.linePositions[cursor] = b.world.z;
-      this.pulseLinePositions[cursor++] = b.world.z;
+      this.linePositions[cursor] = bx;
+      this.pulseLinePositions[cursor++] = bx;
+      this.linePositions[cursor] = by;
+      this.pulseLinePositions[cursor++] = by;
+      this.linePositions[cursor] = bz;
+      this.pulseLinePositions[cursor++] = bz;
+      avgEdgeReveal += eased;
       maxPulse = Math.max(maxPulse, a.pulse, b.pulse);
     }
+    avgEdgeReveal = this.edges.length > 0 ? avgEdgeReveal / this.edges.length : 1;
     this.maxPulse += (maxPulse - this.maxPulse) * 0.35;
     (this.lineGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
     (this.pulseLineGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-    this.lineMaterial.opacity = this.params.linkOpacity * (0.58 + this.smoothedEnergy * 0.58);
-    this.pulseLineMaterial.opacity = clamp(this.maxPulse * 0.62 + this.smoothedPulse * 0.22, 0, 0.82);
+    this.lineMaterial.opacity = this.params.linkOpacity * (0.58 + this.smoothedEnergy * 0.58) * avgEdgeReveal;
+    this.pulseLineMaterial.opacity = clamp(this.maxPulse * 0.62 + this.smoothedPulse * 0.22, 0, 0.82) * avgEdgeReveal;
   }
 
   private writeNodes(): void {
@@ -448,7 +612,8 @@ export class Starlace implements PlayerVisual {
       const twinkle = 0.5 + Math.sin(this.elapsed * (1.2 + node.seed * 1.7) + node.seed * TAU) * 0.5;
       const pitchGlow = 1 - Math.abs((node.noteIndex / (STARLACE_HZ.length - 1)) - this.smoothedPitch);
       const pulse = clamp(node.pulse + pitchGlow * this.smoothedEnergy * 0.22 + twinkle * 0.10, 0, 1);
-      const size = this.params.nodeRadius * (0.72 + twinkle * 0.34 + pulse * 1.45);
+      const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
+      const size = this.params.nodeRadius * (0.72 + twinkle * 0.34 + pulse * 1.45) * reveal;
 
       _dummy.position.copy(node.world);
       _dummy.scale.setScalar(size);
@@ -590,6 +755,7 @@ export class Starlace implements PlayerVisual {
       if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
+      if (!this.isInteractive()) return;
       const idx = Starlace.KEY_MAP.indexOf(e.key.toLowerCase());
       if (idx < 0) return;
       // Pick the i-th node in pitch order (sorted by noteIndex), so keys

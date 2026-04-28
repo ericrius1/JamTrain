@@ -6,15 +6,15 @@ import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Dat
 
 export const AUDIO_DEFS = {
   masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master' },
-  chordCycleSeconds:  { default: 44,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
-  attackSeconds:      { default: 2.4,  min: 0.2,  max: 6,    step: 0.1,  label: 'attack sec' },
-  releaseSeconds:     { default: 7.2,  min: 1,    max: 12,   step: 0.1,  label: 'release sec' },
-  filterMaxHz:        { default: 2600, min: 1500, max: 8000, step: 50,   label: 'filter ceil' },
-  reverbWetRange:     { default: 0.12, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
-  shimmerMaxDb:       { default: -22,  min: -30,  max: 0,    step: 0.5,  label: 'shimmer dB' },
+  chordCycleSeconds:  { default: 56,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
+  attackSeconds:      { default: 4.2,  min: 0.2,  max: 8,    step: 0.1,  label: 'attack sec' },
+  releaseSeconds:     { default: 9.8,  min: 1,    max: 14,   step: 0.1,  label: 'release sec' },
+  filterMaxHz:        { default: 2200, min: 1200, max: 8000, step: 50,   label: 'filter ceil' },
+  reverbWetRange:     { default: 0.08, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
+  shimmerMaxDb:       { default: -28,  min: -36,  max: 0,    step: 0.5,  label: 'shimmer dB' },
   muteHandModulation: { type: 'boolean', default: false, label: 'mute hands' },
-  drumLevelDb:        { default: -8,   min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
-  drumBpm:            { default: 68,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
+  drumLevelDb:        { default: -14,  min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
+  drumBpm:            { default: 62,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
   drumEbbPeriod:      { default: 78,   min: 20,   max: 240,  step: 1,    label: 'drum ebb sec' },
   muteDrums:          { type: 'boolean', default: false, label: 'mute drums' },
 } as const;
@@ -28,9 +28,9 @@ const STAT_SMOOTH_SECONDS = 1.2;
 const PRESENCE_ATTACK_SECONDS = 0.6;
 const PRESENCE_RELEASE_SECONDS = 2.5;
 
-const BASE_FILTER_HZ = 1250;
-const BASE_REVERB_WET = 0.42;
-const BASE_CHORUS_WET = 0.18;
+const BASE_FILTER_HZ = 980;
+const BASE_REVERB_WET = 0.50;
+const BASE_CHORUS_WET = 0.10;
 const BASE_PAN = 0;
 
 export class AudioEngine {
@@ -136,16 +136,16 @@ export class AudioEngine {
     // crowded chord transitions get gently squeezed.
     this.master = new Tone.Gain(this.params.masterGain).connect(this.audioGraph.getBus('backing'));
     this.compressor = new Tone.Compressor({
-      threshold: -18,
-      ratio: 4,
-      attack: 0.05,
-      release: 0.3,
-      knee: 6,
+      threshold: -22,
+      ratio: 2.4,
+      attack: 0.08,
+      release: 0.65,
+      knee: 10,
     }).connect(this.master);
     this.panner = new Tone.Panner(BASE_PAN).connect(this.compressor);
-    this.reverb = new Tone.Reverb({ decay: 10.5, preDelay: 0.035, wet: BASE_REVERB_WET }).connect(this.panner);
-    this.delay = new Tone.PingPongDelay({ delayTime: '4n.', feedback: 0.22, wet: 0.08 }).connect(this.reverb);
-    this.chorus = new Tone.Chorus({ frequency: 0.18, delayTime: 7, depth: 0.28, wet: BASE_CHORUS_WET })
+    this.reverb = new Tone.Reverb({ decay: 12.5, preDelay: 0.055, wet: BASE_REVERB_WET }).connect(this.panner);
+    this.delay = new Tone.PingPongDelay({ delayTime: '2n.', feedback: 0.16, wet: 0.04 }).connect(this.reverb);
+    this.chorus = new Tone.Chorus({ frequency: 0.11, delayTime: 8, depth: 0.18, wet: BASE_CHORUS_WET })
       .start()
       .connect(this.delay);
     this.filter = new Tone.Filter({ frequency: BASE_FILTER_HZ, type: 'lowpass', rolloff: -24 }).connect(this.chorus);
@@ -155,27 +155,27 @@ export class AudioEngine {
     this.shimmerGain = new Tone.Gain(0).connect(this.filter);
 
     const padOptions = {
-      oscillator: { type: 'fattriangle', count: 3, spread: 14 } as any,
-      envelope: { attack: this.params.attackSeconds, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds },
-      volume: -14,
+      oscillator: { type: 'fatsine', count: 2, spread: 5 } as any,
+      envelope: { attack: this.params.attackSeconds, decay: 0.8, sustain: 0.86, release: this.params.releaseSeconds },
+      volume: -18,
     };
     // Per-voice attenuation: top of each chord (voices[2]) sits well below the
     // lower two so the music doesn't fight speech-band frequencies.
-    const padVoiceVolumesDb = [-13, -15, -24];
+    const padVoiceVolumesDb = [-17, -19, -28];
     const subOptions = {
-      oscillator: { type: 'fattriangle', count: 3, spread: 14 } as any,
-      envelope: { attack: this.params.attackSeconds, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds },
-      volume: -18,
+      oscillator: { type: 'sine' } as any,
+      envelope: { attack: this.params.attackSeconds * 1.2, decay: 0.8, sustain: 0.68, release: this.params.releaseSeconds },
+      volume: -24,
     };
     const droneOptions = {
       oscillator: { type: 'sine' } as any,
-      envelope: { attack: this.params.attackSeconds * 1.5, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds * 1.3 },
-      volume: -12,
+      envelope: { attack: this.params.attackSeconds * 1.6, decay: 0.8, sustain: 0.82, release: this.params.releaseSeconds * 1.25 },
+      volume: -18,
     };
     const shimmerOptions = {
-      oscillator: { type: 'triangle' } as any,
-      envelope: { attack: this.params.attackSeconds * 1.8, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds * 0.7 },
-      volume: -18,
+      oscillator: { type: 'sine' } as any,
+      envelope: { attack: this.params.attackSeconds * 2, decay: 0.8, sustain: 0.58, release: this.params.releaseSeconds },
+      volume: -28,
     };
 
     for (let bank = 0; bank < 2; bank++) {
@@ -192,31 +192,29 @@ export class AudioEngine {
       this.shimmerBanks[bank] = new Tone.Synth(shimmerOptions).connect(this.shimmerGain);
     }
 
-    // Rhodes/EP layer — FM voice with a quick bell modulation envelope that
-    // decays away, leaving the carrier sine to ring out. Each chord change
-    // re-triggers the chord; we use triggerAttackRelease so old chords decay
-    // on their own envelope without bank bookkeeping.
+    // Soft felt-key bloom on each chord change. Kept deliberately quiet so it
+    // marks harmonic movement without becoming a bright repeated hook.
     const epOptions = {
       harmonicity: 1.0,
-      modulationIndex: 11,
+      modulationIndex: 3.5,
       oscillator: { type: 'sine' } as any,
       modulation: { type: 'sine' } as any,
-      envelope: { attack: 0.008, decay: 1.6, sustain: 0.05, release: 4.2 },
-      modulationEnvelope: { attack: 0.004, decay: 0.7, sustain: 0, release: 0.4 },
+      envelope: { attack: 0.028, decay: 2.4, sustain: 0.02, release: 5.4 },
+      modulationEnvelope: { attack: 0.018, decay: 1.1, sustain: 0, release: 0.6 },
     };
     this.epA = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
-    this.epA.volume.value = -18;
+    this.epA.volume.value = -26;
     this.epA.connect(this.bedAGain);
     this.epB = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
-    this.epB.volume.value = -18;
+    this.epB.volume.value = -26;
     this.epB.connect(this.bedBGain);
 
     // Vinyl crackle — bandpassed pink noise, sits well below the music. Skips
     // the lowpass/reverb chain so it stays clearly textural rather than
     // smeared into the pad.
-    this.vinyl = new Tone.Noise({ type: 'pink', volume: -8 } as any);
-    this.vinylFilter = new Tone.Filter({ frequency: 4800, type: 'bandpass', Q: 0.6 });
-    this.vinylGain = new Tone.Gain(0.028).connect(this.compressor);
+    this.vinyl = new Tone.Noise({ type: 'pink', volume: -18 } as any);
+    this.vinylFilter = new Tone.Filter({ frequency: 2600, type: 'bandpass', Q: 0.45 });
+    this.vinylGain = new Tone.Gain(0.010).connect(this.compressor);
     this.vinyl.chain(this.vinylFilter, this.vinylGain);
     this.vinyl.start();
 
@@ -229,8 +227,8 @@ export class AudioEngine {
     this.subABanks[b].triggerAttack(transposeOctaveDown(initial.a.voices[0]));
     this.subBBanks[b].triggerAttack(transposeOctaveDown(initial.b.voices[0]));
     this.shimmerBanks[b].triggerAttack(this.shimmerNote());
-    this.epA.triggerAttackRelease(initial.a.voices, '7m', undefined, 0.62);
-    this.epB.triggerAttackRelease(initial.b.voices, '7m', undefined, 0.62);
+    this.epA.triggerAttackRelease(initial.a.voices, '9m', undefined, 0.30);
+    this.epB.triggerAttackRelease(initial.b.voices, '9m', undefined, 0.30);
 
     this.setupDrums(Tone);
 
@@ -247,26 +245,26 @@ export class AudioEngine {
 
     this.kick = new Tone.MembraneSynth({
       pitchDecay: 0.05,
-      octaves: 5,
+      octaves: 3.5,
       oscillator: { type: 'sine' } as any,
-      envelope: { attack: 0.001, decay: 0.45, sustain: 0.01, release: 1.0 },
-      volume: -8,
+      envelope: { attack: 0.004, decay: 0.55, sustain: 0.01, release: 1.2 },
+      volume: -12,
     }).connect(this.drumGain);
 
     // Bandpass-filtered pink noise → soft brushed snare.
-    this.snareFilter = new Tone.Filter({ frequency: 2200, type: 'bandpass', Q: 1.1 }).connect(this.drumGain);
+    this.snareFilter = new Tone.Filter({ frequency: 1550, type: 'bandpass', Q: 0.75 }).connect(this.drumGain);
     this.snare = new Tone.NoiseSynth({
       noise: { type: 'pink' } as any,
-      envelope: { attack: 0.005, decay: 0.16, sustain: 0, release: 0.16 },
-      volume: -14,
+      envelope: { attack: 0.012, decay: 0.22, sustain: 0, release: 0.22 },
+      volume: -22,
     }).connect(this.snareFilter);
 
     // Highpass white-noise tick — barely-there shaker / closed hat.
-    this.hatFilter = new Tone.Filter({ frequency: 7200, type: 'highpass', Q: 0.7 }).connect(this.drumGain);
+    this.hatFilter = new Tone.Filter({ frequency: 5600, type: 'highpass', Q: 0.45 }).connect(this.drumGain);
     this.hihat = new Tone.NoiseSynth({
-      noise: { type: 'white' } as any,
-      envelope: { attack: 0.003, decay: 0.04, sustain: 0, release: 0.04 },
-      volume: -28,
+      noise: { type: 'pink' } as any,
+      envelope: { attack: 0.006, decay: 0.08, sustain: 0, release: 0.08 },
+      volume: -38,
     }).connect(this.hatFilter);
 
     Tone.getTransport().bpm.value = this.params.drumBpm;
@@ -275,9 +273,9 @@ export class AudioEngine {
 
     // 16-step lofi pattern. Numbers are velocities (0 = rest).
     //               1   e   &   a   2   e   &   a   3   e   &   a   4   e   &   a
-    const KICK   = [0.95,   0,   0,   0,    0,   0, 0.7,   0,    0,   0,   0,   0,    0,   0,   0,   0];
-    const SNARE  = [   0,   0,   0,   0, 0.65,   0,   0,   0,    0,   0,   0,   0, 0.65,   0,   0,   0];
-    const HAT    = [   0, 0.5,   0, 0.45,    0, 0.5,   0, 0.45,    0, 0.5,   0, 0.45,    0, 0.5,   0, 0.45];
+    const KICK   = [0.70,   0,   0,   0,    0,   0, 0.42,   0,    0,   0,   0,   0,    0,   0,   0,   0];
+    const SNARE  = [   0,   0,   0,   0, 0.38,   0,   0,   0,    0,   0,   0,   0, 0.32,   0,   0,   0];
+    const HAT    = [   0,   0,   0, 0.20,    0,   0,   0, 0.16,    0,   0,   0, 0.18,    0,   0,   0, 0.14];
 
     this.drumSeq = new Tone.Sequence((time: number, step: number) => {
       const kv = KICK[step];
@@ -342,16 +340,16 @@ export class AudioEngine {
     this.panner.pan.rampTo(BASE_PAN + panMod, PARAM_RAMP);
 
     const wetMod = (this.smoothed.avgCurl - 0.5) * this.params.reverbWetRange * p;
-    const sharedSpaceLift = this.smoothedPlayerActivity * 0.045;
+    const sharedSpaceLift = this.smoothedPlayerActivity * 0.035;
     this.reverb.wet.rampTo(BASE_REVERB_WET + wetMod + sharedSpaceLift, PARAM_RAMP);
-    this.delay.wet.rampTo(0.08 + this.smoothedPlayerActivity * 0.045 + this.smoothed.spread * 0.025 * p, PARAM_RAMP);
+    this.delay.wet.rampTo(0.04 + this.smoothedPlayerActivity * 0.025 + this.smoothed.spread * 0.015 * p, PARAM_RAMP);
 
     // Let active player notes sit forward by gently leaning the bed back,
     // while keeping enough swell that the backing still breathes with hands.
     const swellAdd = this.smoothed.spread * 0.25 * p;
     const activityDuck = 1 - this.smoothedPlayerActivity * 0.18;
     this.master.gain.rampTo(this.params.masterGain * (0.84 + swellAdd) * activityDuck, PARAM_RAMP);
-    this.chorus.wet.rampTo(BASE_CHORUS_WET + this.smoothed.spread * 0.35 * p, PARAM_RAMP);
+    this.chorus.wet.rampTo(BASE_CHORUS_WET + this.smoothed.spread * 0.16 * p, PARAM_RAMP);
 
     const shimmerLinear = p * this.tone.dbToGain(this.params.shimmerMaxDb);
     this.shimmerGain.gain.rampTo(shimmerLinear, PARAM_RAMP);
@@ -364,7 +362,7 @@ export class AudioEngine {
       const bell = (1 - Math.cos(t * Math.PI * 2)) * 0.5; // 0..1..0 over period
       const ebbT = Math.pow(bell, 1.4); // bias slightly toward quiet
       const muted = this.params.muteDrums ? 0 : 1;
-      const drumLinear = ebbT * muted * this.tone.dbToGain(this.params.drumLevelDb);
+      const drumLinear = ebbT * muted * this.tone.dbToGain(this.params.drumLevelDb) * (1 - this.smoothedPlayerActivity * 0.35);
       this.drumGain.gain.rampTo(drumLinear, PARAM_RAMP * 4);
     }
   }
@@ -502,8 +500,8 @@ export class AudioEngine {
     this.subABanks[newBank]?.triggerAttack(transposeOctaveDown(a.voices[0]));
     this.subBBanks[newBank]?.triggerAttack(transposeOctaveDown(b.voices[0]));
     this.shimmerBanks[newBank]?.triggerAttack(this.shimmerNote());
-    this.epA?.triggerAttackRelease(a.voices, '7m', undefined, 0.62);
-    this.epB?.triggerAttackRelease(b.voices, '7m', undefined, 0.62);
+    this.epA?.triggerAttackRelease(a.voices, '9m', undefined, 0.28);
+    this.epB?.triggerAttackRelease(b.voices, '9m', undefined, 0.28);
 
     this.bankIndex = newBank;
   }

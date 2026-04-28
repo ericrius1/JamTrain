@@ -119,5 +119,13 @@ export interface PlayerVisual {
     contacts?: readonly HandContactPoint[],
   ): void;
   setVisible(visible: boolean): void;
+  /** Hide the visual without an animation — used at construction time before
+   *  the intro animation kicks in. */
+  startHidden(): void;
+  /** Animate the instrument into existence. Safe to call multiple times. */
+  playIntroAnimation(): void;
+  /** Animate the instrument out. Promise resolves when the visual is fully
+   *  hidden so the caller can dispose / swap. */
+  playOutroAnimation(): Promise<void>;
   dispose(): void;
 }

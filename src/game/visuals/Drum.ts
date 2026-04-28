@@ -17,6 +17,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
+import { JAM_DRUM_HZ } from '../harmony';
 import type { HandContactPoint, OrbGestureState, PlayerVisual, VoiceState } from '../instruments';
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
@@ -72,12 +73,9 @@ type DrumOptions = {
 };
 
 // Five playable orbs arranged in a row in front of the player. Each orb is
-// one pitch from a pentatonic scale. Hand strikes / mouse clicks / keyboard
-// keys (A S D F G) all trigger the same hit path.
+// one pitch from the shared Jam Train harmony. Hand strikes / mouse clicks /
+// keyboard keys (A S D F G) all trigger the same hit path.
 const ORB_COUNT = 5;
-// Per-orb pitches: indices into ORB_HZ. D3, G3, C4, F4, A4 — a five-note
-// pentatonic spread that pairs well with starlace.
-const ORB_NOTE_INDICES = [0, 2, 4, 6, 8];
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
@@ -86,21 +84,9 @@ const RIPPLE_MAX_AGE = 5.8;
 
 type AnyNode = any;
 
-// D minor pentatonic fields across the single orb. Hand strikes and mouse
-// dives pick from this field while the continuous synth bends between notes.
-const ORB_HZ: number[] = [
-  146.832,  // D3 — center "ding"
-  174.614,  // F3
-  195.998,  // G3
-  220.000,  // A3
-  261.626,  // C4
-  293.665,  // D4
-  349.228,  // F4
-  391.995,  // G4
-  440.000,  // A4
-  523.251,  // C5
-  587.330,  // D5
-];
+// Tuned as a consonant D6 handpan subset of D major pentatonic. This removes
+// the old F-natural/C-natural hits that fought the backing harmony.
+const ORB_HZ: readonly number[] = JAM_DRUM_HZ;
 
 function makeOrbOffsets(spacing: number): THREE.Vector3[] {
   // Horizontal row of 5 orbs centered on the local origin. Spacing scales the
@@ -214,6 +200,22 @@ export class Drum implements PlayerVisual {
 
   private uniforms: OrbUniforms;
 
+  // Intro/outro reveal: orbs ride up from below the screen. revealStartedAt
+  // marks when the active animation began (in `elapsed` seconds), direction
+  // 1 = rise in / -1 = sink out. While `revealActive` is true, hand and
+  // pointer interaction is suppressed so the animation can't be interrupted
+  // by accidental hits.
+  private revealStartedAt = -Infinity;
+  private revealDirection: 1 | -1 = 1;
+  private revealActive = false;
+  private revealedFully = false;
+  private revealResolveOutro?: () => void;
+  private static readonly REVEAL_DURATION_IN = 1.05;
+  private static readonly REVEAL_DURATION_OUT = 0.55;
+  private static readonly REVEAL_PER_ORB_IN = 0.65;
+  private static readonly REVEAL_PER_ORB_OUT = 0.42;
+  private static readonly REVEAL_DROP_DISTANCE = 1.45;
+
   private onHitCallback?: (e: OrbHit) => void;
   private onGestureCallback?: (gesture: OrbGestureState) => void;
   private registered?: ReturnType<typeof registerTweaks<typeof DRUM_DEFS>>;
@@ -311,6 +313,69 @@ export class Drum implements PlayerVisual {
     this.mesh.visible = visible;
   }
 
+  startHidden(): void {
+    this.mesh.visible = false;
+    this.revealedFully = false;
+    this.revealActive = false;
+  }
+
+  playIntroAnimation(): void {
+    this.revealStartedAt = this.elapsed;
+    this.revealDirection = 1;
+    this.revealActive = true;
+    this.revealedFully = false;
+    this.mesh.visible = true;
+  }
+
+  /**
+   * Returns a promise that resolves once the orbs have fully sunk out of
+   * view, so the caller can swap instruments cleanly.
+   */
+  playOutroAnimation(): Promise<void> {
+    if (!this.mesh.visible) return Promise.resolve();
+    this.revealStartedAt = this.elapsed;
+    this.revealDirection = -1;
+    this.revealActive = true;
+    this.revealedFully = false;
+    return new Promise(resolve => {
+      this.revealResolveOutro = resolve;
+    });
+  }
+
+  isInteractive(): boolean {
+    return this.revealedFully && !this.revealActive;
+  }
+
+  // Per-orb reveal envelope. Stagger keeps neighbours from rising together
+  // so the row reads as a phrase rather than a single block.
+  private orbReveal(i: number): { offsetY: number; scale: number } {
+    if (!this.mesh.visible) return { offsetY: 0, scale: 0 };
+    if (!this.revealActive) {
+      return this.revealedFully
+        ? { offsetY: 0, scale: 1 }
+        : { offsetY: 0, scale: 0 };
+    }
+    const isIn = this.revealDirection === 1;
+    const total = isIn ? Drum.REVEAL_DURATION_IN : Drum.REVEAL_DURATION_OUT;
+    const perOrb = isIn ? Drum.REVEAL_PER_ORB_IN : Drum.REVEAL_PER_ORB_OUT;
+    const stagger = Math.max(0, total - perOrb) / Math.max(1, ORB_COUNT - 1);
+    // Outro sweeps the opposite way so the cluster collapses center-out
+    // instead of repeating the intro pattern in reverse.
+    const stagIndex = isIn ? i : ORB_COUNT - 1 - i;
+    const localT = this.elapsed - this.revealStartedAt - stagIndex * stagger;
+    const t = clamp(localT / Math.max(perOrb, 0.0001), 0, 1);
+    // Out-cubic on the way in for the satisfying settle, in-cubic on the way
+    // out so the orbs accelerate as they fall away.
+    const eased = isIn
+      ? 1 - Math.pow(1 - t, 3)
+      : Math.pow(t, 3);
+    const orbT = isIn ? eased : 1 - eased;
+    return {
+      offsetY: -Drum.REVEAL_DROP_DISTANCE * (1 - orbT),
+      scale: orbT,
+    };
+  }
+
   update(
     leftPalm: THREE.Vector3,
     rightPalm: THREE.Vector3,
@@ -351,19 +416,31 @@ export class Drum implements PlayerVisual {
 
     // Per-orb update: bob and BVH sync. Hit detection runs once after all
     // centers are current so palms and finger joints query the same tree.
+    const baseRadius = this.params.orbRadius;
     for (let i = 0; i < ORB_COUNT; i += 1) {
       const orb = this.orbs[i];
       // Subtle bob — each orb has its own phase.
       const bob = Math.sin(this.elapsed * this.params.bobSpeed * 1.3 + i * 1.21) * this.params.bobAmount;
-      orb.mesh.position.set(orb.offset.x, orb.offset.y + bob, orb.offset.z);
+      const reveal = this.orbReveal(i);
+      orb.mesh.position.set(orb.offset.x, orb.offset.y + bob + reveal.offsetY, orb.offset.z);
+      orb.mesh.scale.setScalar(baseRadius * reveal.scale);
       orb.uniforms.offset.value.copy(orb.mesh.position);
       _orbCenter.copy(this.mesh.position).add(orb.mesh.position);
       this.collisionBVH.setPoint(i, _orbCenter.x, _orbCenter.y, _orbCenter.z);
     }
 
     this.collisionBVH.refit();
-    this.processContactHits(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
-    this.updatePointerGesture(delta);
+    this.tickReveal();
+    if (this.revealedFully && !this.revealActive) {
+      this.processContactHits(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
+      this.updatePointerGesture(delta);
+    } else {
+      // Drain any pointer "still inside" state so hits don't fire the moment
+      // interactivity returns. Visuals stay quiet during the rise.
+      this.clearPointerVisualState(delta);
+      this.pointerNdcPrevValid = false;
+      for (let i = 0; i < ORB_COUNT; i += 1) this.pointerOrbInside[i] = false;
+    }
 
     for (const orb of this.orbs) {
       // Decay the per-orb hit flash and push into shader uniform.
@@ -389,6 +466,25 @@ export class Drum implements PlayerVisual {
 
   private placeGroup(): void {
     this.mesh.position.copy(this.anchor);
+  }
+
+  private tickReveal(): void {
+    if (!this.revealActive) return;
+    const total = this.revealDirection === 1
+      ? Drum.REVEAL_DURATION_IN
+      : Drum.REVEAL_DURATION_OUT;
+    const elapsedSinceStart = this.elapsed - this.revealStartedAt;
+    if (elapsedSinceStart < total + 0.05) return;
+    this.revealActive = false;
+    if (this.revealDirection === 1) {
+      this.revealedFully = true;
+    } else {
+      this.revealedFully = false;
+      this.mesh.visible = false;
+      const resolve = this.revealResolveOutro;
+      this.revealResolveOutro = undefined;
+      resolve?.();
+    }
   }
 
   private layoutOrbs(): void {
@@ -457,6 +553,7 @@ export class Drum implements PlayerVisual {
       if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
+      if (!this.isInteractive()) return;
       const idx = Drum.KEY_MAP.get(e.key.toLowerCase());
       if (idx === undefined) return;
       this.fireKeyboardHit(idx);
@@ -645,8 +742,7 @@ export class Drum implements PlayerVisual {
   }
 
   private noteIndexForOrb(orbIndex: number): number {
-    const idx = clamp(orbIndex, 0, ORB_NOTE_INDICES.length - 1);
-    return ORB_NOTE_INDICES[idx];
+    return clamp(orbIndex, 0, ORB_HZ.length - 1);
   }
 
   private resolveContacts(

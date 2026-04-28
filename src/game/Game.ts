@@ -133,6 +133,12 @@ export class Game {
     remote: makeHandContactPoints(),
   };
   private musicIntensity = 0;
+  // While `introActive` is true the instruments stay hidden and the scenery
+  // bird system is held off — the world reads as a still tableau the user is
+  // about to step into. exitIntroMode() flips this and runs the per-player
+  // intro animations.
+  private introActive = true;
+  private swapsInFlight: Record<PlayerSlot, number> = { local: 0, remote: 0 };
   private shadowsTweaks?: ReturnType<typeof registerTweaks<typeof SHADOWS_DEFS>>;
   private readonly shadowParams = makeParams(SHADOWS_DEFS);
   private cabinTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_DEFS>>;
@@ -239,7 +245,11 @@ export class Game {
     this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.paneDock);
     this.roundDirector.onPlayingStart(() => {
       if (this.pendingPartnerInstrument && this.pendingPartnerInstrument !== this.playerInstruments.remote) {
-        this.installPlayerVisual('remote', this.pendingPartnerInstrument);
+        if (this.introActive) {
+          this.installPlayerVisualImmediate('remote', this.pendingPartnerInstrument);
+        } else {
+          void this.swapPlayerVisual('remote', this.pendingPartnerInstrument).then(() => this.refreshArchetype());
+        }
       }
       this.pendingPartnerInstrument = null;
       this.refreshArchetype();
@@ -779,18 +789,19 @@ export class Game {
   }
 
   private installPlayerVisuals(): void {
-    this.installPlayerVisual('local', this.playerInstruments.local);
-    this.installPlayerVisual('remote', this.playerInstruments.remote);
+    this.installPlayerVisualImmediate('local', this.playerInstruments.local);
+    this.installPlayerVisualImmediate('remote', this.playerInstruments.remote);
   }
 
-  private installPlayerVisual(player: PlayerSlot, id: InstrumentId): void {
+  private installPlayerVisualImmediate(player: PlayerSlot, id: InstrumentId): void {
     this.playerVisuals[player]?.dispose();
     this.playerInstruments[player] = id;
 
     const seatIndex = player === 'local' ? this.multiplayer.localSeatIndex : this.multiplayer.partnerSeatIndex;
     const anchor = this.computeInstrumentAnchor(seatIndex);
+    let visual: PlayerVisual;
     if (id === 'starlace') {
-      this.playerVisuals[player] = new Starlace(this.scene, this.paneDock, `starlace-${player}`, {
+      visual = new Starlace(this.scene, this.paneDock, `starlace-${player}`, {
         palette: player,
         title: `Starlace (${player === 'local' ? 'Local' : 'Partner'})`,
         sculptor: this.sculptor,
@@ -802,7 +813,7 @@ export class Game {
         },
       });
     } else {
-      this.playerVisuals[player] = new Drum(this.scene, this.paneDock, `drum-${player}`, {
+      visual = new Drum(this.scene, this.paneDock, `drum-${player}`, {
         palette: player,
         title: `Drum (${player === 'local' ? 'Local' : 'Partner'})`,
         camera: player === 'local' ? this.camera : undefined,
@@ -819,7 +830,31 @@ export class Game {
         },
       });
     }
+    this.playerVisuals[player] = visual;
     this.handSynth.setInstrument(player, id);
+    // Always start hidden — the caller decides when to play the intro
+    // animation (after All Aboard, or on instrument swap).
+    visual.startHidden();
+    if (!this.introActive) {
+      visual.playIntroAnimation();
+    }
+  }
+
+  private async swapPlayerVisual(player: PlayerSlot, id: InstrumentId): Promise<void> {
+    const current = this.playerVisuals[player];
+    if (current) {
+      this.swapsInFlight[player] += 1;
+      try {
+        await current.playOutroAnimation();
+      } catch (err) {
+        console.warn('[game] outro animation rejected', err);
+      }
+      // If another swap superseded this one mid-outro, abort the rest of
+      // this branch so the most recent swap stays authoritative.
+      this.swapsInFlight[player] -= 1;
+      if (this.swapsInFlight[player] > 0) return;
+    }
+    this.installPlayerVisualImmediate(player, id);
   }
 
   /**
@@ -851,8 +886,15 @@ export class Game {
       return;
     }
     if (this.playerInstruments[player] === id) return;
-    this.installPlayerVisual(player, id);
-    this.refreshArchetype();
+    // During intro we'd see the outro of an empty visual followed by the
+    // intro of the new one — nothing has been revealed yet, so just swap
+    // immediately.
+    if (this.introActive) {
+      this.installPlayerVisualImmediate(player, id);
+      this.refreshArchetype();
+      return;
+    }
+    void this.swapPlayerVisual(player, id).then(() => this.refreshArchetype());
   }
 
   private refreshArchetype(): void {
@@ -997,12 +1039,16 @@ export class Game {
   }
 
   // Intro/active state. While intro is enabled the scenery's bird system is
-  // held off so the world only "comes alive" once the user has chosen to
-  // board. Master visual dimming of the rendered scene is handled in CSS via
-  // the canvas's opacity/filter so it lands uniformly on lit and unlit
-  // materials.
+  // held off, the instruments stay hidden, and pointer/keyboard input cannot
+  // hit the orbs/starlace. Master visual dimming of the rendered scene is
+  // handled in CSS via the canvas's opacity/filter so it lands uniformly on
+  // lit and unlit materials.
   exitIntroMode(): void {
+    if (!this.introActive) return;
+    this.introActive = false;
     this.scenery.setSkyLifeEnabled(true);
+    this.playerVisuals.local?.playIntroAnimation();
+    this.playerVisuals.remote?.playIntroAnimation();
   }
 
   private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number; underwater?: number }): void {
