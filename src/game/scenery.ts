@@ -9,6 +9,7 @@ import {
 } from './biomes';
 import { SpriteAtlas } from './spriteAtlas';
 import { SkyLife } from './skyLife';
+import { streamFor } from './seedRandom';
 
 const PAINTED_TERRAIN_CHUNKS = [
   { id: 'alpine-lake', texture: '/scenery/far-terrain-chunk-01-alpine-lake.webp' },
@@ -62,6 +63,7 @@ const PAINTED_TERRAIN_Y = 0.85;
 const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 360;
 const PAINTED_TERRAIN_MAX_SPEED = 3;
 const PAINTED_TERRAIN_VISIBLE_PANELS = 2;
+const PAINTED_TERRAIN_ROOM_SEED_KEY = 0x5c3e9a;
 
 export const SCENERY_DEFS = {
   cycleLengthSeconds:    { default: 240,  min: 30, max: 600, step: 1,     label: 'day/night sec' },
@@ -188,6 +190,10 @@ export class ScenerySystem {
     this.roomSeed = seed;
     this.scheduler.setSeed(seed);
     this.skyLife?.setSeed(seed);
+    if (this.paintedTerrainSelection === 'auto') {
+      this.seedPaintedTerrainStart();
+      this.updatePaintedTerrainPanels();
+    }
   }
 
   getRoomSeed(): number {
@@ -247,6 +253,7 @@ export class ScenerySystem {
     this.paintedTerrainLoader = new THREE.TextureLoader();
     this.paintedTerrainGeometry = new THREE.PlaneGeometry(PAINTED_TERRAIN_CHUNK_WIDTH, PAINTED_TERRAIN_HEIGHT);
     this.paintedTerrainAlphaTexture = this.createPaintedTerrainAlphaTexture();
+    this.seedPaintedTerrainStart();
 
     for (let sequenceOffset = 0; sequenceOffset < PAINTED_TERRAIN_VISIBLE_PANELS; sequenceOffset += 1) {
       const material = new THREE.MeshBasicMaterial({
@@ -409,6 +416,12 @@ export class ScenerySystem {
 
   private paintedTerrainLoopLength(): number {
     return PAINTED_TERRAIN_CHUNK_STRIDE * PAINTED_TERRAIN_SEQUENCE.length;
+  }
+
+  private seedPaintedTerrainStart(): void {
+    const rand = streamFor(this.roomSeed, PAINTED_TERRAIN_ROOM_SEED_KEY);
+    const sequenceIndex = Math.floor(rand() * PAINTED_TERRAIN_SEQUENCE.length) % PAINTED_TERRAIN_SEQUENCE.length;
+    this.paintedTerrainDistance = sequenceIndex * PAINTED_TERRAIN_CHUNK_STRIDE;
   }
 
   private disposePaintedTerrain(): void {

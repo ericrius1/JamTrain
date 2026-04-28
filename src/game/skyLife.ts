@@ -14,8 +14,59 @@ const FLOCK_MIN_GAP_S = 4.5;
 const FLOCK_MAX_GAP_S = 16;
 const FLOCK_FIRST_SPAWN_S = 1.5;
 const FLOCK_OFFSCREEN_BUFFER = 0.7;
+const FLOCK_DEPTHS: readonly FlockDepthSpec[] = [
+  {
+    rollLimit: 0.44,
+    distance: 0,
+    scaleMul: 1.00,
+    formationMul: 1.00,
+    motionMul: 1.00,
+    shadeMul: 1.00,
+    speedMul: 1.00,
+    yOffset: 0.00,
+    pathMul: 1.00,
+  },
+  {
+    rollLimit: 0.80,
+    distance: 0.78,
+    scaleMul: 0.70,
+    formationMul: 0.78,
+    motionMul: 0.70,
+    shadeMul: 0.82,
+    speedMul: 0.78,
+    yOffset: 0.08,
+    pathMul: 0.72,
+  },
+  {
+    rollLimit: 1.00,
+    distance: 1.52,
+    scaleMul: 0.48,
+    formationMul: 0.58,
+    motionMul: 0.50,
+    shadeMul: 0.68,
+    speedMul: 0.62,
+    yOffset: 0.16,
+    pathMul: 0.54,
+  },
+];
 
 type FlockFormation = 'solo' | 'pair' | 'vee' | 'loose' | 'line' | 'scatter' | 'column';
+
+interface FlockDepth {
+  zOffset: number;
+  scaleMul: number;
+  formationMul: number;
+  motionMul: number;
+  shadeMul: number;
+}
+
+interface FlockDepthSpec extends Omit<FlockDepth, 'zOffset'> {
+  rollLimit: number;
+  distance: number;
+  speedMul: number;
+  yOffset: number;
+  pathMul: number;
+}
 
 interface SpriteLayer {
   mesh: THREE.Mesh;
@@ -64,6 +115,7 @@ interface Flock {
   speed: number;
   formation: FlockFormation;
   palette: 'default' | 'seabird';
+  depth: FlockDepth;
   birds: BirdData[];
 }
 
@@ -140,12 +192,13 @@ export class SkyLife {
   private createFlock(palette: 'default' | 'seabird', birdBias: number): Flock {
     const direction: 1 | -1 = Math.random() < 0.5 ? 1 : -1;
     const formation = chooseFlockFormation();
-    const speed = 0.46 + Math.random() * 0.62;
+    const depth = chooseFlockDepth(this.birdLayer.side);
+    const speed = (0.46 + Math.random() * 0.62) * depth.spec.speedMul;
     const travel = SKY_WIDTH + FLOCK_OFFSCREEN_BUFFER * 2;
     const duration = travel / speed;
-    const baseY = 1.32 + Math.random() * 0.78;
-    const endYOffset = (Math.random() - 0.5) * (formation === 'solo' || formation === 'pair' ? 0.44 : 0.28);
-    const pathAmp = (formation === 'scatter' ? 0.12 : 0.04) + Math.random() * 0.16;
+    const baseY = 1.32 + Math.random() * 0.78 + depth.spec.yOffset;
+    const endYOffset = (Math.random() - 0.5) * (formation === 'solo' || formation === 'pair' ? 0.44 : 0.28) * depth.spec.pathMul;
+    const pathAmp = ((formation === 'scatter' ? 0.12 : 0.04) + Math.random() * 0.16) * depth.spec.pathMul;
     const pathFreq = 0.75 + Math.random() * 1.45;
     const pathPhase = Math.random() * Math.PI * 2;
     const size = chooseFlockSize(formation, birdBias);
@@ -165,6 +218,7 @@ export class SkyLife {
       speed,
       formation,
       palette,
+      depth: depth.flockDepth,
       birds,
     };
   }
@@ -276,34 +330,35 @@ export class SkyLife {
 
     const tint = new THREE.Color(flock.palette === 'seabird' ? 0xefefe6 : 0x12161c)
       .multiplyScalar(daylight * 0.5 + 0.30)
-      .multiplyScalar(fade);
+      .multiplyScalar(fade * flock.depth.shadeMul);
 
     const ids: AtlasId[] = flock.palette === 'seabird'
       ? ['seabirdA', 'seabirdB', 'seabirdC']
       : ['birdA', 'birdB', 'birdC'];
 
     for (const bird of flock.birds) {
-      let bx = leadX + flock.direction * bird.formX;
-      let by = routeY + bird.formY;
+      let bx = leadX + flock.direction * bird.formX * flock.depth.formationMul;
+      let by = routeY + bird.formY * flock.depth.formationMul;
 
-      by += Math.sin(this.elapsedSeconds * bird.swayFreq + bird.swayPhase) * bird.swayAmp;
-      bx += Math.cos(this.elapsedSeconds * bird.swayFreq * 0.7 + bird.swayPhase) * bird.swayAmp * 0.4 * flock.direction;
-      by += Math.sin(local * bird.driftFreq + bird.driftPhase) * bird.driftAmp * formationMotion;
-      bx += Math.cos(local * bird.driftFreq * 0.8 + bird.driftPhase) * bird.driftAmp * 0.45 * formationMotion * flock.direction;
+      by += Math.sin(this.elapsedSeconds * bird.swayFreq + bird.swayPhase) * bird.swayAmp * flock.depth.motionMul;
+      bx += Math.cos(this.elapsedSeconds * bird.swayFreq * 0.7 + bird.swayPhase) * bird.swayAmp * 0.4 * flock.depth.motionMul * flock.direction;
+      by += Math.sin(local * bird.driftFreq + bird.driftPhase) * bird.driftAmp * formationMotion * flock.depth.motionMul;
+      bx += Math.cos(local * bird.driftFreq * 0.8 + bird.driftPhase) * bird.driftAmp * 0.45 * formationMotion * flock.depth.motionMul * flock.direction;
 
       const m = this.computeManeuver(bird, local, flock.direction);
-      bx += m.dx;
-      by += m.dy;
+      bx += m.dx * flock.depth.motionMul;
+      by += m.dy * flock.depth.motionMul;
 
       const flapMul = (m.kind === 'swoop' ? 1.6 : m.kind === 'loop' ? 1.9 : m.kind === 'peel' ? 1.35 : 1.0) * (0.92 + flock.speed * 0.12);
       const frame = Math.floor((this.elapsedSeconds * bird.flapHz * flapMul + bird.flapPhase) % 3);
       const birdTint = tint.clone().multiplyScalar(bird.colorMul);
       const bodyRoll = Math.sin(local * bird.driftFreq + bird.swayPhase) * 0.08;
-      this.writeSprite(this.birdLayer, bx, by, bird.scale, ids[frame], birdTint, 'center', {
+      this.writeSprite(this.birdLayer, bx, by, bird.scale * flock.depth.scaleMul, ids[frame], birdTint, 'center', {
         flipX: flock.direction < 0,
         rotation: bodyRoll * flock.direction + m.rotation,
         scaleX: bird.scaleX,
         scaleY: bird.scaleY,
+        zOffset: flock.depth.zOffset,
       });
     }
   }
@@ -375,6 +430,25 @@ function chooseFlockFormation(): FlockFormation {
   if (roll < 0.82) return 'line';
   if (roll < 0.95) return 'scatter';
   return 'column';
+}
+
+function chooseFlockDepth(side: number): { flockDepth: FlockDepth; spec: FlockDepthSpec } {
+  const roll = Math.random();
+  const spec = FLOCK_DEPTHS.find((depth) => roll < depth.rollLimit) ?? FLOCK_DEPTHS[0];
+  const sideSign = side < 0 ? -1 : 1;
+  const distance = spec.distance === 0
+    ? 0
+    : spec.distance + (Math.random() - 0.5) * 0.16;
+  return {
+    spec,
+    flockDepth: {
+      zOffset: sideSign * distance,
+      scaleMul: spec.scaleMul,
+      formationMul: spec.formationMul,
+      motionMul: spec.motionMul,
+      shadeMul: spec.shadeMul,
+    },
+  };
 }
 
 function chooseFlockSize(formation: FlockFormation, birdBias: number): number {
