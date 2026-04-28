@@ -28,16 +28,24 @@ const BG_OPTIONS: Record<string, string> = (() => {
   return o;
 })();
 
-const TERRAIN_LAYER_MIN = 1;
+const TERRAIN_LAYER_MIN = 0;
 const TERRAIN_LAYER_MAX = 9;
-const TERRAIN_LAYER_DEFAULT = 9;
+const TERRAIN_LAYER_DEFAULT = 0;
+const PAINTED_TERRAIN_TEXTURE = '/scenery/far-terrain-painted-v1.webp';
+const PAINTED_TERRAIN_WIDTH = 18.8;
+const PAINTED_TERRAIN_HEIGHT = 3.15;
+const PAINTED_TERRAIN_X_DISTANCE = 4.86;
+const PAINTED_TERRAIN_Y = 1.34;
+const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 120;
+const PAINTED_TERRAIN_MAX_SPEED = 3;
 
 export const SCENERY_DEFS = {
   cycleLengthSeconds: { default: 240,  min: 30,  max: 600,  step: 1,     label: 'day/night sec' },
   cycleOffset:        { default: 0.50, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
   trainSpeed:         { default: 1.1,  min: 0,   max: 3,    step: 0.01,  label: 'train speed' },
   hillAmplitude:      { default: 1.18, min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape', folder: 'Terrain' },
-  terrainLayers:      { default: TERRAIN_LAYER_DEFAULT, min: TERRAIN_LAYER_MIN, max: TERRAIN_LAYER_MAX, step: 1, label: 'layers', folder: 'Terrain' },
+  terrainLayers:      { default: TERRAIN_LAYER_DEFAULT, min: TERRAIN_LAYER_MIN, max: TERRAIN_LAYER_MAX, step: 1, label: 'proc layers', folder: 'Terrain' },
+  paintedTerrainOpacity: { default: 0.92, min: 0, max: 1, step: 0.01, label: 'painted layer', folder: 'Terrain' },
   auroraIntensity:    { default: 0.42, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
   starIntensity:      { default: 0.9,  min: 0,   max: 1,    step: 0.01,  label: 'stars' },
   moonSize:           { default: 0.34, min: 0.12, max: 0.58, step: 0.01, label: 'moon size' },
@@ -313,6 +321,14 @@ export class ScenerySystem {
   private cloudCanopy!: CloudCanopy;
   private underwater!: UnderwaterRealm;
   private onThunder?: (delay: number) => void;
+  private paintedTerrainTexture?: THREE.Texture;
+  private paintedTerrainMaterial?: THREE.MeshBasicMaterial;
+  private paintedTerrainGeometry?: THREE.PlaneGeometry;
+  private paintedTerrainMeshes: THREE.Mesh[] = [];
+  private paintedTerrainOffset = 0;
+  private readonly paintedTerrainTint = new THREE.Color(0xffffff);
+  private readonly paintedTerrainNightTint = new THREE.Color(0x3a2a22);
+  private readonly paintedTerrainDuskTint = new THREE.Color(0xffb261);
   private readonly cycleStartedAt = Date.now() / 1000;
   private lastCycle = 0;
   private atmosphere = {
@@ -367,6 +383,7 @@ export class ScenerySystem {
   build(): void {
     this.root.name = 'procedural-scenery';
     this.createSky();
+    this.createPaintedTerrain();
     this.createBackground();
     this.atlas = new SpriteAtlas();
     this.layers = new BiomeLayers(this.scene, this.atlas, this.scheduler, this.roomSeed);
@@ -492,6 +509,7 @@ export class ScenerySystem {
   dispose(): void {
     this.registered?.dispose();
     this.underwater?.dispose();
+    this.disposePaintedTerrain();
   }
 
   private createSky(): void {
@@ -519,6 +537,45 @@ export class ScenerySystem {
         this.bgFogMeshes.push({ mesh: mist, band, side });
         this.root.add(mist);
       }
+    }
+  }
+
+  private createPaintedTerrain(): void {
+    const texture = new THREE.TextureLoader().load(PAINTED_TERRAIN_TEXTURE, tex => {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.generateMipmaps = true;
+      tex.needsUpdate = true;
+    });
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = true;
+    this.paintedTerrainTexture = texture;
+
+    const material = new THREE.MeshBasicMaterial({
+      map: texture,
+      color: 0xffffff,
+      transparent: true,
+      opacity: this.params.paintedTerrainOpacity,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      toneMapped: false,
+      fog: false,
+    });
+    this.paintedTerrainMaterial = material;
+    this.paintedTerrainGeometry = new THREE.PlaneGeometry(PAINTED_TERRAIN_WIDTH, PAINTED_TERRAIN_HEIGHT);
+
+    for (const side of [-1]) {
+      const mesh = new THREE.Mesh(this.paintedTerrainGeometry, material);
+      mesh.name = 'painted-far-terrain';
+      mesh.rotation.y = Math.PI / 2;
+      mesh.position.set(side * PAINTED_TERRAIN_X_DISTANCE, PAINTED_TERRAIN_Y, 0);
+      mesh.renderOrder = -31;
+      mesh.frustumCulled = false;
+      this.paintedTerrainMeshes.push(mesh);
+      this.root.add(mesh);
     }
   }
 
@@ -640,6 +697,7 @@ export class ScenerySystem {
     const { from, to, t } = this.scheduler.background();
     const fromParams = silhouetteParams(from);
     const toParams = silhouetteParams(to);
+    this.updatePaintedTerrain(delta, speed, daylight);
 
     // Lerp colors (respecting day/night within each biome).
     lerpHexInto(this.bgFromColor.value, from.color.night, from.color.day, daylight);
@@ -673,6 +731,37 @@ export class ScenerySystem {
       panel.scrollOffset += delta * speed * panel.layer.scrollSpeed;
       this.updatePanelShape(panel, fromParams, toParams, t);
     }
+  }
+
+  private updatePaintedTerrain(delta: number, speed: number, daylight: number): void {
+    if (this.paintedTerrainTexture) {
+      const speedFactor = clamp(speed, 0, PAINTED_TERRAIN_MAX_SPEED) / PAINTED_TERRAIN_MAX_SPEED;
+      const deltaOffset = delta * speedFactor / PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED;
+      this.paintedTerrainOffset = (this.paintedTerrainOffset + deltaOffset) % 1;
+      this.paintedTerrainTexture.offset.x = this.paintedTerrainOffset;
+    }
+
+    if (this.paintedTerrainMaterial) {
+      const night = this.skyNight.value;
+      const goldenHour = this.skySunset.value;
+      this.paintedTerrainTint
+        .set(0xffffff)
+        .lerp(this.paintedTerrainNightTint, night * 0.68)
+        .lerp(this.paintedTerrainDuskTint, goldenHour * 0.16);
+      this.paintedTerrainMaterial.color.copy(this.paintedTerrainTint);
+      this.paintedTerrainMaterial.opacity = this.params.paintedTerrainOpacity * (0.78 + daylight * 0.22);
+    }
+  }
+
+  private disposePaintedTerrain(): void {
+    for (const mesh of this.paintedTerrainMeshes) this.root.remove(mesh);
+    this.paintedTerrainMeshes = [];
+    this.paintedTerrainGeometry?.dispose();
+    this.paintedTerrainMaterial?.dispose();
+    this.paintedTerrainTexture?.dispose();
+    this.paintedTerrainGeometry = undefined;
+    this.paintedTerrainMaterial = undefined;
+    this.paintedTerrainTexture = undefined;
   }
 
   private activeTerrainLayerCount(): number {
