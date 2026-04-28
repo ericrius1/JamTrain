@@ -14,7 +14,6 @@ export type EmitRequest = {
   count: number;
   intensity: number;
   speed: number;
-  lifetime: number;
 };
 
 export interface EnergySink {

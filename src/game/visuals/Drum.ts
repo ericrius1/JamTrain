@@ -1019,7 +1019,6 @@ export class Drum implements PlayerVisual {
       count: Math.round(40 + velocity * 40),
       intensity: 0.6 + velocity * 0.4,
       speed: 0.9 + velocity * 1.4,
-      lifetime: 1.2 + velocity * 0.6,
     });
   }
 

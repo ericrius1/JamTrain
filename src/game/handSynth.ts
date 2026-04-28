@@ -1404,6 +1404,21 @@ export class HandSynthEngine {
     }
   }
 
+  private starlacePlayableChord(chord: readonly string[], velocity: number, activeVoices: number): readonly string[] {
+    const voiceRoom = this.starlaceVoiceCap() - activeVoices;
+    if (voiceRoom < 2) return [];
+
+    const richness = clamp(this.params.starlaceRichness, 0, 1);
+    const wantsTriad = chord.length >= 3 && richness + velocity * 0.55 > 0.84;
+    const desiredCount = wantsTriad ? 3 : 2;
+    const noteCount = Math.min(desiredCount, chord.length, voiceRoom >= 5 ? 3 : 2);
+    return chord.slice(0, Math.max(2, noteCount));
+  }
+
+  private starlaceVoiceCap(): number {
+    return Math.floor(clamp(this.params.starlaceVoiceCap, 10, STARLACE_MAX_ACTIVE_VOICES));
+  }
+
   private starlaceModulationIndex(): number {
     return 1.2 + clamp(this.params.starlaceOvertones, 0, 1) * 4.0;
   }
@@ -1680,6 +1695,7 @@ export class HandSynthEngine {
         starlaceHold: () => this.applyStarlaceEnvelope(),
         starlaceDecay: () => this.applyStarlaceEnvelope(),
         starlaceSustain: () => this.applyStarlaceEnvelope(),
+        starlaceVoiceCap: () => this.applyStarlaceVoiceCaps(),
         starlaceOvertones: () => this.applyStarlaceTone(),
         starlaceGlint: () => this.applyStarlaceVolume(),
       },
@@ -1744,12 +1760,23 @@ export class HandSynthEngine {
     }
   }
 
+  private applyStarlaceVoiceCaps(): void {
+    const cap = this.starlaceVoiceCap();
+    for (const key of PLAYER_KEYS) {
+      const s = this.starlaceVoices[key];
+      if (!s) continue;
+      s.pluck.maxPolyphony = cap;
+      s.glint.maxPolyphony = Math.min(STARLACE_GLINT_MAX_ACTIVE_VOICES, Math.max(4, Math.ceil(cap * 0.35)));
+      s.auraSynth.maxPolyphony = Math.min(12, Math.max(6, Math.ceil(cap * 0.35)));
+    }
+  }
+
   private applyStarlaceEnvelope(): void {
     for (const key of PLAYER_KEYS) {
       const s = this.starlaceVoices[key];
       if (!s) continue;
       const attack = Math.max(0.002, this.params.starlaceAttack);
-      const hold = Math.max(0.18, this.params.starlaceHold);
+      const hold = Math.max(0.10, this.params.starlaceHold);
       const fade = Math.max(0.35, this.params.starlaceDecay);
       const sustain = clamp(this.params.starlaceSustain, 0.02, 0.82);
       s.pluck.set?.({

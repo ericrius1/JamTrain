@@ -100,6 +100,18 @@ const _raycaster = new THREE.Raycaster();
 const _dummy = new THREE.Object3D();
 const _colorA = new THREE.Color();
 const _colorB = new THREE.Color();
+const _colorC = new THREE.Color();
+
+const STARLACE_NOTE_PALETTE = [
+  '#ffe58a',
+  '#ffb15f',
+  '#ff7a5c',
+  '#ff6fd8',
+  '#b38cff',
+  '#6fd8ff',
+  '#71f0e7',
+  '#ffd166',
+] as const;
 
 const smoothstep01 = (x: number): number => {
   const t = clamp(x, 0, 1);
@@ -184,6 +196,7 @@ export class Starlace implements PlayerVisual {
   private warm = new THREE.Color();
   private gold = new THREE.Color();
   private hot = new THREE.Color();
+  private noteColors: THREE.Color[] = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex));
   private onPluckCallback?: (event: StarlacePluck) => void;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   private keyDownListener?: (e: KeyboardEvent) => void;
@@ -281,11 +294,12 @@ export class Starlace implements PlayerVisual {
     this.mesh.add(this.nodeMesh);
 
     this.sparkMaterial = new THREE.MeshBasicMaterial({
-      color: this.params.hotColor,
+      color: 0xffffff,
       transparent: true,
       opacity: 0.92,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
+      vertexColors: true,
     });
     this.sparkMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), this.sparkMaterial, MAX_SPARKS);
     this.sparkMesh.frustumCulled = false;
@@ -722,15 +736,22 @@ export class Starlace implements PlayerVisual {
       this.pulseLinePositions[cursor++] = bz;
 
       _colorA.copy(this.cool).lerp(this.gold, 0.58).multiplyScalar(lineGlow);
-      _colorB.copy(this.hot).multiplyScalar(pulseGlow);
-      for (let i = 0; i < 2; i += 1) {
-        this.lineColors[colorCursor] = _colorA.r;
-        this.pulseLineColors[colorCursor++] = _colorB.r;
-        this.lineColors[colorCursor] = _colorA.g;
-        this.pulseLineColors[colorCursor++] = _colorB.g;
-        this.lineColors[colorCursor] = _colorA.b;
-        this.pulseLineColors[colorCursor++] = _colorB.b;
-      }
+      this.noteColorForNode(a, _colorB).lerp(this.hot, 0.10 + edgePulse * 0.08).multiplyScalar(pulseGlow);
+      this.noteColorForNode(b, _colorC).lerp(this.hot, 0.10 + edgePulse * 0.08).multiplyScalar(pulseGlow);
+
+      this.lineColors[colorCursor] = _colorA.r;
+      this.pulseLineColors[colorCursor++] = _colorB.r;
+      this.lineColors[colorCursor] = _colorA.g;
+      this.pulseLineColors[colorCursor++] = _colorB.g;
+      this.lineColors[colorCursor] = _colorA.b;
+      this.pulseLineColors[colorCursor++] = _colorB.b;
+
+      this.lineColors[colorCursor] = _colorA.r;
+      this.pulseLineColors[colorCursor++] = _colorC.r;
+      this.lineColors[colorCursor] = _colorA.g;
+      this.pulseLineColors[colorCursor++] = _colorC.g;
+      this.lineColors[colorCursor] = _colorA.b;
+      this.pulseLineColors[colorCursor++] = _colorC.b;
       maxPulse = Math.max(maxPulse, a.pulse, b.pulse);
     }
     this.maxPulse += (maxPulse - this.maxPulse) * 0.35;
@@ -757,8 +778,11 @@ export class Starlace implements PlayerVisual {
       this.nodeMesh.setMatrixAt(i, _dummy.matrix);
 
       _colorA.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
-      _colorB.copy(_colorA).lerp(this.hot, pulse);
-      const boost = 0.9 + pulse * 1.9;
+      this.noteColorForNode(node, _colorB);
+      _colorA.lerp(_colorB, clamp(pulse * 0.86 + node.pulse * 0.18, 0, 1));
+      _colorA.lerp(this.hot, Math.pow(pulse, 3) * 0.14);
+      const boost = 0.78 + pulse * 1.45;
+      _colorB.copy(_colorA);
       _colorB.multiplyScalar(boost);
       this.nodeMesh.setColorAt(i, _colorB);
     }
@@ -783,6 +807,9 @@ export class Starlace implements PlayerVisual {
       _dummy.scale.setScalar(size);
       _dummy.updateMatrix();
       this.sparkMesh.setMatrixAt(visible, _dummy.matrix);
+      this.noteColorForNode(a, _colorA).lerp(this.noteColorForNode(b, _colorB), t);
+      _colorA.lerp(this.hot, 0.08).multiplyScalar(1.05 + spark.intensity * 0.55);
+      this.sparkMesh.setColorAt(visible, _colorA);
       visible += 1;
       if (visible >= MAX_SPARKS) break;
     }
@@ -793,6 +820,7 @@ export class Starlace implements PlayerVisual {
       this.sparkMesh.setMatrixAt(i, _dummy.matrix);
     }
     this.sparkMesh.instanceMatrix.needsUpdate = true;
+    if (this.sparkMesh.instanceColor) this.sparkMesh.instanceColor.needsUpdate = true;
   }
 
   private writeHiddenSparks(): void {
@@ -1291,9 +1319,22 @@ export class Starlace implements PlayerVisual {
     this.warm.set(this.params.warmColor);
     this.gold.set(this.params.goldColor);
     this.hot.set(this.params.hotColor);
+    this.noteColors = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex));
     this.lineMaterial.color.set(0xffffff);
     this.pulseLineMaterial.color.set(0xffffff);
-    this.sparkMaterial.color.copy(this.hot);
+    this.sparkMaterial.color.set(0xffffff);
+  }
+
+  private noteColorForNode(node: StarNode, target: THREE.Color): THREE.Color {
+    const maxNote = Math.max(1, STARLACE_HZ.length - 1);
+    const palettePos = (node.noteIndex / maxNote) * (this.noteColors.length - 1);
+    const low = Math.floor(palettePos);
+    const high = Math.min(this.noteColors.length - 1, low + 1);
+    const t = palettePos - low;
+    const glint = hash(node.seed * 19.7 + node.noteIndex * 3.31);
+    target.copy(this.noteColors[low]).lerp(this.noteColors[high], t);
+    if (glint > 0.76) target.lerp(this.gold, 0.18);
+    return target;
   }
 }
 
@@ -1317,11 +1358,11 @@ function applyPaletteDefaults(params: StarlaceParams, palette: StarlacePalette):
     params.coolColor = '#d98bff';
     params.warmColor = '#ff7ad6';
     params.goldColor = '#b991ff';
-    params.hotColor = '#fff0fb';
+    params.hotColor = '#ffd2f4';
     return;
   }
   params.coolColor = '#6fe8ff';
   params.warmColor = '#ff8cf0';
   params.goldColor = '#ffd166';
-  params.hotColor = '#fff7d6';
+  params.hotColor = '#ffe69a';
 }

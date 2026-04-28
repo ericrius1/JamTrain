@@ -39,8 +39,12 @@ export const SCULPTOR_DEFS = {
   speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
   stretchScale:         { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
   containmentStrength:  { default: 6.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
-  lifeSeconds:          { default: 28,    min: 4,    max: 120,  step: 0.5, label: 'life seconds' },
+  lifeSeconds:          { default: 60,    min: 4,    max: 240,  step: 0.5, label: 'life seconds' },
   fadeFraction:         { default: 0.25,  min: 0.05, max: 0.6,  step: 0.01, label: 'fade fraction' },
+  settleAmount:         { default: 0.85,  min: 0,    max: 1,    step: 0.01, label: 'settle amount' },
+  settleStart:          { default: 0.5,   min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
+  fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
+  fieldBreathAmount:    { default: 0.15,  min: 0,    max: 0.5,  step: 0.01, label: 'field breath' },
   duetBoost:            { default: 0.45,  min: 0,    max: 1.5,  step: 0.01, label: 'duet boost' },
   dissolveBurstSpeed:   { default: 6,     min: 0,    max: 16,   step: 0.1,  label: 'dissolve burst' },
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'projector base radius' },
@@ -678,8 +682,8 @@ export class EnergySculptor implements EnergySink {
 
         this.spawnColorArray[slot].set(req.color.r, req.color.g, req.color.b);
 
-        const lifeJitter = 0.7 + Math.random() * 0.6;
-        const lifeMax = req.lifetime * lifeJitter * (lifeBase / 28);
+        // The slider is the actual base lifetime in seconds; ±15% jitter.
+        const lifeMax = lifeBase * (0.85 + Math.random() * 0.30);
         this.spawnMetaArray[slot].set(lifeMax, kind, 1);
 
         cursor += 1;
