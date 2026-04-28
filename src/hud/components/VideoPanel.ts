@@ -59,7 +59,6 @@ export class VideoPanel {
   private micButton?: HTMLButtonElement;
   private emptyOverlay?: HTMLDivElement;
   private toolbar?: HTMLDivElement;
-  private hintEl?: HTMLDivElement;
   private shareWarnOverlay?: HTMLDivElement;
   private shareWarnHeading?: HTMLDivElement;
   private cameraEnabled = false;
@@ -137,12 +136,6 @@ export class VideoPanel {
 
     toolbar.append(this.cameraButton, this.shareButton, this.micButton);
 
-    const hint = document.createElement('div');
-    hint.className = 'video-panel-toolbar-hint';
-    hint.textContent = 'Mouse/trackpad play is on · Camera adds hand tracking';
-    toolbar.appendChild(hint);
-    this.hintEl = hint;
-
     this.wrapper.appendChild(toolbar);
   }
 
@@ -153,7 +146,7 @@ export class VideoPanel {
       <div class="icon">${EMPTY_CAMERA_SVG}</div>
       <div class="heading">· Camera Off ·</div>
       <div class="subhead">Mouse/trackpad play is active</div>
-      <div class="hint">Tap <em>Camera</em> for optional hand tracking.</div>
+      <div class="hint">Tap <em>Camera</em> for optional hand controls.</div>
     `;
     this.wrapper.appendChild(empty);
     this.emptyOverlay = empty;
@@ -175,12 +168,6 @@ export class VideoPanel {
     this.cameraButton?.classList.toggle('enabled', enabled);
     this.emptyOverlay?.classList.toggle('hidden', enabled);
     this.toolbar?.classList.toggle('share-revealed', enabled);
-    if (this.hintEl) {
-      this.hintEl.classList.toggle('hidden', enabled);
-      if (!enabled) {
-        this.hintEl.textContent = 'Mouse/trackpad play is on · Camera adds hand tracking';
-      }
-    }
     this.recomputeShareWarn();
   }
 

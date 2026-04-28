@@ -349,6 +349,10 @@ export class Hud {
     this.applyPlaques();
   }
 
+  setDrumOrbCount(count: number): void {
+    this.controlsPanel.setDrumOrbCount(count);
+  }
+
   setPartnerInstrument(id: InstrumentId): void {
     this.partnerInstrument = id;
     this.applyPlaques();

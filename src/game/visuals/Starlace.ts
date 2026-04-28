@@ -14,9 +14,10 @@ export const STARLACE_DEFS = {
   pulseDecay:      { default: 4.8,   min: 1,     max: 14,   step: 0.1,   label: 'star fade' },
   driftSpeed:      { default: 0.58,  min: 0,     max: 2.4,  step: 0.01,  label: 'drift speed' },
   waveAmp:         { default: 0.042, min: 0,     max: 0.16, step: 0.001, label: 'web wave' },
-  linkOpacity:     { default: 0.46,  min: 0,     max: 0.9,  step: 0.01,  label: 'link opacity' },
+  linkOpacity:     { default: 0.30,  min: 0,     max: 0.9,  step: 0.01,  label: 'link opacity' },
   sparkSize:       { default: 0.030, min: 0.006, max: 0.08, step: 0.001, label: 'spark size' },
   anchorSmoothing: { default: 5.5,   min: 0.2,   max: 16,   step: 0.1,   label: 'anchor smoothing s' },
+  keyWalkInterval: { default: 0.34,  min: 0.18,  max: 0.75, step: 0.005, label: 'key walk step s' },
   coolColor:       { type: 'color', default: '#6fe8ff', label: 'blue stars' },
   warmColor:       { type: 'color', default: '#ff8cf0', label: 'violet stars' },
   goldColor:       { type: 'color', default: '#ffd166', label: 'gold links' },
@@ -64,9 +65,24 @@ type TravelingSpark = {
   intensity: number;
 };
 
+type KeyboardPathState = {
+  keyIndex: number;
+  homeNoteIndex: number;
+  currentNode: number;
+  previousNode: number;
+  nextAt: number;
+  step: number;
+  phraseSeed: number;
+  recentNodes: number[];
+};
+
 const MAX_SPARKS = 64;
 const MAX_HITS_PER_FRAME = 10;
 const TAU = Math.PI * 2;
+const STARLACE_LINKS_PER_NODE = 2;
+const STARLACE_MAX_NODE_DEGREE = 4;
+const STARLACE_MAX_LINK_SPAN = 0.33;
+const STARLACE_LINK_FADE_START = 0.18;
 
 const STARLACE_HZ: readonly number[] = JAM_STARLACE_HZ;
 
@@ -95,9 +111,12 @@ export class Starlace implements PlayerVisual {
 
   private nodes: StarNode[] = [];
   private edges: [number, number][] = [];
+  private edgeDistances: number[] = [];
   private adjacency: number[][] = [];
   private linePositions: Float32Array;
+  private lineColors: Float32Array;
   private pulseLinePositions: Float32Array;
+  private pulseLineColors: Float32Array;
   private lineGeometry: THREE.BufferGeometry;
   private pulseLineGeometry: THREE.BufferGeometry;
   private lineMaterial: THREE.LineBasicMaterial;
@@ -167,6 +186,11 @@ export class Starlace implements PlayerVisual {
   private onPluckCallback?: (event: StarlacePluck) => void;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   private keyDownListener?: (e: KeyboardEvent) => void;
+  private keyUpListener?: (e: KeyboardEvent) => void;
+  private keyBlurListener?: () => void;
+  private keyboardPitchNodes: number[][] = [];
+  private keyboardStartCursor: number[] = [];
+  private keyboardPaths = new Map<string, KeyboardPathState>();
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
   private pointerNdc = new THREE.Vector2(999, 999);
@@ -202,26 +226,33 @@ export class Starlace implements PlayerVisual {
 
     this.createNodes();
     this.createEdges();
+    this.buildKeyboardPitchBuckets();
     this.pointerNodeInside = Array.from({ length: this.nodes.length }, () => false);
     this.pointerSweepSeen = Array.from({ length: this.nodes.length }, () => false);
     this.pointerFrameFired = Array.from({ length: this.nodes.length }, () => false);
 
     this.linePositions = new Float32Array(this.edges.length * 2 * 3);
+    this.lineColors = new Float32Array(this.edges.length * 2 * 3);
     this.pulseLinePositions = new Float32Array(this.edges.length * 2 * 3);
+    this.pulseLineColors = new Float32Array(this.edges.length * 2 * 3);
     this.lineGeometry = new THREE.BufferGeometry();
     this.pulseLineGeometry = new THREE.BufferGeometry();
     this.lineGeometry.setAttribute('position', new THREE.BufferAttribute(this.linePositions, 3));
+    this.lineGeometry.setAttribute('color', new THREE.BufferAttribute(this.lineColors, 3));
     this.pulseLineGeometry.setAttribute('position', new THREE.BufferAttribute(this.pulseLinePositions, 3));
+    this.pulseLineGeometry.setAttribute('color', new THREE.BufferAttribute(this.pulseLineColors, 3));
 
     this.lineMaterial = new THREE.LineBasicMaterial({
-      color: this.params.goldColor,
+      color: 0xffffff,
+      vertexColors: true,
       transparent: true,
       opacity: this.params.linkOpacity,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
     this.pulseLineMaterial = new THREE.LineBasicMaterial({
-      color: this.params.hotColor,
+      color: 0xffffff,
+      vertexColors: true,
       transparent: true,
       opacity: 0,
       blending: THREE.AdditiveBlending,
@@ -287,11 +318,13 @@ export class Starlace implements PlayerVisual {
       this.previousContacts.clear();
       this.activeContactKeys.clear();
       this.currentContactKeys.clear();
+      this.keyboardPaths.clear();
     }
   }
 
   startHidden(): void {
     this.mesh.visible = false;
+    this.keyboardPaths.clear();
     this.revealedFully = false;
     this.revealActive = false;
     this.fillRevealValues(0);
@@ -481,9 +514,11 @@ export class Starlace implements PlayerVisual {
     this.writeNodePositions();
     this.updateRevealValues();
     if (this.revealedFully && !this.revealActive) {
+      this.processKeyboardPaths();
       this.processContacts(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
       this.processPointer(delta);
     } else {
+      this.keyboardPaths.clear();
       this.clearPointerState();
     }
     this.decayPulses(delta);
@@ -527,24 +562,35 @@ export class Starlace implements PlayerVisual {
       const v = 0.5 * radius * Math.cos(phi);
       const z = 0.5 * radius * Math.sin(phi) * Math.sin(theta);
       const seed = r4;
-      const noteT = clamp((v + 0.5) * 0.78 + (u + 0.5) * 0.22, 0, 1);
       this.nodes.push({
         u,
         v,
         z,
         seed,
-        noteIndex: clamp(Math.round(noteT * (STARLACE_HZ.length - 1)), 0, STARLACE_HZ.length - 1),
+        noteIndex: 0,
         pulse: 0,
         lastHitAt: -100,
         world: new THREE.Vector3(),
       });
     }
+    this.assignNodePitches();
+  }
+
+  private assignNodePitches(): void {
+    const byPitchPosition = this.nodes
+      .map((node, i) => ({ i, score: node.v * 0.78 + node.u * 0.22 }))
+      .sort((a, b) => a.score - b.score);
+    const maxRank = Math.max(1, byPitchPosition.length - 1);
+    for (let rank = 0; rank < byPitchPosition.length; rank += 1) {
+      const noteIndex = Math.round((rank / maxRank) * (STARLACE_HZ.length - 1));
+      this.nodes[byPitchPosition[rank].i].noteIndex = clamp(noteIndex, 0, STARLACE_HZ.length - 1);
+    }
   }
 
   private createEdges(): void {
-    // k-nearest-neighbor graph in u/v/z space (z weighted slightly less so the
-    // graph still feels planar-ish when viewed head-on).
-    const K = 5;
+    // Similar in spirit to Three's linked-particles example: each node owns
+    // only a couple of nearest links, with a hard degree cap and span cutoff.
+    // That keeps the visible lace local instead of becoming a dense hairball.
     type Pair = { i: number; j: number; d: number };
     const distances: Pair[] = [];
     for (let i = 0; i < this.nodes.length; i += 1) {
@@ -553,20 +599,30 @@ export class Starlace implements PlayerVisual {
         const b = this.nodes[j];
         const du = a.u - b.u;
         const dv = a.v - b.v;
-        const dz = (a.z - b.z) * 0.85;
+        const dz = (a.z - b.z) * 1.15;
         const d = Math.sqrt(du * du + dv * dv + dz * dz);
         distances.push({ i, j, d });
       }
     }
     distances.sort((a, b) => a.d - b.d);
     const degree = new Array(this.nodes.length).fill(0);
+    const outgoing = new Array(this.nodes.length).fill(0);
     const seen = new Set<string>();
     for (const p of distances) {
+      if (p.d > STARLACE_MAX_LINK_SPAN) continue;
       const key = `${p.i}:${p.j}`;
       if (seen.has(key)) continue;
-      if (degree[p.i] >= K && degree[p.j] >= K) continue;
+      if (degree[p.i] >= STARLACE_MAX_NODE_DEGREE || degree[p.j] >= STARLACE_MAX_NODE_DEGREE) continue;
+      if (outgoing[p.i] >= STARLACE_LINKS_PER_NODE && outgoing[p.j] >= STARLACE_LINKS_PER_NODE) continue;
+
+      let owner = outgoing[p.i] <= outgoing[p.j] ? p.i : p.j;
+      if (outgoing[owner] >= STARLACE_LINKS_PER_NODE) owner = owner === p.i ? p.j : p.i;
+      if (outgoing[owner] >= STARLACE_LINKS_PER_NODE) continue;
+
       this.edges.push([p.i, p.j]);
+      this.edgeDistances.push(p.d);
       seen.add(key);
+      outgoing[owner] += 1;
       degree[p.i] += 1;
       degree[p.j] += 1;
     }
@@ -575,6 +631,22 @@ export class Starlace implements PlayerVisual {
       this.adjacency[a].push(b);
       this.adjacency[b].push(a);
     }
+  }
+
+  private buildKeyboardPitchBuckets(): void {
+    this.keyboardPitchNodes = Array.from({ length: STARLACE_HZ.length }, () => []);
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      const noteIndex = this.nodes[i].noteIndex;
+      this.keyboardPitchNodes[noteIndex]?.push(i);
+    }
+    for (const bucket of this.keyboardPitchNodes) {
+      bucket.sort((a, b) => {
+        const nodeA = this.nodes[a];
+        const nodeB = this.nodes[b];
+        return nodeA.u === nodeB.u ? nodeA.v - nodeB.v : nodeA.u - nodeB.u;
+      });
+    }
+    this.keyboardStartCursor = Array.from({ length: STARLACE_HZ.length }, () => 0);
   }
 
   private resolveAxes(): void {
@@ -609,7 +681,7 @@ export class Starlace implements PlayerVisual {
   private writeLines(): void {
     let maxPulse = 0;
     let cursor = 0;
-    let avgEdgeReveal = 0;
+    let colorCursor = 0;
     for (let e = 0; e < this.edges.length; e += 1) {
       const [aIdx, bIdx] = this.edges[e];
       const a = this.nodes[aIdx];
@@ -622,6 +694,13 @@ export class Starlace implements PlayerVisual {
       const bx = a.world.x + (b.world.x - a.world.x) * eased;
       const by = a.world.y + (b.world.y - a.world.y) * eased;
       const bz = a.world.z + (b.world.z - a.world.z) * eased;
+      const distance = this.edgeDistances[e] ?? STARLACE_MAX_LINK_SPAN;
+      const distanceFade = 1 - smoothstep01(
+        (distance - STARLACE_LINK_FADE_START) / Math.max(0.001, STARLACE_MAX_LINK_SPAN - STARLACE_LINK_FADE_START),
+      );
+      const edgePulse = Math.max(a.pulse, b.pulse);
+      const lineGlow = eased * clamp(0.12 + distanceFade * 0.78 + edgePulse * 0.28 + this.smoothedEnergy * 0.12, 0, 1.15);
+      const pulseGlow = eased * clamp(edgePulse * 1.18 + this.smoothedPulse * 0.20, 0, 1.4);
       this.linePositions[cursor] = a.world.x;
       this.pulseLinePositions[cursor++] = a.world.x;
       this.linePositions[cursor] = a.world.y;
@@ -634,15 +713,26 @@ export class Starlace implements PlayerVisual {
       this.pulseLinePositions[cursor++] = by;
       this.linePositions[cursor] = bz;
       this.pulseLinePositions[cursor++] = bz;
-      avgEdgeReveal += eased;
+
+      _colorA.copy(this.cool).lerp(this.gold, 0.58).multiplyScalar(lineGlow);
+      _colorB.copy(this.hot).multiplyScalar(pulseGlow);
+      for (let i = 0; i < 2; i += 1) {
+        this.lineColors[colorCursor] = _colorA.r;
+        this.pulseLineColors[colorCursor++] = _colorB.r;
+        this.lineColors[colorCursor] = _colorA.g;
+        this.pulseLineColors[colorCursor++] = _colorB.g;
+        this.lineColors[colorCursor] = _colorA.b;
+        this.pulseLineColors[colorCursor++] = _colorB.b;
+      }
       maxPulse = Math.max(maxPulse, a.pulse, b.pulse);
     }
-    avgEdgeReveal = this.edges.length > 0 ? avgEdgeReveal / this.edges.length : 1;
     this.maxPulse += (maxPulse - this.maxPulse) * 0.35;
     (this.lineGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    (this.lineGeometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
     (this.pulseLineGeometry.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-    this.lineMaterial.opacity = this.params.linkOpacity * (0.58 + this.smoothedEnergy * 0.58) * avgEdgeReveal;
-    this.pulseLineMaterial.opacity = clamp(this.maxPulse * 0.62 + this.smoothedPulse * 0.22, 0, 0.82) * avgEdgeReveal;
+    (this.pulseLineGeometry.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+    this.lineMaterial.opacity = this.params.linkOpacity * (0.72 + this.smoothedEnergy * 0.28);
+    this.pulseLineMaterial.opacity = clamp(this.maxPulse * 0.58 + this.smoothedPulse * 0.18, 0, 0.72);
   }
 
   private writeNodes(): void {
@@ -948,26 +1038,30 @@ export class Starlace implements PlayerVisual {
     this.emitStreak(node, velocity);
   }
 
-  private static KEY_MAP: ReadonlyArray<string> = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+  private static readonly KEY_MAP: ReadonlyArray<string> = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+  private static readonly KEYBOARD_INTERVAL_PATTERN: ReadonlyArray<number> = [1, 2, -1, 3, 1, -2, 2, -1];
+  private static readonly KEYBOARD_RECENT_LIMIT = 8;
 
   private attachKeyboardEvents(): void {
     this.keyDownListener = (e: KeyboardEvent) => {
-      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
-      const tag = (e.target as HTMLElement | null)?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (this.isKeyboardTextTarget(e.target)) return;
       if (!this.isInteractive()) return;
-      const idx = Starlace.KEY_MAP.indexOf(e.key.toLowerCase());
-      if (idx < 0) return;
-      // Pick the i-th node in pitch order (sorted by noteIndex), so keys
-      // ascend the scale predictably across the constellation.
-      const sorted = this.nodes
-        .map((n, i) => ({ i, note: n.noteIndex }))
-        .sort((a, b) => a.note - b.note);
-      const target = sorted[Math.min(idx, sorted.length - 1)];
-      if (!target) return;
-      this.fireNode(target.i, 0.7);
+      const key = e.key.toLowerCase();
+      const idx = Starlace.KEY_MAP.indexOf(key);
+      if (idx < 0 || this.keyboardPaths.has(key)) return;
+      e.preventDefault();
+      this.startKeyboardPath(key, idx);
+    };
+    this.keyUpListener = (e: KeyboardEvent) => {
+      this.keyboardPaths.delete(e.key.toLowerCase());
+    };
+    this.keyBlurListener = () => {
+      this.keyboardPaths.clear();
     };
     window.addEventListener('keydown', this.keyDownListener);
+    window.addEventListener('keyup', this.keyUpListener);
+    window.addEventListener('blur', this.keyBlurListener);
   }
 
   private detachKeyboardEvents(): void {
@@ -975,6 +1069,171 @@ export class Starlace implements PlayerVisual {
       window.removeEventListener('keydown', this.keyDownListener);
       this.keyDownListener = undefined;
     }
+    if (this.keyUpListener) {
+      window.removeEventListener('keyup', this.keyUpListener);
+      this.keyUpListener = undefined;
+    }
+    if (this.keyBlurListener) {
+      window.removeEventListener('blur', this.keyBlurListener);
+      this.keyBlurListener = undefined;
+    }
+    this.keyboardPaths.clear();
+  }
+
+  private isKeyboardTextTarget(target: EventTarget | null): boolean {
+    const element = target instanceof HTMLElement ? target : null;
+    if (!element) return false;
+    const tag = element.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || element.isContentEditable;
+  }
+
+  private startKeyboardPath(key: string, keyIndex: number): void {
+    const homeNoteIndex = this.keyboardHomeNoteIndex(keyIndex);
+    const startNode = this.pickKeyboardStartNode(homeNoteIndex);
+    if (startNode < 0) return;
+
+    const state: KeyboardPathState = {
+      keyIndex,
+      homeNoteIndex,
+      currentNode: startNode,
+      previousNode: -1,
+      nextAt: this.elapsed,
+      step: 0,
+      phraseSeed: hash(keyIndex * 17.31 + this.elapsed * 0.71 + (this.keyboardStartCursor[homeNoteIndex] ?? 0) * 3.19),
+      recentNodes: [startNode],
+    };
+    state.nextAt = this.elapsed + this.keyboardStepDelay(state);
+    this.keyboardPaths.set(key, state);
+    this.fireNode(startNode, 0.74);
+  }
+
+  private processKeyboardPaths(): void {
+    if (this.keyboardPaths.size === 0) return;
+
+    let fired = 0;
+    for (const state of this.keyboardPaths.values()) {
+      if (this.elapsed < state.nextAt) continue;
+
+      const nextNode = this.pickKeyboardNextNode(state);
+      if (nextNode >= 0) {
+        state.previousNode = state.currentNode;
+        state.currentNode = nextNode;
+        state.step += 1;
+        this.rememberKeyboardNode(state, nextNode);
+        this.fireNode(nextNode, this.keyboardPathVelocity(state));
+        fired += 1;
+      }
+
+      const delay = this.keyboardStepDelay(state);
+      state.nextAt = Math.max(state.nextAt + delay, this.elapsed + delay * 0.65);
+      if (fired >= MAX_HITS_PER_FRAME) return;
+    }
+  }
+
+  private keyboardHomeNoteIndex(keyIndex: number): number {
+    return clamp(keyIndex, 0, STARLACE_HZ.length - 1);
+  }
+
+  private pickKeyboardStartNode(homeNoteIndex: number): number {
+    const exact = this.keyboardPitchNodes[homeNoteIndex] ?? [];
+    if (exact.length > 0) {
+      const cursor = this.keyboardStartCursor[homeNoteIndex] ?? 0;
+      this.keyboardStartCursor[homeNoteIndex] = cursor + 1;
+      return exact[cursor % exact.length];
+    }
+
+    let best = -1;
+    let bestScore = Infinity;
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      const node = this.nodes[i];
+      const score = Math.abs(node.noteIndex - homeNoteIndex) * 10 + Math.abs(node.u) + Math.abs(node.v) * 0.4;
+      if (score >= bestScore) continue;
+      best = i;
+      bestScore = score;
+    }
+    return best;
+  }
+
+  private pickKeyboardNextNode(state: KeyboardPathState): number {
+    if (!this.nodes[state.currentNode]) return this.pickKeyboardStartNode(state.homeNoteIndex);
+
+    const candidates = this.collectKeyboardCandidates(state.currentNode, state.step % 4 === 2);
+    if (candidates.length === 0) return this.pickKeyboardStartNode(state.homeNoteIndex);
+
+    const current = this.nodes[state.currentNode];
+    const desiredInterval = Starlace.KEYBOARD_INTERVAL_PATTERN[
+      (state.step + state.keyIndex) % Starlace.KEYBOARD_INTERVAL_PATTERN.length
+    ];
+    const desiredDirection = Math.sign(Math.sin((state.step + 1 + state.phraseSeed * 4) * 0.92));
+
+    let best = -1;
+    let bestScore = Infinity;
+    for (const candidate of candidates) {
+      const node = this.nodes[candidate.index];
+      if (!node) continue;
+      const interval = node.noteIndex - current.noteIndex;
+      const recentIndex = state.recentNodes.lastIndexOf(candidate.index);
+      const recentPenalty = recentIndex < 0
+        ? 0
+        : 1.0 + (recentIndex / Math.max(1, state.recentNodes.length - 1)) * 0.85;
+      const directionPenalty = desiredDirection !== 0 && Math.sign(interval) === -desiredDirection ? 0.36 : 0;
+      const homeDrift = Math.max(0, Math.abs(node.noteIndex - state.homeNoteIndex) - 6) * 0.42;
+      const score =
+        Math.abs(interval - desiredInterval) * 0.34 +
+        (node.noteIndex === current.noteIndex ? 0.5 : 0) +
+        (candidate.index === state.previousNode ? 0.9 : 0) +
+        recentPenalty +
+        directionPenalty +
+        homeDrift +
+        node.pulse * 0.28 +
+        candidate.hops * 0.08 +
+        hash(candidate.index * 41.11 + state.step * 7.13 + state.phraseSeed * 19.7) * 0.22;
+
+      if (score >= bestScore) continue;
+      best = candidate.index;
+      bestScore = score;
+    }
+
+    return best;
+  }
+
+  private collectKeyboardCandidates(nodeIndex: number, includeSecondHop: boolean): Array<{ index: number; hops: number }> {
+    const direct = this.adjacency[nodeIndex] ?? [];
+    const byIndex = new Map<number, number>();
+    const add = (index: number, hops: number): void => {
+      if (index === nodeIndex) return;
+      const previous = byIndex.get(index);
+      if (previous !== undefined && previous <= hops) return;
+      byIndex.set(index, hops);
+    };
+
+    for (const index of direct) add(index, 1);
+    if (includeSecondHop || direct.length <= 2) {
+      for (const index of direct) {
+        for (const second of this.adjacency[index] ?? []) add(second, 2);
+      }
+    }
+
+    return [...byIndex.entries()].map(([index, hops]) => ({ index, hops }));
+  }
+
+  private rememberKeyboardNode(state: KeyboardPathState, nodeIndex: number): void {
+    state.recentNodes.push(nodeIndex);
+    if (state.recentNodes.length > Starlace.KEYBOARD_RECENT_LIMIT) {
+      state.recentNodes.splice(0, state.recentNodes.length - Starlace.KEYBOARD_RECENT_LIMIT);
+    }
+  }
+
+  private keyboardStepDelay(state: KeyboardPathState): number {
+    const base = clamp(this.params.keyWalkInterval, 0.18, 0.75);
+    const swing = Math.sin((state.step + 1) * 1.73 + state.phraseSeed * TAU) * 0.035;
+    const breath = state.step % 7 === 6 ? 0.045 : 0;
+    return clamp(base + swing + breath, 0.22, 0.82);
+  }
+
+  private keyboardPathVelocity(state: KeyboardPathState): number {
+    const accent = state.step % 4 === 1 ? 0.11 : 0;
+    return clamp(0.52 + accent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.18, 0.48, 0.84);
   }
 
   private emitStreak(node: StarNode, velocity: number): void {
@@ -1024,8 +1283,8 @@ export class Starlace implements PlayerVisual {
     this.warm.set(this.params.warmColor);
     this.gold.set(this.params.goldColor);
     this.hot.set(this.params.hotColor);
-    this.lineMaterial.color.copy(this.gold);
-    this.pulseLineMaterial.color.copy(this.hot);
+    this.lineMaterial.color.set(0xffffff);
+    this.pulseLineMaterial.color.set(0xffffff);
     this.sparkMaterial.color.copy(this.hot);
   }
 }

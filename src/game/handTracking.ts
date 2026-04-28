@@ -96,6 +96,7 @@ const POINTER_IDLE_CONFIDENCE = 0.35;
 
 export class HandTracker {
   private video?: HTMLVideoElement;
+  private micStream?: MediaStream;
   private detector?: MicroHandpose;
   private detectInputCanvas?: HTMLCanvasElement;
   private detectInputCtx?: CanvasRenderingContext2D;
@@ -142,36 +143,29 @@ export class HandTracker {
       return;
     }
 
-    const baseConstraints: MediaStreamConstraints = {
-      video: { width: { ideal: 960 }, height: { ideal: 540 }, facingMode: 'user' },
-      audio: true,
-    };
-
     let stream: MediaStream | undefined;
     try {
-      stream = await navigator.mediaDevices.getUserMedia(baseConstraints);
+      // Video-only on purpose. Asking for `audio: true` here would put the OS
+      // shared audio device into voice-processing mode (AEC/NS/AGC) for the
+      // entire session, which makes Tone.js's WebAudio output crackle on
+      // macOS — even after the user toggles the camera back off, because the
+      // mic track stays alive. Mic is acquired separately in startMic() the
+      // first time the user explicitly clicks the Mic button.
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 960 }, height: { ideal: 540 }, facingMode: 'user' },
+      });
     } catch (err) {
-      console.warn(
-        '[webrtc] mic+camera request failed; retrying video-only',
-        (err as Error)?.name,
-        (err as Error)?.message
-      );
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ ...baseConstraints, audio: false });
-        console.warn('[webrtc] mic unavailable; webrtc will be video-only');
-      } catch (err2) {
-        console.warn('[webrtc] camera unavailable; webrtc disabled', err2);
-        this.mode = 'error';
-        this.status = 'hands: simulated';
-        this.publishStatus();
-        return;
-      }
+      console.warn('[webrtc] camera unavailable; webrtc disabled', err);
+      this.mode = 'error';
+      this.status = 'hands: simulated';
+      this.publishStatus();
+      return;
     }
 
     try {
-      // Tracks start disabled — the user toggles them in via the panel icons.
-      // Permission is acquired here so we don't have to re-prompt on toggle.
-      for (const track of stream.getTracks()) {
+      // Track starts disabled — user toggles via the panel icon. Permission
+      // is already granted, so toggling camera off/on is instant.
+      for (const track of stream.getVideoTracks()) {
         track.enabled = false;
       }
 
@@ -306,10 +300,13 @@ export class HandTracker {
     }
   }
 
-  setAudioEnabled(enabled: boolean): void {
-    const stream = this.getStream();
-    if (!stream) return;
-    for (const track of stream.getAudioTracks()) {
+  async setAudioEnabled(enabled: boolean): Promise<void> {
+    if (enabled && !this.micStream) {
+      const ok = await this.startMic();
+      if (!ok) return;
+    }
+    if (!this.micStream) return;
+    for (const track of this.micStream.getAudioTracks()) {
       track.enabled = enabled;
     }
   }
@@ -321,9 +318,26 @@ export class HandTracker {
   }
 
   getAudioEnabled(): boolean {
-    const stream = this.getStream();
-    if (!stream) return false;
-    return stream.getAudioTracks().some(t => t.enabled);
+    if (!this.micStream) return false;
+    return this.micStream.getAudioTracks().some(t => t.enabled);
+  }
+
+  getMicStream(): MediaStream | undefined {
+    return this.micStream;
+  }
+
+  // Acquired lazily on the first Mic toggle so the mic doesn't sit live the
+  // whole time the camera is on. See startCamera() for the macOS audio reason.
+  private async startMic(): Promise<boolean> {
+    if (this.micStream) return true;
+    if (!navigator.mediaDevices?.getUserMedia) return false;
+    try {
+      this.micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      return true;
+    } catch (err) {
+      console.warn('[webrtc] mic unavailable', err);
+      return false;
+    }
   }
 
   getDetections(): readonly RawDetection[] {
@@ -337,6 +351,10 @@ export class HandTracker {
     this.detector?.dispose?.();
     if (this.video?.srcObject instanceof MediaStream) {
       for (const track of this.video.srcObject.getTracks()) track.stop();
+    }
+    if (this.micStream) {
+      for (const track of this.micStream.getTracks()) track.stop();
+      this.micStream = undefined;
     }
     this.video?.remove();
     this.filter.dispose();

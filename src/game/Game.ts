@@ -119,6 +119,8 @@ export class Game {
   private poseSession!: PoseSession;
   private broadcastTransport!: BroadcastChannelPoseTransport;
   private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
+  private localDrumOrbCountListeners = new Set<(count: number) => void>();
+  private localDrumOrbCount = 0;
   private localRig: HumanoidRig;
   private remoteRig: HumanoidRig;
   private robotMotion: RobotMotionController;
@@ -207,7 +209,8 @@ export class Game {
 
     this.webrtc = new WebRTCClient(
       this.multiplayer,
-      () => this.handTracker.getStream()
+      () => this.handTracker.getStream(),
+      () => this.handTracker.getMicStream(),
     );
     this.webrtc.onRemoteStream(stream => {
       for (const listener of this.remoteStreamListeners) listener(stream);
@@ -253,7 +256,7 @@ export class Game {
     await this.renderer.init();
     this.setupOrbitControls();
     this.roundDirector = new RoundDirector(this.paneDock);
-    this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.paneDock);
+    this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.renderer, this.paneDock);
     this.roundDirector.onPlayingStart(() => {
       if (this.pendingPartnerInstrument && this.pendingPartnerInstrument !== this.playerInstruments.remote) {
         if (this.introActive) {
@@ -346,8 +349,20 @@ export class Game {
     this.remoteStreamListeners.add(listener);
   }
 
-  setMicEnabled(enabled: boolean): void {
-    this.handTracker.setAudioEnabled(enabled);
+  onLocalDrumOrbCountChange(listener: (count: number) => void): void {
+    this.localDrumOrbCountListeners.add(listener);
+    if (this.localDrumOrbCount > 0) listener(this.localDrumOrbCount);
+  }
+
+  async setMicEnabled(enabled: boolean): Promise<void> {
+    const hadMic = !!this.handTracker.getMicStream();
+    await this.handTracker.setAudioEnabled(enabled);
+    // First time the mic is brought online, the peer connection (if any) was
+    // negotiated without an audio m-line — renegotiate so the partner can
+    // hear us.
+    if (enabled && !hadMic && this.handTracker.getMicStream()) {
+      this.webrtc.notifyMicReady();
+    }
   }
 
   setCameraEnabled(enabled: boolean): void {
@@ -856,6 +871,7 @@ export class Game {
         canvas: player === 'local' ? this.canvas : undefined,
         sculptor: this.sculptor,
         anchor,
+        onOrbCountChange: player === 'local' ? count => this.setLocalDrumOrbCount(count) : undefined,
         onHit: hit => {
           this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
           this.lastDrumHitAt = performance.now() / 1000;
@@ -874,6 +890,12 @@ export class Game {
     if (!this.introActive) {
       visual.playIntroAnimation();
     }
+  }
+
+  private setLocalDrumOrbCount(count: number): void {
+    if (count === this.localDrumOrbCount) return;
+    this.localDrumOrbCount = count;
+    for (const listener of this.localDrumOrbCountListeners) listener(count);
   }
 
   private async swapPlayerVisual(player: PlayerSlot, id: InstrumentId): Promise<void> {

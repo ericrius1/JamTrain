@@ -270,6 +270,7 @@ async function createRuntime(): Promise<RuntimeApi> {
   });
 
   hud.setCameraMode('game');
+  game.onLocalDrumOrbCountChange(count => hud.setDrumOrbCount(count));
 
   game.onAssignedRoom(room => {
     writeRoomToUrl(room);
@@ -418,8 +419,9 @@ async function createRuntime(): Promise<RuntimeApi> {
   });
   hud.onMicToggle(() => {
     const next = !game.getMicEnabled();
-    game.setMicEnabled(next);
-    hud.setMicEnabled(next);
+    void game.setMicEnabled(next).then(() => {
+      hud.setMicEnabled(game.getMicEnabled());
+    });
   });
   hud.onBackingVolumeChange(value => {
     game.setBackingVolume(value);

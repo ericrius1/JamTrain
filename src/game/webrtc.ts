@@ -30,7 +30,8 @@ export class WebRTCClient {
 
   constructor(
     private multiplayer: MultiplayerClient,
-    private getLocalStream: StreamProvider
+    private getLocalStream: StreamProvider,
+    private getMicStream: StreamProvider = () => undefined,
   ) {
     if (typeof RTCPeerConnection === 'undefined') {
       console.warn('[webrtc] RTCPeerConnection not supported in this browser');
@@ -71,6 +72,24 @@ export class WebRTCClient {
   /** Called by Game once the local MediaStream becomes available. */
   notifyLocalStreamReady(): void {
     if (this.partnerIdentity && !this.pc) this.maybeStartNegotiation();
+  }
+
+  /**
+   * Called the first time the mic becomes available — typically when the user
+   * clicks the Mic button. If a peer connection already exists without an
+   * audio sender, rebuild it so the mic track ends up in the negotiated SDP.
+   */
+  notifyMicReady(): void {
+    if (!this.partnerIdentity) return;
+    if (!this.pc) {
+      this.maybeStartNegotiation();
+      return;
+    }
+    const hasAudioSender = this.pc.getSenders().some(s => s.track?.kind === 'audio');
+    if (hasAudioSender) return;
+    console.info('[webrtc] mic became available; restarting peer to attach');
+    this.teardownPeer();
+    this.maybeStartNegotiation();
   }
 
   dispose(): void {
@@ -193,26 +212,36 @@ export class WebRTCClient {
   }
 
   private attachLocalTracks(pc: RTCPeerConnection): boolean {
-    const stream = this.getLocalStream();
-    if (!stream) return false;
-    for (const track of stream.getTracks()) {
-      try {
-        if (track.kind === 'video') {
+    const videoStream = this.getLocalStream();
+    const micStream = this.getMicStream();
+    const primary = videoStream ?? micStream;
+    if (!primary) return false;
+
+    if (videoStream) {
+      for (const track of videoStream.getVideoTracks()) {
+        try {
           // Clone so the local hand-tracker / preview can keep running on the
           // original even when we mute partner-facing video. The clone has
           // its own enabled flag that the Share Video toggle controls.
           const clone = track.clone();
           clone.enabled = this.desiredShareVideo;
-          pc.addTrack(clone, stream);
+          pc.addTrack(clone, primary);
           this.videoSenderTrack = clone;
-        } else {
+        } catch (err) {
+          console.warn('[webrtc] addTrack failed', track.kind, err);
+        }
+      }
+    }
+    if (micStream) {
+      for (const track of micStream.getAudioTracks()) {
+        try {
           // Mic doesn't have a local-only consumer, so we hand the original
           // straight to the peer. Toggling the Mic icon disables capture +
           // transmission together (and the browser's mic indicator follows).
-          pc.addTrack(track, stream);
+          pc.addTrack(track, primary);
+        } catch (err) {
+          console.warn('[webrtc] addTrack failed', track.kind, err);
         }
-      } catch (err) {
-        console.warn('[webrtc] addTrack failed', track.kind, err);
       }
     }
     return true;

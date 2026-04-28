@@ -592,7 +592,7 @@
    what's optional. */
 .video-panel-toolbar {
   position: absolute;
-  bottom: calc(100% + 12px);
+  bottom: 100%;
   left: 0;
   right: 0;
   display: flex;
@@ -732,24 +732,6 @@
   margin-left: 0;
   border-width: 1px;
 }
-
-.video-panel-toolbar-hint {
-  width: 100%;
-  margin-top: 2px;
-  font-family: 'JetBrains Mono', monospace;
-  font-size: 10px;
-  color: var(--text-dim);
-  letter-spacing: 0.04em;
-  text-align: left;
-  transition: color 0.22s ease;
-}
-.video-panel.right .video-panel-toolbar-hint {
-  text-align: right;
-}
-.video-panel-toolbar.share-revealed .video-panel-toolbar-hint {
-  color: var(--brass);
-}
-.video-panel-toolbar-hint.hidden { display: none; }
 
 /* "Camera off" placeholder shown inside the local panel when there's no
    live feed. Tells the user explicitly that they CAN play without the
@@ -1103,6 +1085,7 @@
 .creature-picker-btn {
   width: 34px;
   height: 34px;
+  padding: 0;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -1122,7 +1105,7 @@
   border-color: var(--creature-color);
   box-shadow: 0 0 14px color-mix(in srgb, var(--creature-color) 35%, transparent);
 }
-.creature-picker-btn svg { width: 22px; height: 22px; }
+.creature-picker-btn svg { display: block; width: 22px; height: 22px; }
 
 .player-plaque .creature-picker-slot {
   margin-top: 6px;
@@ -1167,6 +1150,7 @@
 .instrument-picker-btn {
   width: 34px;
   height: 34px;
+  padding: 0;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -1186,7 +1170,7 @@
   border-color: var(--instrument-color);
   box-shadow: 0 0 14px color-mix(in srgb, var(--instrument-color) 35%, transparent);
 }
-.instrument-picker-btn svg { width: 22px; height: 22px; }
+.instrument-picker-btn svg { display: block; width: 22px; height: 22px; }
 
 .player-plaque .picker-slot {
   margin-top: 6px;
@@ -1218,8 +1202,9 @@
    persist the user's choice in localStorage. */
 .controls-panel {
   position: absolute;
-  right: 24px;
-  bottom: 224px;
+  top: 24px;
+  left: 50%;
+  transform: translateX(-50%);
   width: 268px;
   padding: 0;
   z-index: 11;
@@ -1321,6 +1306,11 @@
   flex-wrap: wrap;
   gap: 3px;
   flex: 0 0 auto;
+}
+.controls-panel-keys.dense {
+  flex: 0 1 236px;
+  max-width: 236px;
+  min-width: 0;
 }
 .controls-panel-key {
   font-family: 'JetBrains Mono', monospace;

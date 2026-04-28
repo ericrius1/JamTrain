@@ -317,9 +317,10 @@ export class SkyLife {
       if (localTime < m.startT || localTime > m.endT) continue;
       const p = (localTime - m.startT) / (m.endT - m.startT);
       if (m.kind === 'swoop') {
-        const dy = -Math.sin(Math.PI * p) * m.amp;
-        const dx = (1 - Math.cos(Math.PI * p)) * 0.5 * m.amp * 0.6 * dir;
-        return { dx, dy, rotation: Math.sin(Math.PI * p) * 0.16 * dir, kind: 'swoop' };
+        const envelope = Math.sin(Math.PI * p);
+        const dy = -envelope * m.amp;
+        const dx = envelope * m.amp * 0.30 * dir;
+        return { dx, dy, rotation: envelope * 0.16 * dir, kind: 'swoop' };
       }
       if (m.kind === 'loop') {
         const angle = p * Math.PI * 2;

@@ -1,6 +1,12 @@
 import type { InstrumentId } from '../../game/instruments';
+import {
+  DRUM_DEFAULT_BASE_ROW,
+  drumKeyLabelsForOrbCount,
+  drumOrbCountForBaseRow,
+} from '../../game/drumControls';
 
 const STORAGE_KEY = 'jamtrain.controlsPanel.collapsed';
+const DEFAULT_DRUM_ORB_COUNT = drumOrbCountForBaseRow(DRUM_DEFAULT_BASE_ROW);
 
 type ControlEntry = {
   /** Lead glyph(s) — usually keycap letters but can be any short token. */
@@ -14,15 +20,6 @@ type ControlsContent = {
   rows: ControlEntry[];
 };
 
-const DRUM_CONTROLS: ControlsContent = {
-  blurb: 'Strike the orbs to play.',
-  rows: [
-    { keys: ['A', 'S', 'D', 'F', 'G'], hint: 'play the five orbs' },
-    { keys: ['Mouse'], hint: 'click or drag through an orb' },
-    { keys: ['Hands'], hint: 'reach forward through any orb' },
-  ],
-};
-
 const STARLACE_CONTROLS: ControlsContent = {
   blurb: 'Sweep the constellation to sing.',
   rows: [
@@ -32,16 +29,12 @@ const STARLACE_CONTROLS: ControlsContent = {
   ],
 };
 
-const CONTENT: Record<InstrumentId, ControlsContent> = {
-  drum: DRUM_CONTROLS,
-  starlace: STARLACE_CONTROLS,
-};
-
 export class ControlsPanel {
   readonly el: HTMLDetailsElement;
   private summaryTitleEl: HTMLSpanElement;
   private bodyEl: HTMLDivElement;
   private current: InstrumentId = 'drum';
+  private drumOrbCount = DEFAULT_DRUM_ORB_COUNT;
 
   constructor(opts: { initial: InstrumentId }) {
     this.current = opts.initial;
@@ -88,8 +81,17 @@ export class ControlsPanel {
     this.render();
   }
 
+  setDrumOrbCount(count: number): void {
+    const next = Math.max(1, Math.floor(count));
+    if (next === this.drumOrbCount) return;
+    this.drumOrbCount = next;
+    if (this.current === 'drum') this.render();
+  }
+
   private render(): void {
-    const content = CONTENT[this.current];
+    const content = this.current === 'drum'
+      ? drumControlsForOrbCount(this.drumOrbCount)
+      : STARLACE_CONTROLS;
     this.summaryTitleEl.textContent = labelFor(this.current);
 
     this.bodyEl.replaceChildren();
@@ -108,12 +110,29 @@ export class ControlsPanel {
   }
 }
 
+function drumControlsForOrbCount(orbCount: number): ControlsContent {
+  const keys = drumKeyLabelsForOrbCount(orbCount);
+  const keyCount = keys.length;
+  const hint = keyCount >= orbCount
+    ? (orbCount === 1 ? 'play the orb' : `play all ${orbCount} orbs`)
+    : `play ${keyCount} of ${orbCount} orbs`;
+
+  return {
+    blurb: 'Strike the orbs to play.',
+    rows: [
+      { keys, hint },
+      { keys: ['Mouse'], hint: 'click or drag through an orb' },
+      { keys: ['Hands'], hint: 'reach forward through any orb' },
+    ],
+  };
+}
+
 function buildRow(entry: ControlEntry): HTMLDivElement {
   const row = document.createElement('div');
   row.className = 'controls-panel-row';
 
   const keysEl = document.createElement('div');
-  keysEl.className = 'controls-panel-keys';
+  keysEl.className = entry.keys.length > 10 ? 'controls-panel-keys dense' : 'controls-panel-keys';
   for (const key of entry.keys) {
     const kbd = document.createElement('kbd');
     kbd.className = key.length > 1 ? 'controls-panel-key wide' : 'controls-panel-key';

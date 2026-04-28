@@ -51,10 +51,11 @@ const NOTE_HYSTERESIS = 0.18;
 const HIT_BUDGET_WINDOW = 0.2;
 const CHIME_MAX_HITS_PER_WINDOW = 6;
 const CHIME_MAX_ACTIVE_VOICES = 12;
-const ORB_MAX_HITS_PER_WINDOW = 5;
-const ORB_MAX_ACTIVE_VOICES = 8;
+const ORB_MAX_HITS_PER_WINDOW = 12;
+const ORB_MAX_ACTIVE_VOICES = 24;
 const STARLACE_MAX_HITS_PER_WINDOW = 8;
 const STARLACE_MAX_ACTIVE_VOICES = 14;
+const MAX_PENDING_ORB_HITS = 12;
 
 type PlayerKey = 'local' | 'remote';
 const PLAYER_KEYS: PlayerKey[] = ['local', 'remote'];
@@ -71,6 +72,13 @@ type HitBudget = {
   windowStart: number;
   used: number;
   dropped: number;
+};
+
+type PendingOrbHit = {
+  player: PlayerKey;
+  frequency: number;
+  velocity: number;
+  orbIndex: number;
 };
 
 type Voice = {
@@ -188,6 +196,7 @@ export class HandSynthEngine {
     local: inactiveOrbGesture(),
     remote: inactiveOrbGesture(),
   };
+  private pendingOrbHits: PendingOrbHit[] = [];
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'drum', remote: 'drum' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
   private duetSynth?: any;
@@ -306,6 +315,8 @@ export class HandSynthEngine {
     // with only its selected chain audible.
     this.applyInstrumentRouting('local');
     this.applyInstrumentRouting('remote');
+    this.running = true;
+    this.flushPendingOrbHits();
 
     await Promise.all(
       [
@@ -318,7 +329,6 @@ export class HandSynthEngine {
     );
 
     this.attachPane();
-    this.running = true;
   }
 
   update(local: PlayerPose, remote: PlayerPose, delta: number): void {
@@ -537,8 +547,9 @@ export class HandSynthEngine {
    *  hang-drum voice for the given player. */
   triggerOrbHit(player: PlayerKey, frequency: number, velocity: number, orbIndex: number): void {
     if (!this.running || !this.tone) {
+      this.queuePendingOrbHit(player, frequency, velocity, orbIndex);
       if (!this._loggedOrbBlock) {
-        console.warn('[handSynth] orb hit blocked: audio not started yet');
+        console.debug('[handSynth] orb hit queued until audio starts');
         this._loggedOrbBlock = true;
       }
       return;
@@ -564,6 +575,21 @@ export class HandSynthEngine {
   }
   private _loggedOrbFirstHit = false;
   private _loggedOrbBlock = false;
+
+  private queuePendingOrbHit(player: PlayerKey, frequency: number, velocity: number, orbIndex: number): void {
+    this.pendingOrbHits.push({ player, frequency, velocity, orbIndex });
+    if (this.pendingOrbHits.length > MAX_PENDING_ORB_HITS) {
+      this.pendingOrbHits.splice(0, this.pendingOrbHits.length - MAX_PENDING_ORB_HITS);
+    }
+  }
+
+  private flushPendingOrbHits(): void {
+    if (this.pendingOrbHits.length === 0) return;
+    const hits = this.pendingOrbHits.splice(0);
+    for (const hit of hits) {
+      this.triggerOrbHit(hit.player, hit.frequency, hit.velocity, hit.orbIndex);
+    }
+  }
 
   /** Called by the Starlace Harp visual when a hand sweeps through a star node. */
   triggerStarlacePluck(

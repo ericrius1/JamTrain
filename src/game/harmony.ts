@@ -102,10 +102,10 @@ export const JAM_STARLACE_HZ: number[] = [
 
 export const JAM_DRUM_HZ: number[] = [
   146.832, // D3
+  164.814, // E3
   184.997, // F#3
   220.000, // A3
   246.942, // B3
-  293.665, // D4
 ];
 
 // Same roots as the old vi-IV-I-V cycle, but the upper voices stay inside

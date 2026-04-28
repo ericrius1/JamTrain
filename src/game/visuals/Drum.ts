@@ -17,6 +17,11 @@ import {
   vec4,
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
+import {
+  DRUM_DEFAULT_BASE_ROW,
+  drumKeyboardIndexForKey,
+  drumOrbCountForBaseRow,
+} from '../drumControls';
 import { JAM_DRUM_HZ } from '../harmony';
 import type { HandContactPoint, OrbGestureState, PlayerVisual, VoiceState } from '../instruments';
 import { clamp } from '../math';
@@ -26,7 +31,7 @@ export const DRUM_DEFS = {
   // pyramidBaseRow must come first so registerTweaks' initial onChange fires it
   // before ringRadius / orbRadius — those callbacks iterate the orb list which
   // is populated by rebuildOrbs() inside the pyramidBaseRow handler.
-  pyramidBaseRow:    { default: 3,     min: 1,    max: 8,    step: 1,     label: 'pyramid base row' },
+  pyramidBaseRow:    { default: DRUM_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'pyramid base row' },
   orbRadius:         { default: 0.10,  min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'column spacing' },
   pyramidRowSpacing: { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'row spacing' },
@@ -71,6 +76,7 @@ type DrumOptions = {
   title?: string;
   onHit?: (event: OrbHit) => void;
   onGesture?: (gesture: OrbGestureState) => void;
+  onOrbCountChange?: (count: number) => void;
   camera?: THREE.Camera;
   canvas?: HTMLCanvasElement;
   anchor?: THREE.Vector3;
@@ -78,9 +84,9 @@ type DrumOptions = {
 };
 
 // Playable orbs arranged in a triangular pyramid in front of the player. Base
-// row count is tweakable (default 3 → rows of 3,2,1 = 6 orbs). Each orb maps to
-// one pitch from the shared Jam Train harmony, wrapping with modulo when the
-// pyramid has more orbs than harmony notes.
+// row count is tweakable (default 3 -> rows of 3,2,1 = 6 orbs). Each orb maps
+// to a scale degree from the shared Jam Train harmony, continuing upward by
+// octave when the pyramid has more orbs than one scale cycle.
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
@@ -89,14 +95,10 @@ const RIPPLE_MAX_AGE = 5.8;
 
 type AnyNode = any;
 
-// Tuned as a consonant D6 handpan subset of D major pentatonic. This removes
-// the old F-natural/C-natural hits that fought the backing harmony.
+// One octave of the Jam Train drum scale. frequencyForOrb() walks this table
+// by scale degree and transposes whole cycles up by octaves, so expanded
+// pyramids do not repeat exact pitches.
 const ORB_HZ: readonly number[] = JAM_DRUM_HZ;
-
-function pyramidOrbCount(baseRow: number): number {
-  const n = Math.max(1, Math.floor(baseRow));
-  return (n * (n + 1)) / 2;
-}
 
 function makeOrbOffsets(baseRow: number, columnSpacing: number, rowSpacing: number): THREE.Vector3[] {
   // Pyramid: bottom row has `baseRow` orbs, each row above has one fewer, until
@@ -259,6 +261,8 @@ export class Drum implements PlayerVisual {
 
   private onHitCallback?: (e: OrbHit) => void;
   private onGestureCallback?: (gesture: OrbGestureState) => void;
+  private onOrbCountChange?: (count: number) => void;
+  private lastReportedOrbCount = -1;
   private registered?: ReturnType<typeof registerTweaks<typeof DRUM_DEFS>>;
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
@@ -274,6 +278,7 @@ export class Drum implements PlayerVisual {
     applyPaletteDefaults(this.params, opts.palette ?? 'local');
     this.onHitCallback = opts.onHit;
     this.onGestureCallback = opts.onGesture;
+    this.onOrbCountChange = opts.onOrbCountChange;
     this.camera = opts.camera;
     this.canvas = opts.canvas;
     this.fixedAnchor = opts.anchor?.clone();
@@ -341,6 +346,7 @@ export class Drum implements PlayerVisual {
     const baseRow = Math.max(1, Math.floor(this.params.pyramidBaseRow));
     const offsets = makeOrbOffsets(baseRow, this.params.ringRadius, this.params.pyramidRowSpacing);
     const count = offsets.length;
+    this.notifyOrbCount(count);
 
     this.collisionBVH = new OrbCollisionBVH(count);
     this.hitCandidates = Array.from({ length: count }, () => null);
@@ -646,22 +652,15 @@ export class Drum implements PlayerVisual {
     return !!target.closest('button,input,textarea,select,a,[contenteditable="true"],[role="button"],#ui > *,#stage > *');
   }
 
-  // Middle-row keyboard binding for the local player. A maps to the orb
-  // closest to the camera; G to the furthest. The cluster lays out along +X
-  // and the locked game camera sits at +X looking toward -X, so highest-index
-  // orb (i=4) is nearest the player and bound to A.
-  private static KEY_MAP: ReadonlyMap<string, number> = new Map([
-    ['a', 4], ['s', 3], ['d', 2], ['f', 1], ['g', 0],
-  ]);
-
   private attachKeyboardEvents(): void {
     this.keyDownListener = (e: KeyboardEvent) => {
       if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
       if (!this.isInteractive()) return;
-      const idx = Drum.KEY_MAP.get(e.key.toLowerCase());
+      const idx = drumKeyboardIndexForKey(e.key, this.orbs.length);
       if (idx === undefined) return;
+      e.preventDefault();
       this.fireKeyboardHit(idx);
     };
     window.addEventListener('keydown', this.keyDownListener);
@@ -843,10 +842,10 @@ export class Drum implements PlayerVisual {
     }
 
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
-    const noteIndex = this.noteIndexForOrb(orbIndex);
+    const frequency = this.frequencyForOrb(orbIndex);
     const worldStrike = worldPosition.clone();
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: worldStrike });
+      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike });
     }
     this.emitSparks(worldStrike, velocity);
   }
@@ -888,13 +887,19 @@ export class Drum implements PlayerVisual {
     }
   }
 
-  private noteIndexForOrb(orbIndex: number): number {
-    // Wrap so pyramid sizes larger than the harmony array still get a note
-    // assigned (otherwise every extra orb would clamp to the last pitch).
+  private frequencyForOrb(orbIndex: number): number {
     const len = ORB_HZ.length;
     if (len <= 0) return 0;
-    const idx = ((orbIndex % len) + len) % len;
-    return idx;
+    const degree = Math.max(0, Math.floor(orbIndex));
+    const pitchClass = degree % len;
+    const octaveShift = Math.floor(degree / len);
+    return ORB_HZ[pitchClass] * Math.pow(2, octaveShift);
+  }
+
+  private notifyOrbCount(count = drumOrbCountForBaseRow(this.params.pyramidBaseRow)): void {
+    if (count === this.lastReportedOrbCount) return;
+    this.lastReportedOrbCount = count;
+    this.onOrbCountChange?.(count);
   }
 
   private resolveContacts(
@@ -982,10 +987,10 @@ export class Drum implements PlayerVisual {
     this.addRippleAt(_strikePoint, velocity);
 
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
-    const noteIndex = this.noteIndexForOrb(orbIndex);
+    const frequency = this.frequencyForOrb(orbIndex);
     const worldStrike = _strikePoint.clone().add(this.mesh.position);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: worldStrike });
+      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike });
     }
     this.emitSparks(worldStrike, velocity);
   }

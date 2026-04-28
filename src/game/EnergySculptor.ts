@@ -1,35 +1,43 @@
 import * as THREE from 'three/webgpu';
+import {
+  Fn,
+  If,
+  Return,
+  float,
+  instanceIndex,
+  instancedArray,
+  mix,
+  smoothstep,
+  uniform,
+  uniformArray,
+  uint,
+  vec3,
+  vec4,
+} from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import type { EmitRequest, EnergySink } from './sculptor/EnergyEmitter';
-import type { Archetype, ArchetypeId } from './sculptor/archetypeShared';
-import { drumDrum } from './sculptor/archetypes/drumDrum';
-import { melodyMelody } from './sculptor/archetypes/melodyMelody';
-import { drumMelody } from './sculptor/archetypes/drumMelody';
-
-const ARCHETYPES: Record<ArchetypeId, Archetype> = {
-  drumDrum,
-  melodyMelody,
-  drumMelody,
-};
+import type { ArchetypeId } from './sculptor/archetypeShared';
+import {
+  aizawaFlow,
+  ATTRACTOR_PRESETS,
+  halvorsenFlow,
+  lorenzFlow,
+  thomasFlow,
+  type AttractorKind,
+} from './sculptor/strangeAttractors';
 
 export const SCULPTOR_DEFS = {
-  particlePoolSize:     { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
-  attractorStrength:    { default: 3.1,   min: 0,    max: 8,    step: 0.05, label: 'attractor strength' },
-  particleSize:         { default: 0.005, min: 0.001, max: 0.02, step: 0.001, label: 'particle size' },
-  particleOpacity:      { default: 0.54,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
-  filamentOpacity:      { default: 0.26,  min: 0,     max: 0.8,  step: 0.01,  label: 'filament opacity' },
-  filamentLength:       { default: 0.070, min: 0,     max: 0.24, step: 0.002, label: 'filament length' },
-  filamentDensity:      { default: 0.66,  min: 0,     max: 1,    step: 0.01,  label: 'filament density' },
-  velocityDamping:      { default: 0.972, min: 0.9,  max: 1,    step: 0.001, label: 'velocity damping' },
-  crossCurrentStrength: { default: 0.8,   min: 0,    max: 2,    step: 0.01, label: 'cross-current' },
-  memorySeconds:        { default: 200,   min: 10,   max: 600,  step: 1,    label: 'memory seconds' },
-  fadeSeconds:          { default: 18,    min: 2,    max: 90,   step: 1,    label: 'fade seconds' },
-  settleDistance:       { default: 0.035, min: 0.01, max: 0.2,  step: 0.001, label: 'settle distance', hidden: true },
-  settledRadius:        { default: 0.055, min: 0.005, max: 0.18, step: 0.001, label: 'settled radius' },
-  settledMotion:        { default: 0.72,  min: 0,     max: 2.0,  step: 0.01,  label: 'settled motion' },
-  fieldStrength:        { default: 0.42,  min: 0,    max: 1.5,  step: 0.01, label: 'attractor field' },
-  duetBonusGain:        { default: 1.2,   min: 0,    max: 2,    step: 0.05, label: 'duet bonus gain' },
-  dissolveBurstSpeed:   { default: 3,     min: 0,    max: 8,    step: 0.1,  label: 'dissolve burst' },
+  particleCount:        { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
+  particleSize:         { default: 0.022, min: 0.004, max: 0.08, step: 0.001, label: 'particle size' },
+  particleOpacity:      { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
+  flowSpeed:            { default: 1.0,   min: 0.1,   max: 3,    step: 0.05, label: 'flow speed' },
+  velocityBlend:        { default: 0.92,  min: 0.4,   max: 1,    step: 0.005, label: 'velocity smoothing' },
+  speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
+  containmentStrength:  { default: 6.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
+  lifeSeconds:          { default: 28,    min: 4,    max: 120,  step: 0.5, label: 'life seconds' },
+  fadeFraction:         { default: 0.25,  min: 0.05, max: 0.6,  step: 0.01, label: 'fade fraction' },
+  duetBoost:            { default: 0.45,  min: 0,    max: 1.5,  step: 0.01, label: 'duet boost' },
+  dissolveBurstSpeed:   { default: 6,     min: 0,    max: 16,   step: 0.1,  label: 'dissolve burst' },
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'projector base radius' },
   projectorRingCount:   { default: 3,     min: 1,    max: 5,    step: 1,    label: 'projector ring count' },
   projectorRingSpacing: { default: 0.055, min: 0.01, max: 0.25, step: 0.005, label: 'projector ring spacing' },
@@ -50,12 +58,6 @@ export type SculptorMusicField = {
   groovePhase: number;
 };
 
-const TMP_VEC = new THREE.Vector3();
-const TMP_VEC_2 = new THREE.Vector3();
-const TMP_MATRIX = new THREE.Matrix4();
-const TMP_QUAT = new THREE.Quaternion();
-const TMP_SCALE = new THREE.Vector3();
-const ZERO_SCALE = new THREE.Vector3(0, 0, 0);
 const TAU = Math.PI * 2;
 const DEFAULT_MUSIC_FIELD: SculptorMusicField = {
   pulse: 0,
@@ -66,151 +68,447 @@ const DEFAULT_MUSIC_FIELD: SculptorMusicField = {
   groovePhase: 0,
 };
 
+const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
+  drumDrum: 'lorenz',
+  melodyMelody: 'thomas',
+  drumMelody: 'aizawa',
+};
+
+// Cap on how many particles we can spawn in a single frame. Sized for the
+// instruments' bursty emit: Drum hits emit ~24, Starlace plucks ~20-34. With
+// two players hitting hard at the same time we still stay under ~120.
+const MAX_SPAWNS_PER_FRAME = 256;
+
+const KIND_DRUM = 0;
+const KIND_STARLACE = 1;
+
 /**
- * Particle-built sound sculpture at the center of the scene. Particles emitted
- * from the instruments stream toward `center`, get pulled through archetype
- * attractor fields, settle into the shared form, and only start aging out after
- * the memory window has passed.
- *
- * Integration runs CPU-side over the pool each frame; rendering uses a single
- * InstancedMesh with per-instance positions/colors written each frame. We can
- * lift the integrator into a TSL compute pass later — emitter contracts and
- * archetype targets are independent of where the integration happens.
+ * GPU-compute particle sculpture. All particle state lives in TSL
+ * `instancedArray` storage buffers; one compute pass injects new particles
+ * each frame, another integrates every alive particle through the active
+ * archetype's strange-attractor flow field (Lorenz / Thomas / Aizawa /
+ * Halvorsen). Rendering uses a billboard SpriteNodeMaterial driven by the
+ * same buffers, so no CPU→GPU per-frame data shuffling beyond the small
+ * spawn queue and a handful of uniforms.
  */
 export class EnergySculptor implements EnergySink {
   readonly center: THREE.Vector3;
   readonly params: SculptorParams;
 
+  private renderer: THREE.WebGPURenderer;
+  private scene: THREE.Scene;
   private mesh!: THREE.InstancedMesh;
-  private material!: THREE.MeshBasicMaterial;
-  private filamentGeometry!: THREE.BufferGeometry;
-  private filamentMaterial!: THREE.LineBasicMaterial;
-  private filamentLine!: THREE.LineSegments;
-  private size: number;
+  private material!: THREE.SpriteNodeMaterial;
 
-  // Per-particle CPU state. Length = size for scalars, size * 3 for vec3s.
-  private positions: Float32Array;
-  private velocities: Float32Array;
-  private targets: Float32Array;
-  private colors: Float32Array;
-  private baseColors: Float32Array;
-  private lifeCurrent: Float32Array;
-  private lifeMax: Float32Array;
-  private particleAges: Float32Array;
-  private settledAges: Float32Array;
-  private sizeScales: Float32Array;
-  private filamentPositions: Float32Array;
-  private filamentColors: Float32Array;
-  private freeList: number[];
-
-  // GPU instance color attribute.
-  private instanceColors: THREE.InstancedBufferAttribute;
-
+  private count: number;
+  private spawnCursorCpu = 0;
   private pendingEmits: EmitRequest[] = [];
-  private registered?: ReturnType<typeof registerTweaks<typeof SCULPTOR_DEFS>>;
-  private currentArchetype: Archetype = drumMelody;
-  private roundProgress = 0;
+
+  // Per-particle GPU storage.
+  private positionsBuffer!: THREE.StorageBufferNode<'vec3'>;
+  private velocitiesBuffer!: THREE.StorageBufferNode<'vec3'>;
+  private colorsBuffer!: THREE.StorageBufferNode<'vec3'>;
+  // x = age (seconds), y = lifeMax (seconds), z = kindBlend (0=drum, 1=starlace), w = alphaLife (0..1)
+  private metaBuffer!: THREE.StorageBufferNode<'vec4'>;
+
+  // Spawn queue uniforms (uniformArray mutated on CPU each frame, auto-uploaded).
+  private spawnPosArray: THREE.Vector3[] = [];
+  private spawnVelArray: THREE.Vector3[] = [];
+  private spawnColorArray: THREE.Vector3[] = [];
+  // x=lifeMax, y=kindBlend, z=sizeScale (currently unused, reserved)
+  private spawnMetaArray: THREE.Vector3[] = [];
+  private spawnPosUniform!: THREE.UniformArrayNode<'vec3'>;
+  private spawnVelUniform!: THREE.UniformArrayNode<'vec3'>;
+  private spawnColorUniform!: THREE.UniformArrayNode<'vec3'>;
+  private spawnMetaUniform!: THREE.UniformArrayNode<'vec3'>;
+  // Float uniforms; cast to uint at shader edge. Using float here keeps the
+  // public TS overload set happy without losing any precision for our counts.
+  private spawnCountUniform = uniform(0);
+  private spawnCursorUniform = uniform(0);
+  private attractorSelectUniform = uniform(1);
+  private spawnsThisFrame = 0;
+
+  // Integration uniforms.
+  private dtUniform = uniform(1 / 60);
+  private flowSpeedUniform = uniform(1);
+  private velocityBlendUniform = uniform(0.92);
+  private worldScaleUniform = uniform(0.014);
+  private containmentRadiusUniform = uniform(36);
+  private containmentStrengthUniform = uniform(6);
+  private lifeMaxUniform = uniform(28);
+  private fadeFractionUniform = uniform(0.25);
+  private dissolveModeUniform = uniform(0);
+  private dissolveBurstUniform = uniform(6);
+  private musicPulseUniform = uniform(0);
+  private musicLevelUniform = uniform(0);
+  private musicIntensityUniform = uniform(0);
+  private grooveUniform = uniform(0);
+  private synchronyBoostUniform = uniform(0);
+  private duetBoostUniform = uniform(0.45);
+  private centerUniform = uniform(new THREE.Vector3());
+  private speedGlowUniform = uniform(0.7);
+  private particleSizeUniform = uniform(0.022);
+  private particleOpacityUniform = uniform(0.85);
+
+  // Per-attractor parameter uniforms. CPU swaps values on archetype change.
+  // attractorSelectUniform is a float (0/1/2/3), cast to uint at compute site.
+  private thomasA = uniform(0.19);
+  private lorenzSigma = uniform(10);
+  private lorenzRho = uniform(28);
+  private lorenzBeta = uniform(8 / 3);
+  private aizawaA = uniform(0.95);
+  private aizawaB = uniform(0.7);
+  private aizawaC = uniform(0.6);
+  private aizawaD = uniform(3.5);
+  private aizawaE = uniform(0.25);
+  private aizawaF = uniform(0.1);
+  private halvorsenA = uniform(1.4);
+
+  // Compute passes (ComputeNode produced by Fn(...)().compute(N)).
+  private emitCompute!: THREE.ComputeNode;
+  private integrateCompute!: THREE.ComputeNode;
+
+  // Frame state.
+  private currentArchetype: ArchetypeId = 'drumMelody';
+  private currentAttractor: AttractorKind = 'aizawa';
   private musicField: SculptorMusicField = { ...DEFAULT_MUSIC_FIELD };
-  private static SHAPE_TMP = new THREE.Vector3();
-  private static FLOW_TMP = new THREE.Vector3();
-  private static GRID_TMP = new THREE.Vector3();
-
-  // Coarse 3D density grid for cross-currents: 8x8x8 per kind.
-  private static GRID_DIM = 8;
-  private static GRID_HALF_SPAN = 1.0;
-  private densityDrum = new Float32Array(EnergySculptor.GRID_DIM ** 3);
-  private densityStarlace = new Float32Array(EnergySculptor.GRID_DIM ** 3);
-  private kinds: Uint8Array; // 0 = drum, 1 = starlace; indexed by particle slot.
-
-  // Duet synchrony.
+  private roundProgress = 0;
+  private dissolveMode = 0;
   private synchronyBoost = 0;
+  private synchronyRingAge = 1;
+
+  // Decorative scene elements.
   private synchronyRing?: THREE.Mesh;
   private synchronyRingMaterial?: THREE.MeshBasicMaterial;
-  private synchronyRingAge = 1; // start "old" so it's invisible at boot
-
-  // Dissolve mode (1 during round-boundary outburst, else 0).
-  private dissolveMode = 0;
-
-  // Holographic projector rings — a base ring hovering above the table with
-  // smaller rings stacked above it, suggesting the emitter that "casts" the
-  // sculpture. All rings share one unit-circle geometry and one material; each
-  // instance scales to its own radius and sits at its own height.
   private static TIMER_SEGMENTS = 96;
   private projectorRings: THREE.Line[] = [];
   private projectorRingMaterial?: THREE.LineBasicMaterial;
   private projectorRingGeom?: THREE.BufferGeometry;
-  private projectorScene?: THREE.Scene;
 
-  constructor(scene: THREE.Scene, center: THREE.Vector3, paneDock?: HTMLElement) {
+  private registered?: ReturnType<typeof registerTweaks<typeof SCULPTOR_DEFS>>;
+
+  constructor(
+    scene: THREE.Scene,
+    center: THREE.Vector3,
+    renderer: THREE.WebGPURenderer,
+    paneDock?: HTMLElement,
+  ) {
+    this.scene = scene;
+    this.renderer = renderer;
     this.center = center.clone();
     this.params = { ...Object.fromEntries(Object.entries(SCULPTOR_DEFS).map(([k, d]) => [k, d.default])) } as SculptorParams;
+    this.count = this.params.particleCount;
 
-    this.size = this.params.particlePoolSize;
-    this.positions = new Float32Array(this.size * 3);
-    this.velocities = new Float32Array(this.size * 3);
-    this.targets = new Float32Array(this.size * 3);
-    this.colors = new Float32Array(this.size * 3);
-    this.baseColors = new Float32Array(this.size * 3);
-    this.lifeCurrent = new Float32Array(this.size);
-    this.lifeMax = new Float32Array(this.size);
-    this.particleAges = new Float32Array(this.size);
-    this.settledAges = new Float32Array(this.size);
-    this.sizeScales = new Float32Array(this.size);
-    this.filamentPositions = new Float32Array(this.size * 2 * 3);
-    this.filamentColors = new Float32Array(this.size * 2 * 3);
-    this.kinds = new Uint8Array(this.size);
-    this.settledAges.fill(-1);
-    this.freeList = [];
-    for (let i = this.size - 1; i >= 0; i -= 1) this.freeList.push(i);
+    this.allocateBuffers();
+    this.allocateSpawnQueue();
+    this.buildComputePipelines();
+    this.buildRenderMesh();
+    this.buildSynchronyRing();
+    this.buildProjectorRings();
 
-    const geometry = new THREE.SphereGeometry(1, 5, 4);
-    this.material = new THREE.MeshBasicMaterial({
+    this.applyAttractorPreset(this.currentAttractor);
+    this.centerUniform.value.copy(this.center);
+    this.particleSizeUniform.value = this.params.particleSize;
+    this.particleOpacityUniform.value = this.params.particleOpacity;
+    this.flowSpeedUniform.value = this.params.flowSpeed;
+    this.velocityBlendUniform.value = this.params.velocityBlend;
+    this.containmentStrengthUniform.value = this.params.containmentStrength;
+    this.lifeMaxUniform.value = this.params.lifeSeconds;
+    this.fadeFractionUniform.value = this.params.fadeFraction;
+    this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
+    this.duetBoostUniform.value = this.params.duetBoost;
+    this.speedGlowUniform.value = this.params.speedGlow;
+
+    this.registered = registerTweaks(paneDock, 'energySculptor', SCULPTOR_DEFS, {
+      title: 'Energy Sculptor',
+      params: this.params,
+      onChange: {
+        synchronyRingColor: v => this.synchronyRingMaterial?.color.set(v),
+        timerRingColor: v => this.projectorRingMaterial?.color.set(v),
+        timerRingRadius: () => this.layoutProjectorRings(),
+        projectorRingCount: () => this.rebuildProjectorRings(),
+        projectorRingSpacing: () => this.layoutProjectorRings(),
+        projectorRingScale: () => this.layoutProjectorRings(),
+        projectorBaseY: () => this.layoutProjectorRings(),
+        particleSize: v => { this.particleSizeUniform.value = v; },
+        particleOpacity: v => { this.particleOpacityUniform.value = v; },
+        flowSpeed: v => { this.flowSpeedUniform.value = v; },
+        velocityBlend: v => { this.velocityBlendUniform.value = v; },
+        speedGlow: v => { this.speedGlowUniform.value = v; },
+        containmentStrength: v => { this.containmentStrengthUniform.value = v; },
+        lifeSeconds: v => { this.lifeMaxUniform.value = v; },
+        fadeFraction: v => { this.fadeFractionUniform.value = v; },
+        dissolveBurstSpeed: v => { this.dissolveBurstUniform.value = v; },
+        duetBoost: v => { this.duetBoostUniform.value = v; },
+      },
+    });
+  }
+
+  // ---------------------------------------------------------------------- emit
+
+  emit(req: EmitRequest): void {
+    if (this.dissolveMode > 0) return;
+    this.pendingEmits.push(req);
+  }
+
+  setArchetype(id: ArchetypeId): void {
+    if (this.currentArchetype === id) return;
+    this.currentArchetype = id;
+    const next = ARCHETYPE_TO_ATTRACTOR[id];
+    if (next !== this.currentAttractor) {
+      this.currentAttractor = next;
+      this.applyAttractorPreset(next);
+    }
+  }
+
+  setRoundProgress(progress: number): void {
+    this.roundProgress = Math.max(0, progress);
+  }
+
+  setMusicField(field: SculptorMusicField): void {
+    this.musicField.pulse = clamp01(field.pulse);
+    this.musicField.drumLevel = clamp01(field.drumLevel);
+    this.musicField.sustained = clamp01(field.sustained);
+    this.musicField.intensity = clamp01(field.intensity);
+    this.musicField.chordProgress = field.chordProgress - Math.floor(field.chordProgress);
+    this.musicField.groovePhase = field.groovePhase - Math.floor(field.groovePhase);
+  }
+
+  fireSynchrony(): void {
+    this.synchronyBoost = 1;
+    this.synchronyRingAge = 0;
+  }
+
+  getSynchronyBoost(): number {
+    return this.synchronyBoost;
+  }
+
+  beginDissolve(): void {
+    this.dissolveMode = 1;
+    this.dissolveModeUniform.value = 1;
+  }
+
+  endDissolve(): void {
+    this.dissolveMode = 0;
+    this.dissolveModeUniform.value = 0;
+  }
+
+  // -------------------------------------------------------------------- update
+
+  update(delta: number): void {
+    if (delta <= 0) return;
+    const dt = Math.min(delta, 1 / 30);
+    this.dtUniform.value = dt;
+
+    // Music + synchrony decay.
+    this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
+    this.synchronyBoostUniform.value = this.synchronyBoost;
+    this.musicPulseUniform.value = this.musicField.pulse;
+    this.musicLevelUniform.value = this.musicField.drumLevel;
+    this.musicIntensityUniform.value = this.musicField.intensity;
+    this.grooveUniform.value = this.musicField.groovePhase * TAU;
+    this.tickSynchronyRing(delta);
+    this.updateProjectorRing();
+
+    // Drain CPU emit queue into the spawn uniformArrays.
+    this.fillSpawnQueue();
+
+    // Dispatch compute passes. Emit first so freshly-spawned particles get
+    // integrated this frame too — visually they'd otherwise pop in stationary.
+    if (this.spawnsThisFrame > 0) {
+      this.renderer.compute(this.emitCompute);
+    }
+    this.renderer.compute(this.integrateCompute);
+  }
+
+  dispose(): void {
+    this.registered?.dispose();
+    this.mesh.geometry.dispose();
+    this.material.dispose();
+    this.mesh.removeFromParent();
+    if (this.synchronyRing) {
+      this.synchronyRing.geometry.dispose();
+      this.synchronyRingMaterial?.dispose();
+      this.synchronyRing.removeFromParent();
+    }
+    for (const ring of this.projectorRings) ring.removeFromParent();
+    this.projectorRings.length = 0;
+    this.projectorRingGeom?.dispose();
+    this.projectorRingMaterial?.dispose();
+  }
+
+  // ----------------------------------------------------------------- internals
+
+  private allocateBuffers(): void {
+    // All particles start zeroed → alphaLife=0, which the integrate pass
+    // treats as dead, so the freshly-allocated pool draws nothing.
+    this.positionsBuffer = instancedArray(this.count, 'vec3');
+    this.velocitiesBuffer = instancedArray(this.count, 'vec3');
+    this.colorsBuffer = instancedArray(this.count, 'vec3');
+    this.metaBuffer = instancedArray(this.count, 'vec4');
+  }
+
+  private allocateSpawnQueue(): void {
+    for (let i = 0; i < MAX_SPAWNS_PER_FRAME; i += 1) {
+      this.spawnPosArray.push(new THREE.Vector3());
+      this.spawnVelArray.push(new THREE.Vector3());
+      this.spawnColorArray.push(new THREE.Vector3());
+      this.spawnMetaArray.push(new THREE.Vector3());
+    }
+    this.spawnPosUniform = uniformArray(this.spawnPosArray, 'vec3');
+    this.spawnVelUniform = uniformArray(this.spawnVelArray, 'vec3');
+    this.spawnColorUniform = uniformArray(this.spawnColorArray, 'vec3');
+    this.spawnMetaUniform = uniformArray(this.spawnMetaArray, 'vec3');
+  }
+
+  private buildComputePipelines(): void {
+    const positions = this.positionsBuffer;
+    const velocities = this.velocitiesBuffer;
+    const colors = this.colorsBuffer;
+    const meta = this.metaBuffer;
+
+    // Emit pass: write spawn-queue entries into ring-buffer slots.
+    const emitFn = Fn(() => {
+      const i = instanceIndex;
+      const spawnCountU = this.spawnCountUniform.toUint();
+      const spawnCursorU = this.spawnCursorUniform.toUint();
+      If(i.greaterThanEqual(spawnCountU), () => {
+        Return();
+      });
+      const slot = spawnCursorU.add(i).mod(uint(this.count));
+      const spawnPos = this.spawnPosUniform.element(i);
+      const spawnVel = this.spawnVelUniform.element(i);
+      const spawnColor = this.spawnColorUniform.element(i);
+      const spawnMeta = this.spawnMetaUniform.element(i);
+      positions.element(slot).assign(spawnPos);
+      velocities.element(slot).assign(spawnVel);
+      colors.element(slot).assign(spawnColor);
+      // age=0, lifeMax=spawnMeta.x, kind=spawnMeta.y, alpha=1
+      meta.element(slot).assign(vec4(0, spawnMeta.x, spawnMeta.y, 1));
+    });
+    this.emitCompute = emitFn().compute(MAX_SPAWNS_PER_FRAME);
+
+    // Integrate pass: per-particle attractor flow + life update.
+    const integrateFn = Fn(() => {
+      const i = instanceIndex;
+      const m = meta.element(i).toVar();
+      // Skip dead particles.
+      If(m.w.lessThanEqual(0), () => {
+        Return();
+      });
+      const pos = positions.element(i).toVar();
+      const vel = velocities.element(i).toVar();
+
+      // Compute candidate flow from each attractor; select via uniform branch.
+      const flow = vec3(0).toVar();
+
+      const sel = this.attractorSelectUniform;
+      If(sel.lessThan(0.5), () => {
+        flow.assign(thomasFlow(pos, this.thomasA));
+      });
+      If(sel.greaterThanEqual(0.5).and(sel.lessThan(1.5)), () => {
+        flow.assign(lorenzFlow(pos, this.lorenzSigma, this.lorenzRho, this.lorenzBeta));
+      });
+      If(sel.greaterThanEqual(1.5).and(sel.lessThan(2.5)), () => {
+        flow.assign(aizawaFlow(
+          pos,
+          this.aizawaA,
+          this.aizawaB,
+          this.aizawaC,
+          this.aizawaD,
+          this.aizawaE,
+          this.aizawaF,
+        ));
+      });
+      If(sel.greaterThanEqual(2.5), () => {
+        flow.assign(halvorsenFlow(pos, this.halvorsenA));
+      });
+
+      // Music modulation: pulse boosts flow speed; sustained adds gentle swirl.
+      const musicGain = float(1)
+        .add(this.musicPulseUniform.mul(0.55))
+        .add(this.musicIntensityUniform.mul(0.18));
+      const synchronyGain = float(1).add(this.synchronyBoostUniform.mul(this.duetBoostUniform));
+      const speedGain = this.flowSpeedUniform.mul(musicGain).mul(synchronyGain);
+
+      // Smoothly blend velocity toward flow so trajectories feel inertial
+      // rather than instantaneously snapping to dp/dt.
+      const targetVel = flow.mul(speedGain);
+      const newVel = mix(targetVel, vel, this.velocityBlendUniform).toVar();
+
+      // Soft containment: when a particle drifts past the safe radius for
+      // this attractor, push it back so we don't accumulate runaways.
+      const r = pos.length();
+      const overshoot = smoothstep(this.containmentRadiusUniform.mul(0.85), this.containmentRadiusUniform, r);
+      const inward = pos.normalize().negate().mul(overshoot).mul(this.containmentStrengthUniform);
+      newVel.addAssign(inward);
+
+      // Dissolve burst: blow particles outward away from origin and shorten life.
+      const dm = this.dissolveModeUniform;
+      const outward = pos.normalize().mul(this.dissolveBurstUniform);
+      newVel.assign(mix(newVel, outward, dm));
+
+      // Step.
+      const newPos = pos.add(newVel.mul(this.dtUniform));
+
+      // Age + alpha.
+      const ageStep = this.dtUniform.mul(float(1).add(dm.mul(2.0)));
+      const newAge = m.x.add(ageStep);
+      const lifeMax = m.y;
+      const lifeT = newAge.div(lifeMax.max(0.0001)).clamp(0, 1);
+      // Linear fade-in over 0.15s (born), linear fade-out over fadeFraction of life
+      const born = newAge.div(0.15).clamp(0, 1);
+      const fadeStart = float(1).sub(this.fadeFractionUniform);
+      const fadeOut = float(1).sub(smoothstep(fadeStart, 1.0, lifeT));
+      const alphaLife = born.mul(fadeOut);
+
+      positions.element(i).assign(newPos);
+      velocities.element(i).assign(newVel);
+      meta.element(i).assign(vec4(newAge, lifeMax, m.z, alphaLife));
+    });
+    this.integrateCompute = integrateFn().compute(this.count);
+  }
+
+  private buildRenderMesh(): void {
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    const material = new THREE.SpriteNodeMaterial({
       transparent: true,
-      opacity: this.params.particleOpacity,
+      blending: THREE.AdditiveBlending,
       depthWrite: false,
-      blending: THREE.NormalBlending,
-      // Per-instance color comes through InstancedMesh.setColorAt.
     });
 
-    this.mesh = new THREE.InstancedMesh(geometry, this.material, this.size);
+    // Position: attractor-space → world-space.
+    const localPos = this.positionsBuffer.toAttribute();
+    material.positionNode = localPos.mul(this.worldScaleUniform).add(this.centerUniform);
+
+    // Sprite scale: base size * sqrt(alpha) so dying particles shrink. We
+    // apply a small bump for kind=starlace to give that stream a different
+    // feel from the drum stream within the same archetype.
+    const m = this.metaBuffer.toAttribute();
+    const alpha = m.w;
+    material.scaleNode = this.particleSizeUniform.mul(alpha.sqrt().add(0.15));
+
+    // Color: base color from emit, brightened by speed and slightly by music
+    // pulse. Final RGB is multiplied by alphaLife so dead particles are black
+    // (additive blending) and don't contribute.
+    const baseColor = this.colorsBuffer.toAttribute();
+    const vel = this.velocitiesBuffer.toAttribute();
+    const speed = vel.length();
+    const speedTerm = speed.mul(0.05).clamp(0, 1).mul(this.speedGlowUniform);
+    const musicTerm = this.musicPulseUniform.mul(0.35);
+    const glow = float(0.55).add(speedTerm).add(musicTerm);
+    const lit = baseColor.mul(glow).mul(alpha);
+    material.colorNode = lit;
+    material.opacityNode = alpha.mul(this.particleOpacityUniform);
+
+    this.material = material;
+    this.mesh = new THREE.InstancedMesh(geometry, material, this.count);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 32;
-    this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    // Allocate the per-instance color attribute so setColorAt works.
-    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(this.colors, 3);
-    this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-    this.instanceColors = this.mesh.instanceColor;
+    this.scene.add(this.mesh);
+  }
 
-    this.filamentGeometry = new THREE.BufferGeometry();
-    const filamentPositionAttr = new THREE.BufferAttribute(this.filamentPositions, 3);
-    const filamentColorAttr = new THREE.BufferAttribute(this.filamentColors, 3);
-    filamentPositionAttr.setUsage(THREE.DynamicDrawUsage);
-    filamentColorAttr.setUsage(THREE.DynamicDrawUsage);
-    this.filamentGeometry.setAttribute('position', filamentPositionAttr);
-    this.filamentGeometry.setAttribute('color', filamentColorAttr);
-    this.filamentGeometry.setDrawRange(0, 0);
-    this.filamentMaterial = new THREE.LineBasicMaterial({
-      transparent: true,
-      opacity: this.params.filamentOpacity,
-      vertexColors: true,
-      depthWrite: false,
-      blending: THREE.NormalBlending,
-    });
-    this.filamentLine = new THREE.LineSegments(this.filamentGeometry, this.filamentMaterial);
-    this.filamentLine.frustumCulled = false;
-    this.filamentLine.renderOrder = 31;
-
-    // Hide all particles initially (zero scale).
-    for (let i = 0; i < this.size; i += 1) {
-      TMP_MATRIX.compose(this.center, TMP_QUAT.identity(), ZERO_SCALE);
-      this.mesh.setMatrixAt(i, TMP_MATRIX);
-    }
-    this.mesh.instanceMatrix.needsUpdate = true;
-
-    scene.add(this.filamentLine);
-    scene.add(this.mesh);
-
-    // Synchrony ring — additive expanding pulse rendered at the sculptor center.
+  private buildSynchronyRing(): void {
     this.synchronyRingMaterial = new THREE.MeshBasicMaterial({
       color: this.params.synchronyRingColor,
       transparent: true,
@@ -225,11 +523,10 @@ export class EnergySculptor implements EnergySink {
     this.synchronyRing.rotation.x = Math.PI / 2;
     this.synchronyRing.frustumCulled = false;
     this.synchronyRing.renderOrder = 33;
-    scene.add(this.synchronyRing);
+    this.scene.add(this.synchronyRing);
+  }
 
-    // Holographic projector rings — one shared unit-circle geometry, one
-    // shared material; each ring instance is positioned and scaled per layer.
-    this.projectorScene = scene;
+  private buildProjectorRings(): void {
     const segs = EnergySculptor.TIMER_SEGMENTS;
     const ringPositions = new Float32Array((segs + 1) * 3);
     for (let i = 0; i <= segs; i += 1) {
@@ -249,29 +546,11 @@ export class EnergySculptor implements EnergySink {
       depthWrite: false,
     });
     this.rebuildProjectorRings();
-
-    this.registered = registerTweaks(paneDock, 'energySculptor', SCULPTOR_DEFS, {
-      title: 'Energy Sculptor',
-      params: this.params,
-      onChange: {
-        synchronyRingColor: v => this.synchronyRingMaterial?.color.set(v),
-        timerRingColor: v => this.projectorRingMaterial?.color.set(v),
-        timerRingRadius: () => this.layoutProjectorRings(),
-        projectorRingCount: () => this.rebuildProjectorRings(),
-        projectorRingSpacing: () => this.layoutProjectorRings(),
-        projectorRingScale: () => this.layoutProjectorRings(),
-        projectorBaseY: () => this.layoutProjectorRings(),
-        particleOpacity: v => { this.material.opacity = v; },
-        filamentOpacity: v => { this.filamentMaterial.opacity = v; },
-      },
-    });
   }
 
   private rebuildProjectorRings(): void {
-    if (!this.projectorScene || !this.projectorRingGeom || !this.projectorRingMaterial) return;
-    for (const ring of this.projectorRings) {
-      ring.removeFromParent();
-    }
+    if (!this.projectorRingGeom || !this.projectorRingMaterial) return;
+    for (const ring of this.projectorRings) ring.removeFromParent();
     this.projectorRings.length = 0;
     const count = Math.max(1, Math.round(this.params.projectorRingCount));
     for (let i = 0; i < count; i += 1) {
@@ -279,7 +558,7 @@ export class EnergySculptor implements EnergySink {
       ring.frustumCulled = false;
       ring.renderOrder = 34;
       this.projectorRings.push(ring);
-      this.projectorScene.add(ring);
+      this.scene.add(ring);
     }
     this.layoutProjectorRings();
   }
@@ -297,191 +576,13 @@ export class EnergySculptor implements EnergySink {
     }
   }
 
-  emit(req: EmitRequest): void {
-    // During dissolve we drop emits on the floor — particles emitted now
-    // would immediately be blown outward and waste pool slots that are about
-    // to be needed by the new round.
-    if (this.dissolveMode > 0) return;
-    this.pendingEmits.push(req);
-  }
-
-  setArchetype(id: ArchetypeId): void {
-    this.currentArchetype = ARCHETYPES[id];
-  }
-
-  setRoundProgress(progress: number): void {
-    this.roundProgress = Math.max(0, progress);
-  }
-
-  setMusicField(field: SculptorMusicField): void {
-    this.musicField.pulse = Math.max(0, Math.min(1, field.pulse));
-    this.musicField.drumLevel = Math.max(0, Math.min(1, field.drumLevel));
-    this.musicField.sustained = Math.max(0, Math.min(1, field.sustained));
-    this.musicField.intensity = Math.max(0, Math.min(1, field.intensity));
-    this.musicField.chordProgress = field.chordProgress - Math.floor(field.chordProgress);
-    this.musicField.groovePhase = field.groovePhase - Math.floor(field.groovePhase);
-  }
-
-  /**
-   * Fire the duet synchrony boost. Boosts attractor pull briefly and pulses
-   * the synchrony ring outward as visible reward.
-   */
-  fireSynchrony(): void {
-    this.synchronyBoost = 1;
-    this.synchronyRingAge = 0;
-  }
-
-  getSynchronyBoost(): number {
-    return this.synchronyBoost;
-  }
-
-  beginDissolve(): void {
-    this.dissolveMode = 1;
-  }
-
-  endDissolve(): void {
-    this.dissolveMode = 0;
-  }
-
-  update(delta: number): void {
-    if (delta <= 0) return;
-    this.drainEmits();
-    this.refreshDensityGrids();
-    this.integrate(delta);
-    this.tickSynchrony(delta);
-    this.updateTimerRing();
-    this.writeFilaments();
-    this.writeMatrices();
-  }
-
-  private updateTimerRing(): void {
+  private updateProjectorRing(): void {
     if (!this.projectorRingMaterial) return;
     const build = Math.min(1, this.roundProgress);
     this.projectorRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.12 + build * 0.18;
   }
 
-  dispose(): void {
-    this.registered?.dispose();
-    this.mesh.geometry.dispose();
-    (this.mesh.material as THREE.Material).dispose();
-    this.mesh.removeFromParent();
-    this.filamentGeometry.dispose();
-    this.filamentMaterial.dispose();
-    this.filamentLine.removeFromParent();
-    if (this.synchronyRing) {
-      this.synchronyRing.geometry.dispose();
-      this.synchronyRingMaterial?.dispose();
-      this.synchronyRing.removeFromParent();
-    }
-    for (const ring of this.projectorRings) {
-      ring.removeFromParent();
-    }
-    this.projectorRings.length = 0;
-    this.projectorRingGeom?.dispose();
-    this.projectorRingMaterial?.dispose();
-  }
-
-  private drainEmits(): void {
-    if (this.pendingEmits.length === 0) return;
-    const reqs = this.pendingEmits;
-    this.pendingEmits = [];
-    const archetype = this.currentArchetype;
-    const t = this.roundProgress;
-    for (const req of reqs) {
-      const allowed = Math.min(req.count, this.freeList.length);
-      // Add per-archetype flow bias to the initial direction, computed once
-      // per request from the burst origin (cheap; particles all share it).
-      const flow = archetype.flow(req.origin, t, EnergySculptor.FLOW_TMP);
-      for (let i = 0; i < allowed; i += 1) {
-        const idx = this.freeList.pop()!;
-        const o3 = idx * 3;
-        const jitter = 0.12;
-        const jx = (Math.random() - 0.5) * jitter;
-        const jy = (Math.random() - 0.5) * jitter;
-        const jz = (Math.random() - 0.5) * jitter;
-        const dx = req.direction.x + jx + flow.x * 0.35;
-        const dy = req.direction.y + jy + flow.y * 0.35;
-        const dz = req.direction.z + jz + flow.z * 0.35;
-        const dlen = Math.hypot(dx, dy, dz) || 1;
-        this.positions[o3] = req.origin.x;
-        this.positions[o3 + 1] = req.origin.y;
-        this.positions[o3 + 2] = req.origin.z;
-        this.velocities[o3] = (dx / dlen) * req.speed;
-        this.velocities[o3 + 1] = (dy / dlen) * req.speed;
-        this.velocities[o3 + 2] = (dz / dlen) * req.speed;
-        // Per-particle archetype target. Sampled once at emit time so the
-        // particle has a stable destination throughout its life — this is
-        // what makes the sculpture have a recognizable silhouette.
-        const norm = allowed > 1 ? (i + Math.random()) / allowed : Math.random();
-        const seed = Math.random();
-        const localTarget = archetype.shape(norm, t, seed, req.kind, EnergySculptor.SHAPE_TMP);
-        this.targets[o3] = this.center.x + localTarget.x;
-        this.targets[o3 + 1] = this.center.y + localTarget.y;
-        this.targets[o3 + 2] = this.center.z + localTarget.z;
-        this.baseColors[o3] = req.color.r;
-        this.baseColors[o3 + 1] = req.color.g;
-        this.baseColors[o3 + 2] = req.color.b;
-        this.colors[o3] = req.color.r;
-        this.colors[o3 + 1] = req.color.g;
-        this.colors[o3 + 2] = req.color.b;
-        this.lifeCurrent[idx] = 1;
-        this.lifeMax[idx] = Math.max(0.55, req.lifetime);
-        this.particleAges[idx] = 0;
-        this.settledAges[idx] = -1;
-        this.sizeScales[idx] = 0.75 + req.intensity * 0.7 + Math.random() * 0.25;
-        this.kinds[idx] = req.kind === 'starlace' ? 1 : 0;
-      }
-    }
-    this.instanceColors.needsUpdate = true;
-  }
-
-  /**
-   * Walk all alive particles once; bucket them into per-kind density grids so
-   * the integrator can deflect each particle from the *other* kind's stream.
-   * Cheap (single pass over the pool) and keeps cross-currents purely CPU.
-   */
-  private refreshDensityGrids(): void {
-    this.densityDrum.fill(0);
-    this.densityStarlace.fill(0);
-    const dim = EnergySculptor.GRID_DIM;
-    const half = EnergySculptor.GRID_HALF_SPAN;
-    const cx = this.center.x;
-    const cy = this.center.y;
-    const cz = this.center.z;
-    const size = this.size;
-    for (let i = 0; i < size; i += 1) {
-      if (this.lifeCurrent[i] <= 0) continue;
-      const o3 = i * 3;
-      const lx = (this.positions[o3] - cx) / half;
-      const ly = (this.positions[o3 + 1] - cy) / half;
-      const lz = (this.positions[o3 + 2] - cz) / half;
-      if (lx < -1 || lx > 1 || ly < -1 || ly > 1 || lz < -1 || lz > 1) continue;
-      const gx = Math.min(dim - 1, Math.max(0, Math.floor((lx * 0.5 + 0.5) * dim)));
-      const gy = Math.min(dim - 1, Math.max(0, Math.floor((ly * 0.5 + 0.5) * dim)));
-      const gz = Math.min(dim - 1, Math.max(0, Math.floor((lz * 0.5 + 0.5) * dim)));
-      const idx = gx + gy * dim + gz * dim * dim;
-      if (this.kinds[i] === 1) this.densityStarlace[idx] += 1;
-      else this.densityDrum[idx] += 1;
-    }
-  }
-
-  private sampleOtherDensity(kind: number, px: number, py: number, pz: number): number {
-    const dim = EnergySculptor.GRID_DIM;
-    const half = EnergySculptor.GRID_HALF_SPAN;
-    const lx = (px - this.center.x) / half;
-    const ly = (py - this.center.y) / half;
-    const lz = (pz - this.center.z) / half;
-    if (lx < -1 || lx > 1 || ly < -1 || ly > 1 || lz < -1 || lz > 1) return 0;
-    const gx = Math.min(dim - 1, Math.max(0, Math.floor((lx * 0.5 + 0.5) * dim)));
-    const gy = Math.min(dim - 1, Math.max(0, Math.floor((ly * 0.5 + 0.5) * dim)));
-    const gz = Math.min(dim - 1, Math.max(0, Math.floor((lz * 0.5 + 0.5) * dim)));
-    const cell = gx + gy * dim + gz * dim * dim;
-    return kind === 1 ? this.densityDrum[cell] : this.densityStarlace[cell];
-  }
-
-  private tickSynchrony(delta: number): void {
-    // Boost decays exponentially over ~0.5s.
-    this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
+  private tickSynchronyRing(delta: number): void {
     if (!this.synchronyRing || !this.synchronyRingMaterial) return;
     this.synchronyRingAge += delta;
     const lifeWindow = 0.85;
@@ -495,292 +596,69 @@ export class EnergySculptor implements EnergySink {
     this.synchronyRingMaterial.opacity = (1 - t) * 0.9;
   }
 
-  private integrate(delta: number): void {
-    const damping = Math.pow(this.params.velocityDamping, delta * 60);
-    const settledDamping = Math.pow(0.91, delta * 60);
-    const baseAttractor = this.params.attractorStrength;
-    const cross = this.params.crossCurrentStrength;
-    const field = this.params.fieldStrength;
-    const duet = this.params.duetBonusGain;
-    const boost = this.synchronyBoost;
-    const pull = baseAttractor * (1 + boost * duet);
-    const memorySeconds = Math.max(0, this.params.memorySeconds);
-    const fadeSeconds = Math.max(0.001, this.params.fadeSeconds);
-    const settleDistance = this.params.settleDistance;
-    const settledRadius = this.params.settledRadius;
-    const settledMotion = this.params.settledMotion;
-    const size = this.size;
-    const dissolving = this.dissolveMode > 0;
-    const burstSpeed = this.params.dissolveBurstSpeed;
-    const fieldPhase = this.roundProgress * Math.PI * 2;
-    const musicPulse = this.musicField.pulse;
-    const musicLevel = this.musicField.drumLevel;
-    const musicSustain = this.musicField.sustained;
-    const musicIntensity = this.musicField.intensity;
-    const groovePhase = this.musicField.groovePhase * TAU;
-    const chordPhase = this.musicField.chordProgress * TAU;
-    const musicWaveAmp = musicLevel * 0.045 + musicPulse * 0.085 + musicIntensity * 0.025;
-    const fieldBoost = field * (1 + musicIntensity * 0.9 + musicPulse * 1.1);
-    for (let i = 0; i < size; i += 1) {
-      if (this.lifeCurrent[i] <= 0) continue;
-      this.particleAges[i] += delta;
-      const o3 = i * 3;
-      const px = this.positions[o3];
-      const py = this.positions[o3 + 1];
-      const pz = this.positions[o3 + 2];
-      const tx = this.targets[o3];
-      const ty = this.targets[o3 + 1];
-      const tz = this.targets[o3 + 2];
-      const rx = tx - this.center.x;
-      const ry = ty - this.center.y;
-      const rz = tz - this.center.z;
-      const targetRadius = Math.hypot(rx, rz);
-      const targetAngle = Math.atan2(rz, rx);
-      const wave = Math.sin(targetRadius * 18 - groovePhase * 2 + ry * 7 + chordPhase) * musicWaveAmp;
-      const chordTilt = Math.sin(chordPhase + ry * 3.5 + targetAngle * 2) * musicSustain * 0.045;
-      const attractX = tx + Math.cos(targetAngle) * wave - Math.sin(targetAngle) * chordTilt;
-      const attractY = ty
-        + Math.cos(targetRadius * 12 - groovePhase * 4 + chordPhase) * musicWaveAmp * 0.58
-        + Math.sin(targetAngle * 3 + chordPhase) * musicPulse * 0.026;
-      const attractZ = tz + Math.sin(targetAngle) * wave + Math.cos(targetAngle) * chordTilt;
-      let dx = attractX - px;
-      let dy = attractY - py;
-      let dz = attractZ - pz;
-      const dist = Math.hypot(dx, dy, dz) || 0.001;
-      const ndx = dx / dist;
-      const ndy = dy / dist;
-      const ndz = dz / dist;
-      let vx = this.velocities[o3];
-      let vy = this.velocities[o3 + 1];
-      let vz = this.velocities[o3 + 2];
-      const settled = this.settledAges[i] >= 0;
-      if (dissolving) {
-        // Outward burst from center; ignores attractor.
-        let ox = px - this.center.x;
-        let oy = py - this.center.y;
-        let oz = pz - this.center.z;
-        const olen = Math.hypot(ox, oy, oz) || 1;
-        ox /= olen; oy /= olen; oz /= olen;
-        vx += ox * burstSpeed * delta;
-        vy += oy * burstSpeed * delta;
-        vz += oz * burstSpeed * delta;
-        this.lifeCurrent[i] -= delta * 1.8;
-      } else if (settled) {
-        const settledAge = this.settledAges[i] + delta;
-        this.settledAges[i] = settledAge;
-        const seedA = Math.sin((i + 1) * 12.9898) * 43758.5453;
-        const seedB = Math.sin((i + 1) * 78.233) * 19341.719;
-        const a = seedA - Math.floor(seedA);
-        const b = seedB - Math.floor(seedB);
-        const phase = settledAge * (0.65 + a * 0.85) * settledMotion + a * TAU + groovePhase * (0.35 + b * 0.55);
-        const pocket = settledRadius * (0.55 + b * 0.75) * (1 + musicPulse * 0.7 + musicLevel * 0.24);
-        const driftX = Math.cos(phase) * pocket;
-        const driftY = Math.sin(phase * 0.73 + b * TAU) * pocket * 0.46
-          + Math.sin(groovePhase * 2 + targetRadius * 10 + b * TAU) * musicWaveAmp * 0.8;
-        const driftZ = Math.sin(phase * (0.9 + b * 0.22)) * pocket;
-        const fdx = attractX + driftX - px;
-        const fdy = attractY + driftY - py;
-        const fdz = attractZ + driftZ - pz;
-        const flen = Math.hypot(fdx, fdy, fdz) || 1;
-        vx += fdx * pull * 1.05 * delta;
-        vy += fdy * pull * 1.05 * delta;
-        vz += fdz * pull * 1.05 * delta;
-        // A small tangential field keeps settled particles alive without
-        // letting them leave their local attractor pocket.
-        const settledDrive = settledMotion * (0.38 + musicPulse * 0.26 + musicLevel * 0.08);
-        vx += (-fdz / flen) * settledDrive * delta;
-        vy += Math.cos(phase * 1.37 + chordPhase) * settledMotion * (0.08 + musicPulse * 0.08) * delta;
-        vz += (fdx / flen) * settledDrive * delta;
-      } else {
-        const lx = px - this.center.x;
-        const ly = py - this.center.y;
-        const lz = pz - this.center.z;
-        const lr = Math.hypot(lx, lz) || 1;
-        const handed = this.kinds[i] === 1 ? -1 : 1;
-        const beatWave = Math.sin(lr * 15 - groovePhase * 3 + ly * 6 + chordPhase) * (musicPulse * 0.34 + musicLevel * 0.12);
-        const curlX = -lz * 0.92 + Math.sin(ly * 6.0 + fieldPhase + lx * 2.2) * 0.18 + (lx / lr) * beatWave;
-        const curlY = Math.sin((lx - lz) * 7.0 + fieldPhase * 0.7 + chordPhase) * 0.22 + 0.08 + musicPulse * 0.05;
-        const curlZ = lx * 0.92 + Math.cos(ly * 5.2 - fieldPhase + lz * 2.4) * 0.18 + (lz / lr) * beatWave;
-        vx += (dx * pull + ndx * pull * 0.18 + curlX * fieldBoost * handed) * delta;
-        vy += (dy * pull + ndy * pull * 0.18 + curlY * fieldBoost) * delta;
-        vz += (dz * pull + ndz * pull * 0.18 + curlZ * fieldBoost * handed) * delta;
+  private fillSpawnQueue(): void {
+    let cursor = 0;
+    const lifeBase = this.lifeMaxUniform.value;
+    const worldScale = this.worldScaleUniform.value || 1;
+    const invWorldScale = 1 / worldScale;
 
-        const flightWindow = this.lifeMax[i] * 3.6;
-        if (dist < settleDistance || this.particleAges[i] > flightWindow) {
-          this.settledAges[i] = 0;
-        }
-      }
-      // Cross-current: deflect from the other kind's local density. We use a
-      // tangent of the to-target direction as the deflection axis so streams
-      // visibly bend around each other rather than just slowing down.
-      if (cross > 0) {
-        const otherDensity = this.sampleOtherDensity(this.kinds[i], px, py, pz);
-        if (otherDensity > 0.5) {
-          // Tangent = up x toTarget normalized, fallback if degenerate.
-          let tdx = -ndz;
-          let tdy = 0;
-          let tdz = ndx;
-          const tlen = Math.hypot(tdx, tdy, tdz) || 1;
-          tdx /= tlen; tdy /= tlen; tdz /= tlen;
-          const dscale = Math.min(1, otherDensity / 6) * cross * delta * (settled ? 0.08 : 1);
-          vx += tdx * dscale;
-          vy += tdy * dscale;
-          vz += tdz * dscale;
-        }
-      }
-      const damp = settled ? settledDamping : damping;
-      vx *= damp; vy *= damp; vz *= damp;
-      this.velocities[o3] = vx;
-      this.velocities[o3 + 1] = vy;
-      this.velocities[o3 + 2] = vz;
-      this.positions[o3] = px + vx * delta;
-      this.positions[o3 + 1] = py + vy * delta;
-      this.positions[o3 + 2] = pz + vz * delta;
-      if (!dissolving && this.settledAges[i] >= memorySeconds) {
-        this.lifeCurrent[i] = Math.max(0, 1 - (this.settledAges[i] - memorySeconds) / fadeSeconds);
-      } else if (!dissolving) {
-        this.lifeCurrent[i] = 1;
-      }
-      if (this.lifeCurrent[i] <= 0) {
-        this.lifeCurrent[i] = 0;
-        this.particleAges[i] = 0;
-        this.settledAges[i] = -1;
-        this.freeList.push(i);
+    for (const req of this.pendingEmits) {
+      if (cursor >= MAX_SPAWNS_PER_FRAME) break;
+      const allowed = Math.min(req.count, MAX_SPAWNS_PER_FRAME - cursor);
+      const dirNormSq = req.direction.lengthSq();
+      const dirX = dirNormSq > 1e-6 ? req.direction.x : 0;
+      const dirY = dirNormSq > 1e-6 ? req.direction.y : 1;
+      const dirZ = dirNormSq > 1e-6 ? req.direction.z : 0;
+      const kind = req.kind === 'starlace' ? KIND_STARLACE : KIND_DRUM;
+
+      for (let i = 0; i < allowed; i += 1) {
+        const slot = cursor;
+        // Origin: world → attractor space.
+        const oxLocal = (req.origin.x - this.center.x) * invWorldScale;
+        const oyLocal = (req.origin.y - this.center.y) * invWorldScale;
+        const ozLocal = (req.origin.z - this.center.z) * invWorldScale;
+        // Add a small jitter so a burst doesn't all collapse onto one orbit.
+        const jx = (Math.random() - 0.5) * 0.6;
+        const jy = (Math.random() - 0.5) * 0.6;
+        const jz = (Math.random() - 0.5) * 0.6;
+        this.spawnPosArray[slot].set(oxLocal + jx, oyLocal + jy, ozLocal + jz);
+
+        // Initial velocity: emit direction, attenuated and rotated toward
+        // attractor space. Magnitude small so attractor flow dominates fast.
+        const seedSpeed = (0.4 + Math.random() * 0.6) * (req.speed * 0.4);
+        this.spawnVelArray[slot].set(
+          dirX * seedSpeed,
+          dirY * seedSpeed,
+          dirZ * seedSpeed,
+        );
+
+        this.spawnColorArray[slot].set(req.color.r, req.color.g, req.color.b);
+
+        const lifeJitter = 0.7 + Math.random() * 0.6;
+        const lifeMax = req.lifetime * lifeJitter * (lifeBase / 28);
+        this.spawnMetaArray[slot].set(lifeMax, kind, 1);
+
+        cursor += 1;
       }
     }
+    this.pendingEmits.length = 0;
+    this.spawnsThisFrame = cursor;
+    this.spawnCountUniform.value = cursor;
+    this.spawnCursorUniform.value = this.spawnCursorCpu;
+    this.spawnCursorCpu = (this.spawnCursorCpu + cursor) % this.count;
   }
 
-  private writeMatrices(): void {
-    const baseSize = this.params.particleSize;
-    const musicSize = 1 + this.musicField.pulse * 0.14 + this.musicField.drumLevel * 0.08;
-    const musicColor = 0.74 + this.musicField.intensity * 0.13 + this.musicField.pulse * 0.10;
-    const size = this.size;
-    for (let i = 0; i < size; i += 1) {
-      const o3 = i * 3;
-      const alpha = this.lifeCurrent[i];
-      const born = alpha > 0 ? Math.min(1, this.particleAges[i] / 0.22) : 0;
-      const settled = this.settledAges[i] >= 0;
-      const settleScale = settled ? 1.18 : 0.82;
-      const s = alpha > 0
-        ? baseSize * this.sizeScales[i] * settleScale * musicSize * born * (0.2 + Math.sqrt(alpha) * 0.8)
-        : 0;
-      const colorScale = alpha > 0 ? (0.12 + Math.sqrt(alpha) * 0.52) * musicColor : 0;
-      this.colors[o3] = this.baseColors[o3] * colorScale;
-      this.colors[o3 + 1] = this.baseColors[o3 + 1] * colorScale;
-      this.colors[o3 + 2] = this.baseColors[o3 + 2] * colorScale;
-      TMP_VEC.set(this.positions[o3], this.positions[o3 + 1], this.positions[o3 + 2]);
-      TMP_SCALE.setScalar(s);
-      TMP_MATRIX.compose(TMP_VEC, TMP_QUAT.identity(), TMP_SCALE);
-      this.mesh.setMatrixAt(i, TMP_MATRIX);
-    }
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.instanceColors.needsUpdate = true;
-  }
-
-  private writeFilaments(): void {
-    const density = this.params.filamentDensity;
-    const baseLength = this.params.filamentLength;
-    if (density <= 0 || baseLength <= 0) {
-      this.filamentGeometry.setDrawRange(0, 0);
-      return;
-    }
-
-    const musicPulse = this.musicField.pulse;
-    const musicLevel = this.musicField.drumLevel;
-    const musicSustain = this.musicField.sustained;
-    const musicIntensity = this.musicField.intensity;
-    const groovePhase = this.musicField.groovePhase * TAU;
-    const chordPhase = this.musicField.chordProgress * TAU;
-    const progressPhase = this.roundProgress * TAU * 0.37;
-    const musicColor = 0.42 + musicIntensity * 0.16 + musicPulse * 0.12;
-    let lineCount = 0;
-
-    for (let i = 0; i < this.size; i += 1) {
-      const alpha = this.lifeCurrent[i];
-      if (alpha <= 0.02) continue;
-      const gateSeed = Math.sin((i + 1) * 91.731) * 43758.5453123;
-      const gate = gateSeed - Math.floor(gateSeed);
-      if (gate > density) continue;
-
-      const o3 = i * 3;
-      const px = this.positions[o3];
-      const py = this.positions[o3 + 1];
-      const pz = this.positions[o3 + 2];
-      const tx = this.targets[o3];
-      const ty = this.targets[o3 + 1];
-      const tz = this.targets[o3 + 2];
-      const rx = tx - this.center.x;
-      const ry = ty - this.center.y;
-      const rz = tz - this.center.z;
-      const targetRadius = Math.hypot(rx, rz) || 1;
-      const targetAngle = Math.atan2(rz, rx);
-      const settled = this.settledAges[i] >= 0;
-      const seedA = Math.sin((i + 1) * 12.9898) * 43758.5453;
-      const a = seedA - Math.floor(seedA);
-      const phase = progressPhase + groovePhase * (0.7 + a * 0.7) + a * TAU;
-
-      let dx: number;
-      let dy: number;
-      let dz: number;
-      if (settled) {
-        const ripple = Math.sin(targetRadius * 18 - groovePhase * 3 + ry * 7 + chordPhase);
-        dx = -rz * 1.05
-          + Math.sin(ry * 9.4 + phase) * 0.24
-          + Math.cos(targetAngle * 3.0 + chordPhase) * (musicPulse * 0.48 + musicLevel * 0.18);
-        dy = Math.sin((rx - rz) * 7.8 + phase * 1.3) * 0.30
-          + ripple * (musicLevel * 0.46 + musicPulse * 0.22)
-          + Math.cos(targetAngle * 2.0 + chordPhase) * musicSustain * 0.22;
-        dz = rx * 1.05
-          + Math.cos(ry * 8.6 - phase) * 0.24
-          + Math.sin(targetAngle * 2.6 + chordPhase) * (musicSustain * 0.38 + musicPulse * 0.18);
-      } else {
-        const vx = this.velocities[o3];
-        const vy = this.velocities[o3 + 1];
-        const vz = this.velocities[o3 + 2];
-        dx = vx * 0.65 + (tx - px) * 0.72 - rz * 0.20;
-        dy = vy * 0.65 + (ty - py) * 0.72 + Math.sin(phase + targetRadius * 9) * musicPulse * 0.18;
-        dz = vz * 0.65 + (tz - pz) * 0.72 + rx * 0.20;
-      }
-
-      const dlen = Math.hypot(dx, dy, dz) || 1;
-      dx /= dlen; dy /= dlen; dz /= dlen;
-      const speed = Math.hypot(this.velocities[o3], this.velocities[o3 + 1], this.velocities[o3 + 2]);
-      const born = Math.min(1, this.particleAges[i] / 0.35);
-      const length = baseLength
-        * this.sizeScales[i]
-        * (settled ? 1.75 : 0.90)
-        * (0.68 + Math.min(1.4, speed) * 0.22)
-        * (1 + musicPulse * 0.42 + musicLevel * 0.16)
-        * born
-        * (0.25 + Math.sqrt(alpha) * 0.75);
-
-      const po = lineCount * 6;
-      this.filamentPositions[po] = px - dx * length * 0.38;
-      this.filamentPositions[po + 1] = py - dy * length * 0.38;
-      this.filamentPositions[po + 2] = pz - dz * length * 0.38;
-      this.filamentPositions[po + 3] = px + dx * length * 0.72;
-      this.filamentPositions[po + 4] = py + dy * length * 0.72;
-      this.filamentPositions[po + 5] = pz + dz * length * 0.72;
-
-      const colorScale = (0.12 + Math.sqrt(alpha) * 0.58) * musicColor * (settled ? 1 : 0.64);
-      const cr = this.baseColors[o3] * colorScale;
-      const cg = this.baseColors[o3 + 1] * colorScale;
-      const cb = this.baseColors[o3 + 2] * colorScale;
-      this.filamentColors[po] = cr;
-      this.filamentColors[po + 1] = cg;
-      this.filamentColors[po + 2] = cb;
-      this.filamentColors[po + 3] = cr * (1 + musicPulse * 0.18);
-      this.filamentColors[po + 4] = cg * (1 + musicLevel * 0.14);
-      this.filamentColors[po + 5] = cb * (1 + musicSustain * 0.12);
-      lineCount += 1;
-    }
-
-    this.filamentGeometry.setDrawRange(0, lineCount * 2);
-    const posAttr = this.filamentGeometry.getAttribute('position') as THREE.BufferAttribute;
-    const colorAttr = this.filamentGeometry.getAttribute('color') as THREE.BufferAttribute;
-    posAttr.needsUpdate = true;
-    colorAttr.needsUpdate = true;
+  private applyAttractorPreset(kind: AttractorKind): void {
+    const preset = ATTRACTOR_PRESETS[kind];
+    this.worldScaleUniform.value = preset.worldScale;
+    this.containmentRadiusUniform.value = preset.containmentRadius;
+    this.velocityBlendUniform.value = Math.min(this.params.velocityBlend, preset.velocityBlend);
+    this.flowSpeedUniform.value = this.params.flowSpeed * preset.dt;
+    const kindIdx: Record<AttractorKind, number> = { thomas: 0, lorenz: 1, aizawa: 2, halvorsen: 3 };
+    this.attractorSelectUniform.value = kindIdx[kind];
   }
 }
 
-void TMP_VEC_2;
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
