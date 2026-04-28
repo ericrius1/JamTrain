@@ -1,6 +1,16 @@
 import * as THREE from 'three/webgpu';
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import type { EmitRequest, EnergySink } from './sculptor/EnergyEmitter';
+import type { Archetype, ArchetypeId } from './sculptor/archetypeShared';
+import { drumDrum } from './sculptor/archetypes/drumDrum';
+import { melodyMelody } from './sculptor/archetypes/melodyMelody';
+import { drumMelody } from './sculptor/archetypes/drumMelody';
+
+const ARCHETYPES: Record<ArchetypeId, Archetype> = {
+  drumDrum,
+  melodyMelody,
+  drumMelody,
+};
 
 export const SCULPTOR_DEFS = {
   particlePoolSize:     { default: 12288, min: 4096, max: 24576, step: 256, label: 'particle pool', hidden: true },
@@ -49,6 +59,10 @@ export class EnergySculptor implements EnergySink {
 
   private pendingEmits: EmitRequest[] = [];
   private registered?: ReturnType<typeof registerTweaks<typeof SCULPTOR_DEFS>>;
+  private currentArchetype: Archetype = drumMelody;
+  private roundProgress = 0;
+  private static SHAPE_TMP = new THREE.Vector3();
+  private static FLOW_TMP = new THREE.Vector3();
 
   constructor(scene: THREE.Scene, center: THREE.Vector3, paneDock?: HTMLElement) {
     this.center = center.clone();
@@ -100,6 +114,14 @@ export class EnergySculptor implements EnergySink {
     this.pendingEmits.push(req);
   }
 
+  setArchetype(id: ArchetypeId): void {
+    this.currentArchetype = ARCHETYPES[id];
+  }
+
+  setRoundProgress(progress: number): void {
+    this.roundProgress = Math.max(0, Math.min(1, progress));
+  }
+
   update(delta: number): void {
     if (delta <= 0) return;
     this.drainEmits();
@@ -118,19 +140,23 @@ export class EnergySculptor implements EnergySink {
     if (this.pendingEmits.length === 0) return;
     const reqs = this.pendingEmits;
     this.pendingEmits = [];
+    const archetype = this.currentArchetype;
+    const t = this.roundProgress;
     for (const req of reqs) {
       const allowed = Math.min(req.count, this.freeList.length);
+      // Add per-archetype flow bias to the initial direction, computed once
+      // per request from the burst origin (cheap; particles all share it).
+      const flow = archetype.flow(req.origin, t, EnergySculptor.FLOW_TMP);
       for (let i = 0; i < allowed; i += 1) {
         const idx = this.freeList.pop()!;
         const o3 = idx * 3;
-        // Random angular jitter on direction so a burst spreads visibly.
         const jitter = 0.18;
         const jx = (Math.random() - 0.5) * jitter;
         const jy = (Math.random() - 0.5) * jitter;
         const jz = (Math.random() - 0.5) * jitter;
-        const dx = req.direction.x + jx;
-        const dy = req.direction.y + jy;
-        const dz = req.direction.z + jz;
+        const dx = req.direction.x + jx + flow.x * 0.35;
+        const dy = req.direction.y + jy + flow.y * 0.35;
+        const dz = req.direction.z + jz + flow.z * 0.35;
         const dlen = Math.hypot(dx, dy, dz) || 1;
         this.positions[o3] = req.origin.x;
         this.positions[o3 + 1] = req.origin.y;
@@ -138,10 +164,15 @@ export class EnergySculptor implements EnergySink {
         this.velocities[o3] = (dx / dlen) * req.speed;
         this.velocities[o3 + 1] = (dy / dlen) * req.speed;
         this.velocities[o3 + 2] = (dz / dlen) * req.speed;
-        // Default target = center (archetype shape sampler will override in a later phase).
-        this.targets[o3] = this.center.x;
-        this.targets[o3 + 1] = this.center.y;
-        this.targets[o3 + 2] = this.center.z;
+        // Per-particle archetype target. Sampled once at emit time so the
+        // particle has a stable destination throughout its life — this is
+        // what makes the sculpture have a recognizable silhouette.
+        const norm = Math.random();
+        const seed = Math.random();
+        const localTarget = archetype.shape(norm, t, seed, req.kind, EnergySculptor.SHAPE_TMP);
+        this.targets[o3] = this.center.x + localTarget.x;
+        this.targets[o3 + 1] = this.center.y + localTarget.y;
+        this.targets[o3 + 2] = this.center.z + localTarget.z;
         this.colors[o3] = req.color.r;
         this.colors[o3 + 1] = req.color.g;
         this.colors[o3 + 2] = req.color.b;

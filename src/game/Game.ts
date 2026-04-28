@@ -13,6 +13,7 @@ import { Drum } from './visuals/Drum';
 import { Starlace } from './visuals/Starlace';
 import { RoundDirector } from './RoundDirector';
 import { EnergySculptor } from './EnergySculptor';
+import { pickArchetype } from './sculptor/archetypeShared';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
@@ -287,8 +288,10 @@ export class Game {
         this.installPlayerVisual('remote', this.pendingPartnerInstrument);
       }
       this.pendingPartnerInstrument = null;
+      this.refreshArchetype();
     });
     this.installPlayerVisuals();
+    this.refreshArchetype();
     this.roundDirector.start();
     this.setupShadowsPane();
     this.setupPlayersPane();
@@ -863,6 +866,13 @@ export class Game {
     }
     if (this.playerInstruments[player] === id) return;
     this.installPlayerVisual(player, id);
+    this.refreshArchetype();
+  }
+
+  private refreshArchetype(): void {
+    const localKind = this.playerInstruments.local === 'starlace' ? 'starlace' : 'drum';
+    const remoteKind = this.playerInstruments.remote === 'starlace' ? 'starlace' : 'drum';
+    this.sculptor?.setArchetype(pickArchetype(localKind, remoteKind));
   }
 
   setPlayerCreature(player: PlayerSlot, id: string): void {
@@ -931,6 +941,7 @@ export class Game {
 
     const links = this.updateLinks();
     this.updatePlayerVisuals(delta);
+    this.sculptor.setRoundProgress(this.roundDirector.snapshot().progress);
     this.sculptor.update(delta);
     this.particles.update(this.renderer, links, elapsed);
     const atmosphere = this.scenery.update(delta, elapsed);
