@@ -15,7 +15,7 @@ const ARCHETYPES: Record<ArchetypeId, Archetype> = {
 export const SCULPTOR_DEFS = {
   particlePoolSize:     { default: 12288, min: 4096, max: 24576, step: 256, label: 'particle pool', hidden: true },
   attractorStrength:    { default: 1.5,   min: 0,    max: 4,    step: 0.05, label: 'attractor strength' },
-  particleSize:         { default: 0.018, min: 0.004, max: 0.05, step: 0.001, label: 'particle size' },
+  particleSize:         { default: 0.007, min: 0.001, max: 0.02, step: 0.001, label: 'particle size' },
   velocityDamping:      { default: 0.985, min: 0.9,  max: 1,    step: 0.001, label: 'velocity damping' },
   crossCurrentStrength: { default: 0.55,  min: 0,    max: 2,    step: 0.01, label: 'cross-current' },
   duetBonusGain:        { default: 1.2,   min: 0,    max: 2,    step: 0.05, label: 'duet bonus gain' },
