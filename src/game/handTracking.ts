@@ -108,6 +108,7 @@ export class HandTracker {
   private pointer = { x: 0, y: 0, vx: 0, vy: 0 };
   private lastPointerUpdateTime = 0;
   private pointerLastMovedAtMs = -Infinity;
+  private pointerInputEnabled = true;
   private seatIndex = 0;
   private mode: 'simulated' | 'camera' | 'error' = 'simulated';
   private status = 'hands: simulated';
@@ -115,14 +116,22 @@ export class HandTracker {
   private lastResetAt = -Infinity;
   private prevDetectedHandedness = new Set<Handedness>();
   readonly filter = new HandFilter();
+  private readonly pointerMoveListener = (event: PointerEvent): void => {
+    if (!this.pointerInputEnabled) return;
+    this.pointerTarget.x = (event.clientX / Math.max(window.innerWidth, 1)) * 2 - 1;
+    this.pointerTarget.y = -((event.clientY / Math.max(window.innerHeight, 1)) * 2 - 1);
+    this.pointerLastMovedAtMs = performance.now();
+  };
 
   constructor(private statusTarget?: HTMLElement) {
-    window.addEventListener('pointermove', event => {
-      this.pointerTarget.x = (event.clientX / Math.max(window.innerWidth, 1)) * 2 - 1;
-      this.pointerTarget.y = -((event.clientY / Math.max(window.innerHeight, 1)) * 2 - 1);
-      this.pointerLastMovedAtMs = performance.now();
-    });
+    window.addEventListener('pointermove', this.pointerMoveListener);
     this.publishStatus();
+  }
+
+  setPointerInputEnabled(enabled: boolean): void {
+    if (this.pointerInputEnabled === enabled) return;
+    this.pointerInputEnabled = enabled;
+    this.clearPointerState();
   }
 
   async startCamera(): Promise<void> {
@@ -322,6 +331,7 @@ export class HandTracker {
   }
 
   dispose(): void {
+    window.removeEventListener('pointermove', this.pointerMoveListener);
     this.detectLoopRunning = false;
     cancelAnimationFrame(this.detectRafHandle);
     this.detector?.dispose?.();
@@ -533,6 +543,11 @@ export class HandTracker {
   }
 
   private updatePointer(time: number): void {
+    if (!this.pointerInputEnabled) {
+      this.clearPointerState();
+      this.lastPointerUpdateTime = time;
+      return;
+    }
     const dt = this.lastPointerUpdateTime > 0
       ? clamp(time - this.lastPointerUpdateTime, 1 / 120, 0.05)
       : 1 / 60;
@@ -548,9 +563,22 @@ export class HandTracker {
   }
 
   private makeMouseHands(time: number): Record<Handedness, HandPose> {
+    if (!this.pointerInputEnabled) {
+      return makeMouseHands(time, 0, 0, 0, 0, POINTER_IDLE_CONFIDENCE, this.seatIndex);
+    }
     const pointerAgeSeconds = (performance.now() - this.pointerLastMovedAtMs) / 1000;
     const confidence = pointerAgeSeconds <= POINTER_ACTIVE_SECONDS ? 1 : POINTER_IDLE_CONFIDENCE;
     return makeMouseHands(time, this.pointer.x, this.pointer.y, this.pointer.vx, this.pointer.vy, confidence, this.seatIndex);
+  }
+
+  private clearPointerState(): void {
+    this.pointerTarget.x = 0;
+    this.pointerTarget.y = 0;
+    this.pointer.x = 0;
+    this.pointer.y = 0;
+    this.pointer.vx = 0;
+    this.pointer.vy = 0;
+    this.pointerLastMovedAtMs = -Infinity;
   }
 
   private publishStatus(): void {

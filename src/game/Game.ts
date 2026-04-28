@@ -179,6 +179,8 @@ export class Game {
     this.audioGraph = new JamAudioGraph();
     this.audio = new AudioEngine(this.audioGraph, ui.musicStatus, this.paneDock);
     this.handSynth = new HandSynthEngine(this.audioGraph, canvas, this.paneDock);
+    this.handTracker.setPointerInputEnabled(false);
+    this.handSynth.setMouseInputEnabled(false);
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
@@ -1046,6 +1048,8 @@ export class Game {
   exitIntroMode(): void {
     if (!this.introActive) return;
     this.introActive = false;
+    this.handTracker.setPointerInputEnabled(true);
+    this.handSynth.setMouseInputEnabled(true);
     this.scenery.setSkyLifeEnabled(true);
     this.playerVisuals.local?.playIntroAnimation();
     this.playerVisuals.remote?.playIntroAnimation();

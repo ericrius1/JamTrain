@@ -40,20 +40,20 @@ input {
 }
 
 /* Scene reveal sequence:
-   - default: canvas hidden (opacity 0) so the BeginGate sits on a true black.
-   - .scene-dim: canvas comes up to ~28% opacity with brightness/saturation
-     pulled down — the world reads as "asleep". Used during intro.
+   - default/.scene-dim: canvas is already deeply dimmed, so the intro cannot
+     flash bright before runtime preload finishes.
    - .scene-active: canvas is fully visible with normal color. The transition
      is the moment the world wakes up after All Aboard.
    The filter is what makes characters and instruments feel "in the
    background" without needing per-system dim hooks. */
 #scene {
-  opacity: 0;
-  filter: brightness(0.42) saturate(0.85);
+  opacity: 0.24;
+  filter: brightness(0.26) saturate(0.72);
   transition: opacity 1.4s ease, filter 1.4s ease;
 }
 #scene.scene-dim {
-  opacity: 0.34;
+  opacity: 0.24;
+  filter: brightness(0.26) saturate(0.72);
 }
 #scene.scene-active {
   opacity: 1;
@@ -77,6 +77,13 @@ input {
 #stage-wrap.intro-active #stage,
 #stage-wrap.intro-active #vignette {
   visibility: hidden;
+}
+
+#stage-wrap.intro-active #scene {
+  opacity: 0.24;
+  filter: brightness(0.22) saturate(0.66);
+  pointer-events: none;
+  transition: none;
 }
 
 @media (prefers-reduced-motion: reduce) {

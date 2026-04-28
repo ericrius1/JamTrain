@@ -201,6 +201,7 @@ export class HandSynthEngine {
   private elapsed = 0;
   private hitBudgetLogAt = 0;
   private mouseLastAtMs = -Infinity;
+  private mouseInputEnabled = true;
   private mouseListener?: (e: PointerEvent) => void;
 
   private params: HandSynthParams = {
@@ -245,6 +246,12 @@ export class HandSynthEngine {
 
   getInstrument(player: PlayerKey): InstrumentId {
     return this.pendingInstruments[player];
+  }
+
+  setMouseInputEnabled(enabled: boolean): void {
+    if (this.mouseInputEnabled === enabled) return;
+    this.mouseInputEnabled = enabled;
+    this.clearMouseState();
   }
 
   getVoiceState(player: PlayerKey): VoiceState {
@@ -330,7 +337,7 @@ export class HandSynthEngine {
     }
 
     const mouseAgeSec = (performance.now() - this.mouseLastAtMs) / 1000;
-    const mouseFresh = this.params.mouseEnabled && mouseAgeSec < MOUSE_IDLE_TIMEOUT;
+    const mouseFresh = this.mouseInputEnabled && this.params.mouseEnabled && mouseAgeSec < MOUSE_IDLE_TIMEOUT;
     const localInput = this.resolveInput(local, mouseFresh ? { xN: this.mouseXN, yN: this.mouseYN } : null);
     const remoteInput = this.resolveInput(remote, null);
 
@@ -1504,6 +1511,7 @@ export class HandSynthEngine {
 
   private attachMouseListener(): void {
     this.mouseListener = (e: PointerEvent) => {
+      if (!this.mouseInputEnabled) return;
       const rect = this.canvas.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return;
       const xN = clamp((e.clientX - rect.left) / rect.width, 0, 1);
@@ -1513,6 +1521,12 @@ export class HandSynthEngine {
       this.mouseLastAtMs = performance.now();
     };
     this.canvas.addEventListener('pointermove', this.mouseListener);
+  }
+
+  private clearMouseState(): void {
+    this.mouseXN = 0.5;
+    this.mouseYN = 0.5;
+    this.mouseLastAtMs = -Infinity;
   }
 
   private attachPane(): void {

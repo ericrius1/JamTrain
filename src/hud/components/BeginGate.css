@@ -291,10 +291,9 @@
 
 .begin-gate.fade-out { opacity: 0; }
 
-/* Re-arm pointer events on actual UI controls — the gate root is
-   `pointer-events: none` so the live scene behind keeps reacting to (future)
-   pointer interactions, but the conductor input + buttons must remain
-   clickable. */
+/* Re-arm pointer events on actual UI controls. The gate root is inert so the
+   intro chrome does not become a full-screen click target, while the conductor
+   input + buttons remain clickable. */
 .begin-conductor-input,
 .begin-reroll,
 .begin-start {

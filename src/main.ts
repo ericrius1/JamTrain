@@ -35,7 +35,7 @@ stageWrap.classList.add('intro-active');
 
 let activeRuntime: RuntimeApi | undefined;
 let runtimePromise: Promise<RuntimeApi> | undefined;
-let sceneRevealed = false;
+let sceneRevealed = runtimeCanvas?.classList.contains('scene-dim') ?? false;
 
 // Pre-warm the browser cache for the assets needed to draw the very first
 // frame of the world (train shell + first scenery panel + stored puppets).
@@ -69,8 +69,8 @@ stageWrap.appendChild(beginGate.el);
 void registerHandposeCacheWorker();
 
 // Let the intro hit the screen first, then warm the full Three/WebGPU
-// runtime. Once the runtime is ready and the critical asset bytes have
-// been decoded, fade the dimmed scene in behind the still-visible intro UI.
+// runtime. The canvas starts in its dimmed class from markup; revealDimmedScene
+// remains as a fallback if that class is ever absent.
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
     void loadRuntime()

@@ -116,6 +116,7 @@ export class Starlace implements PlayerVisual {
   private revealActive = false;
   private revealedFully = false;
   private revealResolveOutro?: () => void;
+  private outroPromise?: Promise<void>;
   private nodeDistance: number[] = [];
   private maxNodeDistance = 1;
   private nodeRevealT: number[] = [];
@@ -278,8 +279,12 @@ export class Starlace implements PlayerVisual {
     this.mesh.visible = true;
   }
 
+  // Idempotent: a duplicate trigger (e.g. HUD pick + multiplayer echo) must
+  // hand back the existing promise instead of starting a second outro that
+  // would orphan the first awaiter and leave the swap mid-air.
   playOutroAnimation(): Promise<void> {
     if (!this.mesh.visible) return Promise.resolve();
+    if (this.outroPromise) return this.outroPromise;
     // Outro picks a fresh origin so the dissolve doesn't read as a literal
     // rewind of the intro — gives the second instrument a different "feel."
     this.pickRevealOrigin();
@@ -287,9 +292,10 @@ export class Starlace implements PlayerVisual {
     this.revealDirection = -1;
     this.revealActive = true;
     this.revealedFully = false;
-    return new Promise(resolve => {
+    this.outroPromise = new Promise(resolve => {
       this.revealResolveOutro = resolve;
     });
+    return this.outroPromise;
   }
 
   isInteractive(): boolean {
@@ -397,6 +403,7 @@ export class Starlace implements PlayerVisual {
       this.mesh.visible = false;
       const resolve = this.revealResolveOutro;
       this.revealResolveOutro = undefined;
+      this.outroPromise = undefined;
       resolve?.();
     }
   }
