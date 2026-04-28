@@ -12,6 +12,7 @@ import { LinkParticles } from './particles';
 import { Drum } from './visuals/Drum';
 import { Starlace } from './visuals/Starlace';
 import { RoundDirector } from './RoundDirector';
+import { EnergySculptor } from './EnergySculptor';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
@@ -157,6 +158,7 @@ export class Game {
   private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'starlace' };
   private pendingPartnerInstrument: InstrumentId | null = null;
   private roundDirector!: RoundDirector;
+  private sculptor!: EnergySculptor;
   private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
@@ -279,6 +281,7 @@ export class Game {
     this.setupOrbitControls();
     this.particles.initialize(this.renderer);
     this.roundDirector = new RoundDirector(this.paneDock);
+    this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.paneDock);
     this.roundDirector.onPlayingStart(() => {
       if (this.pendingPartnerInstrument && this.pendingPartnerInstrument !== this.playerInstruments.remote) {
         this.installPlayerVisual('remote', this.pendingPartnerInstrument);
@@ -445,6 +448,7 @@ export class Game {
     this.webrtc.dispose();
     this.robotMotion.dispose();
     this.scenery.dispose();
+    this.sculptor?.dispose();
     this.roundDirector?.dispose();
     this.playerVisuals.local?.dispose();
     this.playerVisuals.remote?.dispose();
@@ -826,6 +830,7 @@ export class Game {
       this.playerVisuals[player] = new Starlace(this.scene, this.paneDock, `starlace-${player}`, {
         palette: player,
         title: `Starlace (${player === 'local' ? 'Local' : 'Partner'})`,
+        sculptor: this.sculptor,
         onPluck: pluck => {
           this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
         },
@@ -836,6 +841,7 @@ export class Game {
         title: `Drum (${player === 'local' ? 'Local' : 'Partner'})`,
         camera: player === 'local' ? this.camera : undefined,
         canvas: player === 'local' ? this.canvas : undefined,
+        sculptor: this.sculptor,
         onHit: hit => {
           this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
         },
@@ -925,6 +931,7 @@ export class Game {
 
     const links = this.updateLinks();
     this.updatePlayerVisuals(delta);
+    this.sculptor.update(delta);
     this.particles.update(this.renderer, links, elapsed);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);

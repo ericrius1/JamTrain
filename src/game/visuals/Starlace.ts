@@ -38,6 +38,7 @@ type StarlaceOptions = {
   palette?: StarlacePalette;
   title?: string;
   onPluck?: (event: StarlacePluck) => void;
+  sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
 };
 
 type StarNode = {

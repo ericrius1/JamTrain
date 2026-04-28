@@ -64,6 +64,7 @@ type DrumOptions = {
   camera?: THREE.Camera;
   canvas?: HTMLCanvasElement;
   anchor?: THREE.Vector3;
+  sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
 };
 
 // One playable orb. Pitch/color fields are carved out of the sphere instead of
