@@ -11,6 +11,7 @@ import { MultiplayerClient } from './multiplayer';
 import { LinkParticles } from './particles';
 import { Drum } from './visuals/Drum';
 import { Starlace } from './visuals/Starlace';
+import { RoundDirector } from './RoundDirector';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
@@ -153,7 +154,9 @@ export class Game {
   private keyLight?: THREE.DirectionalLight;
   private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
   private playerVisuals: Record<PlayerSlot, PlayerVisual | null> = { local: null, remote: null };
-  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'drum' };
+  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'starlace' };
+  private pendingPartnerInstrument: InstrumentId | null = null;
+  private roundDirector!: RoundDirector;
   private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
@@ -275,7 +278,15 @@ export class Game {
     await this.renderer.init();
     this.setupOrbitControls();
     this.particles.initialize(this.renderer);
+    this.roundDirector = new RoundDirector(this.paneDock);
+    this.roundDirector.onPlayingStart(() => {
+      if (this.pendingPartnerInstrument && this.pendingPartnerInstrument !== this.playerInstruments.remote) {
+        this.installPlayerVisual('remote', this.pendingPartnerInstrument);
+      }
+      this.pendingPartnerInstrument = null;
+    });
     this.installPlayerVisuals();
+    this.roundDirector.start();
     this.setupShadowsPane();
     this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
@@ -434,6 +445,7 @@ export class Game {
     this.webrtc.dispose();
     this.robotMotion.dispose();
     this.scenery.dispose();
+    this.roundDirector?.dispose();
     this.playerVisuals.local?.dispose();
     this.playerVisuals.remote?.dispose();
     this.audio.dispose();
@@ -837,6 +849,12 @@ export class Game {
 
   setPlayerInstrument(player: PlayerSlot, id: string): void {
     if (!isInstrumentId(id)) return;
+    if (player === 'remote') {
+      // Queue partner-instrument changes so the in-progress sculpture's
+      // archetype doesn't shift mid-round. Applied on the next playing edge.
+      if (this.playerInstruments.remote !== id) this.pendingPartnerInstrument = id;
+      return;
+    }
     if (this.playerInstruments[player] === id) return;
     this.installPlayerVisual(player, id);
   }
@@ -884,6 +902,7 @@ export class Game {
     const delta = Math.min((now - this.lastFrameAt) / 1000, 0.05);
     const elapsed = (now - this.startedAt) / 1000;
     this.lastFrameAt = now;
+    this.roundDirector.tick(delta);
     const localSeat = this.multiplayer.localSeatIndex;
     const partnerSeat = this.multiplayer.partnerSeatIndex;
     const hands = this.handTracker.update(elapsed, localSeat);
