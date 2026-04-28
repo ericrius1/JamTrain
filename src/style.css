@@ -39,9 +39,50 @@ input {
   font: inherit;
 }
 
-#stage-wrap.intro-active #scene,
+/* Scene reveal sequence:
+   - default: canvas hidden (opacity 0) so the BeginGate sits on a true black.
+   - .scene-dim: canvas comes up to ~28% opacity with brightness/saturation
+     pulled down — the world reads as "asleep". Used during intro.
+   - .scene-active: canvas is fully visible with normal color. The transition
+     is the moment the world wakes up after All Aboard.
+   The filter is what makes characters and instruments feel "in the
+   background" without needing per-system dim hooks. */
+#scene {
+  opacity: 0;
+  filter: brightness(0.42) saturate(0.85);
+  transition: opacity 1.4s ease, filter 1.4s ease;
+}
+#scene.scene-dim {
+  opacity: 0.34;
+}
+#scene.scene-active {
+  opacity: 1;
+  filter: none;
+  transition: opacity 1.5s cubic-bezier(0.22, 0.61, 0.36, 1),
+              filter 1.6s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* HUD crossfade: hidden until the user boards, then fades in just after the
+   BeginGate begins fading out so the two trade places gracefully. */
+#ui {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.7s ease;
+}
+#ui.ui-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
 #stage-wrap.intro-active #stage,
-#stage-wrap.intro-active #ui,
 #stage-wrap.intro-active #vignette {
   visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #scene,
+  #scene.scene-active,
+  #ui {
+    transition: none;
+  }
 }

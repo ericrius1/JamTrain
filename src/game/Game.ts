@@ -932,6 +932,7 @@ export class Game {
     this.updateAtmosphere(atmosphere);
     this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
     this.handSynth.update(localPose, remotePose, delta);
+    this.audio.setPlayerActivity(this.handSynth.getActivity());
     this.updateMusicReactivity(delta);
     this.poseSession.sendLocalPose(localPose, elapsed);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
@@ -993,6 +994,15 @@ export class Game {
     for (const entry of this.cabinLights) {
       entry.light.intensity = entry.baseIntensity * lightMod;
     }
+  }
+
+  // Intro/active state. While intro is enabled the scenery's bird system is
+  // held off so the world only "comes alive" once the user has chosen to
+  // board. Master visual dimming of the rendered scene is handled in CSS via
+  // the canvas's opacity/filter so it lands uniformly on lit and unlit
+  // materials.
+  exitIntroMode(): void {
+    this.scenery.setSkyLifeEnabled(true);
   }
 
   private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number; underwater?: number }): void {

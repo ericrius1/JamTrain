@@ -20,6 +20,7 @@ type RuntimeApi = {
   begin: (conductorName: string) => Promise<void>;
   dispose: () => void;
   setConductorName: (name: string) => void;
+  exitIntroMode: () => void;
 };
 
 const stageWrapEl = document.getElementById('stage-wrap');
@@ -29,31 +30,100 @@ if (!stageWrapEl) {
 const stageWrap = stageWrapEl;
 
 const runtimeCanvas = document.querySelector<HTMLCanvasElement>('#scene');
-runtimeCanvas?.style.setProperty('visibility', 'hidden');
+const uiEl = document.getElementById('ui');
 stageWrap.classList.add('intro-active');
 
 let activeRuntime: RuntimeApi | undefined;
 let runtimePromise: Promise<RuntimeApi> | undefined;
+let sceneRevealed = false;
+
+// Pre-warm the browser cache for the assets needed to draw the very first
+// frame of the world (train shell + first scenery panel + stored puppets).
+// Everything else can lazy-load behind it. We don't await the result before
+// constructing the runtime — we just want the bytes in flight by the time
+// THREE.TextureLoader asks for them.
+const criticalAssetsLoaded = preloadCriticalAssets();
 
 const beginGate = new BeginGate({
   onBegin: async conductorName => {
+    // Wait for runtime + critical assets so the world we're about to wake
+    // up is actually painted. The `await` here is what lets the BeginGate
+    // show its "Awakening…" state if the user clicks before the dim scene
+    // has appeared behind them.
     const runtime = await loadRuntime();
+    await criticalAssetsLoaded;
     runtime.setConductorName(conductorName);
-    await runtime.begin(conductorName);
+    // Visuals first — kick the dim → bright transition, fade in the HUD,
+    // and start the BeginGate crossfade by returning quickly. The audio
+    // and multiplayer connect run concurrently so the visuals don't have
+    // to wait on networking.
     revealRuntimeSurface();
+    runtime.exitIntroMode();
+    uiEl?.classList.add('ui-active');
+    void runtime.begin(conductorName).catch(err => {
+      console.warn('[jam-train] begin failed', err);
+    });
   },
 });
 stageWrap.appendChild(beginGate.el);
 void registerHandposeCacheWorker();
 
-// Let the intro hit the screen first, then warm the full Three/WebGPU runtime.
+// Let the intro hit the screen first, then warm the full Three/WebGPU
+// runtime. Once the runtime is ready and the critical asset bytes have
+// been decoded, fade the dimmed scene in behind the still-visible intro UI.
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
-    void loadRuntime().catch(err => {
-      console.warn('[jam-train] runtime preload failed', err);
-    });
+    void loadRuntime()
+      .then(async () => {
+        await criticalAssetsLoaded;
+        revealDimmedScene();
+      })
+      .catch(err => {
+        console.warn('[jam-train] runtime preload failed', err);
+      });
   });
 });
+
+function preloadCriticalAssets(): Promise<void> {
+  const storedCreature = localStorage.getItem(LOCAL_CREATURE_KEY) ?? 'lion';
+  const partnerCreature = 'robot';
+  const puppetParts = ['body.webp', 'upper-arm.webp', 'forearm.webp'];
+  const localPuppet = `${storedCreature}/${storedCreature === 'robot' ? 'hand-cupped.webp' : storedCreature === 'lion' ? 'paw-cupped.webp' : 'hand-cupped.webp'}`;
+  const partnerHand = `${partnerCreature}/hand-cupped.webp`;
+
+  const urls: string[] = [
+    '/cabin/illustrated-cabin-plate-v2-color.webp',
+    '/cabin/illustrated-cabin-plate-v2-alpha.webp',
+    '/scenery/far-terrain-chunk-01-alpine-lake.webp',
+    `/puppets/${localPuppet}`,
+    `/puppets/${partnerHand}`,
+    ...puppetParts.flatMap(part => [
+      `/puppets/${storedCreature}/${part}`,
+      `/puppets/${partnerCreature}/${part}`,
+    ]),
+  ];
+
+  return Promise.all(
+    urls.map(url => new Promise<void>(resolve => {
+      const img = new Image();
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+      img.src = url;
+    }))
+  ).then(() => undefined);
+}
+
+function revealDimmedScene(): void {
+  if (sceneRevealed) return;
+  sceneRevealed = true;
+  // Two RAFs so the initial opacity:0 is committed before we toggle the
+  // class — otherwise the transition can be skipped on first paint.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      runtimeCanvas?.classList.add('scene-dim');
+    });
+  });
+}
 
 const marquee = '🚂 Jam Train ';
 let marqueeOffset = 0;
@@ -84,7 +154,9 @@ function loadRuntime(): Promise<RuntimeApi> {
 
 function revealRuntimeSurface(): void {
   stageWrap.classList.remove('intro-active');
-  runtimeCanvas?.style.removeProperty('visibility');
+  // Promote scene from dim → fully active. CSS handles the 1.5s ease.
+  runtimeCanvas?.classList.remove('scene-dim');
+  runtimeCanvas?.classList.add('scene-active');
 }
 
 const clampUnit = (n: unknown, fallback: number): number => {
@@ -421,6 +493,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     begin,
     dispose,
     setConductorName: name => hud.setConductorName(name),
+    exitIntroMode: () => game.exitIntroMode(),
   };
 }
 

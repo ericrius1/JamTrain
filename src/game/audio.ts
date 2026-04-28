@@ -1,53 +1,25 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { JamAudioGraph } from './audioGraph';
+import { JAM_BACKING_DAY, JAM_BACKING_NIGHT, type JamChordVoicing } from './harmony';
 import { clamp, distance } from './math';
 import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Data } from './types';
 
 export const AUDIO_DEFS = {
   masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master' },
-  chordCycleSeconds:  { default: 35,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
-  attackSeconds:      { default: 1.6,  min: 0.2,  max: 6,    step: 0.1,  label: 'attack sec' },
-  releaseSeconds:     { default: 5.5,  min: 1,    max: 12,   step: 0.1,  label: 'release sec' },
-  filterMaxHz:        { default: 3000, min: 1500, max: 8000, step: 50,   label: 'filter ceil' },
-  reverbWetRange:     { default: 0.18, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
-  shimmerMaxDb:       { default: -18,  min: -30,  max: 0,    step: 0.5,  label: 'shimmer dB' },
+  chordCycleSeconds:  { default: 44,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
+  attackSeconds:      { default: 2.4,  min: 0.2,  max: 6,    step: 0.1,  label: 'attack sec' },
+  releaseSeconds:     { default: 7.2,  min: 1,    max: 12,   step: 0.1,  label: 'release sec' },
+  filterMaxHz:        { default: 2600, min: 1500, max: 8000, step: 50,   label: 'filter ceil' },
+  reverbWetRange:     { default: 0.12, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
+  shimmerMaxDb:       { default: -22,  min: -30,  max: 0,    step: 0.5,  label: 'shimmer dB' },
   muteHandModulation: { type: 'boolean', default: false, label: 'mute hands' },
-  drumLevelDb:        { default: -3,   min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
-  drumBpm:            { default: 74,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
+  drumLevelDb:        { default: -8,   min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
+  drumBpm:            { default: 68,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
   drumEbbPeriod:      { default: 78,   min: 20,   max: 240,  step: 1,    label: 'drum ebb sec' },
   muteDrums:          { type: 'boolean', default: false, label: 'mute drums' },
 } as const;
 
 export type AudioParams = ParamsOf<typeof AUDIO_DEFS>;
-
-type ChordVoicing = {
-  voices: [string, string, string];
-  drone: string;
-};
-
-// All voicings strictly diatonic to D major (D E F# G A B C#) — the same
-// scale the player synths live in. Both palettes share the *same* drone
-// progression (B → G → D → A, vi-IV-I-V in D) so the night/day crossfade
-// can sit at any blend without producing a semitone clash in the bass.
-//
-// Night palette: lower triadic voicings, anchored on a D pedal in the
-// inner voices, leaning toward the relative minor for an inward feel.
-const PALETTE_A_NIGHT: ChordVoicing[] = [
-  { voices: ['D4', 'F#4', 'A4'], drone: 'B2' }, // Bm7
-  { voices: ['D4', 'F#4', 'B4'], drone: 'G2' }, // Gmaj7
-  { voices: ['D4', 'F#4', 'A4'], drone: 'D2' }, // Dmaj7
-  { voices: ['D4', 'E4',  'A4'], drone: 'A2' }, // A7sus4
-];
-
-// Day palette: same chord roots, but extended with 9ths/11ths and
-// brighter upper voicings so the daylight blend reads warmer and more
-// open without leaving the key.
-const PALETTE_B_DAY: ChordVoicing[] = [
-  { voices: ['F#4', 'A4', 'C#5'], drone: 'B2' }, // Bm9
-  { voices: ['F#4', 'A4', 'D5'],  drone: 'G2' }, // Gmaj9
-  { voices: ['F#4', 'A4', 'B4'],  drone: 'D2' }, // Dmaj13
-  { voices: ['E4',  'G4', 'B4'],  drone: 'A2' }, // A9sus
-];
 
 const PARAM_RAMP = 0.12;
 const PRESENCE_THRESHOLD = 0.2;
@@ -56,9 +28,9 @@ const STAT_SMOOTH_SECONDS = 1.2;
 const PRESENCE_ATTACK_SECONDS = 0.6;
 const PRESENCE_RELEASE_SECONDS = 2.5;
 
-const BASE_FILTER_HZ = 1500;
-const BASE_REVERB_WET = 0.35;
-const BASE_CHORUS_WET = 0.25;
+const BASE_FILTER_HZ = 1250;
+const BASE_REVERB_WET = 0.42;
+const BASE_CHORUS_WET = 0.18;
 const BASE_PAN = 0;
 
 export class AudioEngine {
@@ -105,6 +77,8 @@ export class AudioEngine {
   private elapsed = 0;
   private kickAt = -Infinity;
   private snareAt = -Infinity;
+  private playerActivity = 0;
+  private smoothedPlayerActivity = 0;
 
   // Rhodes-style electric piano on each chord change. Bell-bright FM attack
   // that decays into the pad — the signature lo-fi "Rhodes hit, pad sustains
@@ -169,9 +143,9 @@ export class AudioEngine {
       knee: 6,
     }).connect(this.master);
     this.panner = new Tone.Panner(BASE_PAN).connect(this.compressor);
-    this.reverb = new Tone.Reverb({ decay: 9, wet: BASE_REVERB_WET }).connect(this.panner);
-    this.delay = new Tone.PingPongDelay({ delayTime: '4n.', feedback: 0.28, wet: 0.12 }).connect(this.reverb);
-    this.chorus = new Tone.Chorus({ frequency: 0.25, delayTime: 6, depth: 0.4, wet: BASE_CHORUS_WET })
+    this.reverb = new Tone.Reverb({ decay: 10.5, preDelay: 0.035, wet: BASE_REVERB_WET }).connect(this.panner);
+    this.delay = new Tone.PingPongDelay({ delayTime: '4n.', feedback: 0.22, wet: 0.08 }).connect(this.reverb);
+    this.chorus = new Tone.Chorus({ frequency: 0.18, delayTime: 7, depth: 0.28, wet: BASE_CHORUS_WET })
       .start()
       .connect(this.delay);
     this.filter = new Tone.Filter({ frequency: BASE_FILTER_HZ, type: 'lowpass', rolloff: -24 }).connect(this.chorus);
@@ -187,11 +161,11 @@ export class AudioEngine {
     };
     // Per-voice attenuation: top of each chord (voices[2]) sits well below the
     // lower two so the music doesn't fight speech-band frequencies.
-    const padVoiceVolumesDb = [-12, -14, -22];
+    const padVoiceVolumesDb = [-13, -15, -24];
     const subOptions = {
       oscillator: { type: 'fattriangle', count: 3, spread: 14 } as any,
       envelope: { attack: this.params.attackSeconds, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds },
-      volume: -16,
+      volume: -18,
     };
     const droneOptions = {
       oscillator: { type: 'sine' } as any,
@@ -201,7 +175,7 @@ export class AudioEngine {
     const shimmerOptions = {
       oscillator: { type: 'triangle' } as any,
       envelope: { attack: this.params.attackSeconds * 1.8, decay: 0.4, sustain: 1.0, release: this.params.releaseSeconds * 0.7 },
-      volume: -16,
+      volume: -18,
     };
 
     for (let bank = 0; bank < 2; bank++) {
@@ -231,10 +205,10 @@ export class AudioEngine {
       modulationEnvelope: { attack: 0.004, decay: 0.7, sustain: 0, release: 0.4 },
     };
     this.epA = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
-    this.epA.volume.value = -15;
+    this.epA.volume.value = -18;
     this.epA.connect(this.bedAGain);
     this.epB = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
-    this.epB.volume.value = -15;
+    this.epB.volume.value = -18;
     this.epB.connect(this.bedBGain);
 
     // Vinyl crackle — bandpassed pink noise, sits well below the music. Skips
@@ -242,7 +216,7 @@ export class AudioEngine {
     // smeared into the pad.
     this.vinyl = new Tone.Noise({ type: 'pink', volume: -8 } as any);
     this.vinylFilter = new Tone.Filter({ frequency: 4800, type: 'bandpass', Q: 0.6 });
-    this.vinylGain = new Tone.Gain(0.045).connect(this.compressor);
+    this.vinylGain = new Tone.Gain(0.028).connect(this.compressor);
     this.vinyl.chain(this.vinylFilter, this.vinylGain);
     this.vinyl.start();
 
@@ -332,7 +306,7 @@ export class AudioEngine {
     this.chordPhase += delta;
     if (this.chordPhase >= this.params.chordCycleSeconds) {
       this.chordPhase = 0;
-      this.chordIndex = (this.chordIndex + 1) % PALETTE_A_NIGHT.length;
+      this.chordIndex = (this.chordIndex + 1) % JAM_BACKING_NIGHT.length;
       this.advanceChord();
     }
 
@@ -354,6 +328,7 @@ export class AudioEngine {
       stats.presence > this.smoothed.presence ? PRESENCE_ATTACK_SECONDS : PRESENCE_RELEASE_SECONDS;
     const pk = 1 - Math.exp(-delta / presenceTau);
     this.smoothed.presence += (stats.presence - this.smoothed.presence) * pk;
+    this.smoothedPlayerActivity += (this.playerActivity - this.smoothedPlayerActivity) * (1 - Math.exp(-delta / 0.55));
 
     // Hand modulation acts as an additive layer on top of cozy baselines.
     // When presence → 0, every modulator → 0 and the bed sits at its baseline.
@@ -367,11 +342,15 @@ export class AudioEngine {
     this.panner.pan.rampTo(BASE_PAN + panMod, PARAM_RAMP);
 
     const wetMod = (this.smoothed.avgCurl - 0.5) * this.params.reverbWetRange * p;
-    this.reverb.wet.rampTo(BASE_REVERB_WET + wetMod, PARAM_RAMP);
+    const sharedSpaceLift = this.smoothedPlayerActivity * 0.045;
+    this.reverb.wet.rampTo(BASE_REVERB_WET + wetMod + sharedSpaceLift, PARAM_RAMP);
+    this.delay.wet.rampTo(0.08 + this.smoothedPlayerActivity * 0.045 + this.smoothed.spread * 0.025 * p, PARAM_RAMP);
 
-    // Swell only adds gain — never dips below baseline. Same for chorus.
+    // Let active player notes sit forward by gently leaning the bed back,
+    // while keeping enough swell that the backing still breathes with hands.
     const swellAdd = this.smoothed.spread * 0.25 * p;
-    this.master.gain.rampTo(this.params.masterGain * (0.85 + swellAdd), PARAM_RAMP);
+    const activityDuck = 1 - this.smoothedPlayerActivity * 0.18;
+    this.master.gain.rampTo(this.params.masterGain * (0.84 + swellAdd) * activityDuck, PARAM_RAMP);
     this.chorus.wet.rampTo(BASE_CHORUS_WET + this.smoothed.spread * 0.35 * p, PARAM_RAMP);
 
     const shimmerLinear = p * this.tone.dbToGain(this.params.shimmerMaxDb);
@@ -419,6 +398,10 @@ export class AudioEngine {
     const v = value <= 0 ? 0 : Math.min(1, value);
     this.params.masterGain = MAX_MUSIC_GAIN * Math.pow(v, CURVE_EXP);
     this.registered?.pane?.refresh();
+  }
+
+  setPlayerActivity(value: number): void {
+    this.playerActivity = clamp(value, 0, 1);
   }
 
   getMasterGain(): number {
@@ -547,12 +530,12 @@ export class AudioEngine {
     }
   }
 
-  private currentChord(): { a: ChordVoicing; b: ChordVoicing } {
-    return { a: PALETTE_A_NIGHT[this.chordIndex], b: PALETTE_B_DAY[this.chordIndex] };
+  private currentChord(): { a: JamChordVoicing; b: JamChordVoicing } {
+    return { a: JAM_BACKING_NIGHT[this.chordIndex], b: JAM_BACKING_DAY[this.chordIndex] };
   }
 
   private shimmerNote(): string {
-    const top = PALETTE_B_DAY[this.chordIndex].voices[2];
+    const top = JAM_BACKING_DAY[this.chordIndex].voices[2];
     return transposeOctaveUp(top);
   }
 

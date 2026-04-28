@@ -1,9 +1,8 @@
 // BeginGate — TrainJam intro / "press start" screen.
 //
-// Immersive full-bleed layout: the lion painting fills the 1920×1014 stage
-// and UI lives only on top + bottom rails so the artwork is never covered.
-// The outer wrap is a fixed black overlay; the inner stage scales to fit the
-// viewport so the painting + rails keep their designed proportions.
+// Sits as a transparent overlay on top of the live (but dimmed) Three scene.
+// The 1920×1014 stage scales to fit the viewport so the title, conductor
+// field, and ember motes keep their designed proportions across sizes.
 
 import './BeginGate.css';
 
@@ -42,19 +41,11 @@ export class BeginGate {
     this.stage.className = 'begin-stage';
     this.el.appendChild(this.stage);
 
-    // Lion painting full-bleed — the world the rest of the UI sits on top of.
-    const lion = document.createElement('img');
-    lion.className = 'begin-lion';
-    lion.src = '/jamz.webp';
-    lion.alt = '';
-    lion.draggable = false;
-    this.stage.appendChild(lion);
-
-    // Atmospheric overlays: a soft radial vignette plus a top dark fade keep
-    // the top rail readable without dimming the painting's hero subject. The
-    // bottom is left clean so the lion's foreground silhouette stays bright.
+    // Soft vignette + top/bottom fades so title and conductor field stay
+    // legible against whatever (dimmed) scenery is showing through.
     this.stage.appendChild(this.div('begin-vignette'));
     this.stage.appendChild(this.div('begin-top-fade'));
+    this.stage.appendChild(this.div('begin-bottom-fade'));
 
     // Drifting embers (decorative). Deterministic positions/timing so the
     // composition feels designed rather than randomly noisy.
@@ -265,6 +256,6 @@ export class BeginGate {
   private dismiss(): void {
     window.removeEventListener('resize', this.resizeHandler);
     this.el.classList.add('fade-out');
-    setTimeout(() => this.el.remove(), 420);
+    setTimeout(() => this.el.remove(), 520);
   }
 }

@@ -362,6 +362,7 @@ export class ScenerySystem {
     underwater: 0,
   };
   private roomSeed: number;
+  private skyLifeEnabled = false;
 
   constructor(
     private scene: THREE.Scene,
@@ -422,6 +423,13 @@ export class ScenerySystem {
     this.onThunder = handler;
   }
 
+  // Defaults to false so the world doesn't sprout flocks while the user is
+  // still on the intro screen — Game flips this on after All Aboard so the
+  // sky comes alive at the same moment the lights come up.
+  setSkyLifeEnabled(enabled: boolean): void {
+    this.skyLifeEnabled = enabled;
+  }
+
   setRoomSeed(seed: number): void {
     this.roomSeed = seed;
     this.scheduler.setSeed(seed);
@@ -472,7 +480,7 @@ export class ScenerySystem {
     const underwater = 0;
 
     this.updateBackground(delta, speed, daylight);
-    if (this.skyLife) {
+    if (this.skyLife && this.skyLifeEnabled) {
       const currentFg = fg.t < 0.5 ? fg.from : fg.to;
       this.skyLife.update(delta, {
         daylight,

@@ -1,5 +1,12 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { JamAudioGraph } from './audioGraph';
+import {
+  JAM_DUET_NOTES,
+  JAM_ORB_GESTURE_NOTES,
+  JAM_PLAYABLE_NOTES_LOCAL,
+  JAM_PLAYABLE_NOTES_REMOTE,
+  JAM_STARLACE_NOTES,
+} from './harmony';
 import { clamp } from './math';
 import type { HandPose, PlayerPose } from './types';
 import type { InstrumentId, OrbGestureState, VoiceState } from './instruments';
@@ -7,39 +14,32 @@ import { voiceStateZero } from './instruments';
 
 export const HAND_SYNTH_DEFS = {
   enabled:       { type: 'boolean', default: true,  label: 'enabled' },
-  volumeDb:      { default: -16,   min: -40, max: 6,    step: 0.5,  label: 'volume dB' },
+  volumeDb:      { default: -18,   min: -40, max: 6,    step: 0.5,  label: 'volume dB' },
   filterMinHz:   { default: 260,   min: 80,  max: 2000, step: 10,   label: 'filter min Hz' },
   filterMaxHz:   { default: 6400,  min: 800, max: 9000, step: 50,   label: 'filter max Hz' },
   filterQ:       { default: 1.2,   min: 0.4, max: 8,    step: 0.1,  label: 'filter Q' },
   attack:        { default: 0.11,  min: 0.01, max: 2,   step: 0.01, label: 'attack sec' },
   release:       { default: 1.85,  min: 0.1, max: 5,    step: 0.05, label: 'release sec' },
   shimmer:       { default: 0.38,  min: 0,   max: 1,    step: 0.01, label: 'shimmer' },
-  reverbWetMax:  { default: 0.86,  min: 0,   max: 1,    step: 0.01, label: 'space max' },
+  reverbWetMax:  { default: 0.80,  min: 0,   max: 1,    step: 0.01, label: 'space max' },
   pluckDb:       { default: -9,    min: -24, max: 4,    step: 0.5,  label: 'attack dB' },
   duetDb:        { default: -19,   min: -36, max: 0,    step: 0.5,  label: 'duet dB' },
   mouseEnabled:  { type: 'boolean', default: true,  label: 'mouse plays' },
   chimeDb:       { default: 4,     min: -30, max: 12,   step: 0.5,  label: 'chime dB' },
   chimeWarmthMin:{ default: 600,   min: 120, max: 3000, step: 10,   label: 'chime warmth min Hz' },
   chimeWarmthMax:{ default: 6800,  min: 1200, max: 12000, step: 50, label: 'chime warmth max Hz' },
-  orbDb:         { default: 2,     min: -30, max: 12,   step: 0.5,  label: 'orb dB' },
-  orbDecay:      { default: 2.4,   min: 0.4, max: 6,    step: 0.05, label: 'orb decay s' },
-  orbHarmonics:  { default: 0.55,  min: 0,   max: 1,    step: 0.01, label: 'orb partials' },
-  starlaceDb:    { default: 1,     min: -30, max: 12,   step: 0.5,  label: 'starlace dB' },
-  starlaceDecay: { default: 3.2,   min: 0.6, max: 8,    step: 0.05, label: 'starlace decay s' },
-  starlaceGlow:  { default: 0.62,  min: 0,   max: 1,    step: 0.01, label: 'starlace glow' },
+  orbDb:         { default: -2,    min: -30, max: 12,   step: 0.5,  label: 'orb dB' },
+  orbDecay:      { default: 3.2,   min: 0.4, max: 6,    step: 0.05, label: 'orb decay s' },
+  orbHarmonics:  { default: 0.38,  min: 0,   max: 1,    step: 0.01, label: 'orb partials' },
+  starlaceDb:    { default: -3,    min: -30, max: 12,   step: 0.5,  label: 'starlace dB' },
+  starlaceDecay: { default: 4.4,   min: 0.6, max: 8,    step: 0.05, label: 'starlace decay s' },
+  starlaceGlow:  { default: 0.72,  min: 0,   max: 1,    step: 0.01, label: 'starlace glow' },
 } as const;
 
 export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
 
-// D major pentatonic (D E F# A B). All voices share this scale so every hand
-// note is consonant against the bed, which lives strictly in D major. The
-// orb scale used to drift into F natural / C natural — those clashed
-// against F# in the bed (a tritone away) and made the duet feel out of key.
-const SCALE_NOTES_LOCAL: string[] = ['D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5'];
-const SCALE_NOTES_REMOTE: string[] = SCALE_NOTES_LOCAL.map(transposeOctaveDown);
-const DUET_NOTES: string[] = ['D2', 'A2', 'D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'A4', 'D5', 'E5'];
-const ORB_GESTURE_NOTES: string[] = ['D2', 'A2', 'D3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5'];
-const STARLACE_NOTES: string[] = ['D3', 'E3', 'F#3', 'A3', 'B3', 'D4', 'E4', 'F#4', 'A4', 'B4', 'D5', 'E5', 'F#5', 'A5'];
+// All playable voices use the shared Jam Train scale so the visual hit
+// instruments and sustained synth layers stay melodically locked together.
 
 const PRESENCE_THRESHOLD = 0.5;
 const PARAM_RAMP = 0.08;
@@ -260,7 +260,7 @@ export class HandSynthEngine {
         expression: s.expression,
         tension: s.tension,
         noteIndex: s.lastNoteIdx,
-        noteCount: STARLACE_NOTES.length,
+        noteCount: JAM_STARLACE_NOTES.length,
       };
     }
     const o = this.orbVoices[player];
@@ -273,7 +273,7 @@ export class HandSynthEngine {
       expression: o.expression,
       tension: o.tension,
       noteIndex: o.lastNoteIdx,
-      noteCount: ORB_GESTURE_NOTES.length,
+      noteCount: JAM_ORB_GESTURE_NOTES.length,
     };
   }
 
@@ -444,7 +444,7 @@ export class HandSynthEngine {
   private ensureLoomVoice(player: PlayerKey): Voice | null {
     if (!this.tone || !this.master) return null;
     if (!this.voices[player]) {
-      this.voices[player] = this.createVoice(player, player === 'local' ? SCALE_NOTES_LOCAL : SCALE_NOTES_REMOTE);
+      this.voices[player] = this.createVoice(player, player === 'local' ? JAM_PLAYABLE_NOTES_LOCAL : JAM_PLAYABLE_NOTES_REMOTE);
     }
     return this.voices[player];
   }
@@ -591,7 +591,7 @@ export class HandSynthEngine {
       this._loggedStarlaceFirstHit = true;
     }
 
-    const noteIdx = nodeIndex >= 0 ? nodeIndex % STARLACE_NOTES.length : starlace.lastHitCount % STARLACE_NOTES.length;
+    const noteIdx = nodeIndex >= 0 ? nodeIndex % JAM_STARLACE_NOTES.length : starlace.lastHitCount % JAM_STARLACE_NOTES.length;
     starlace.pulse = Math.min(1, starlace.pulse + 0.58 + v * 0.42);
     starlace.energy = Math.min(1, starlace.energy + 0.20 + v * 0.23);
     starlace.pitch += (clamp(y, 0, 1) - starlace.pitch) * 0.72;
@@ -852,18 +852,18 @@ export class HandSynthEngine {
     const Tone = this.tone!;
     const panner = new Tone.Panner(key === 'local' ? -0.15 : 0.15).connect(this.master);
     const dryGain = new Tone.Gain(0).connect(panner);
-    const reverbReturn = new Tone.Gain(0.7).connect(panner);
+    const reverbReturn = new Tone.Gain(0.74).connect(panner);
     const reverb = new Tone.Reverb({
-      decay: 5.4,
-      preDelay: 0.018,
+      decay: 6.8,
+      preDelay: 0.032,
       wet: 1,
     }).connect(reverbReturn);
     const wetSend = new Tone.Gain(0).connect(reverb);
     const filter = new Tone.Filter({
-      frequency: 5200,
+      frequency: 4700,
       type: 'lowpass',
       rolloff: -12,
-      Q: 0.5,
+      Q: 0.42,
     });
     filter.connect(dryGain);
     filter.connect(wetSend);
@@ -872,11 +872,11 @@ export class HandSynthEngine {
     // Fast attack + medium-long exponential decay = handpan body.
     const fund = new Tone.PolySynth(Tone.FMSynth, {
       harmonicity: 2,
-      modulationIndex: 6,
+      modulationIndex: 4.5,
       oscillator: { type: 'sine' },
-      envelope: { attack: 0.002, decay: this.params.orbDecay, sustain: 0, release: this.params.orbDecay * 0.6 },
+      envelope: { attack: 0.004, decay: this.params.orbDecay, sustain: 0, release: this.params.orbDecay * 0.8 },
       modulation: { type: 'sine' },
-      modulationEnvelope: { attack: 0.001, decay: 0.4, sustain: 0, release: 0.5 },
+      modulationEnvelope: { attack: 0.002, decay: 0.5, sustain: 0, release: 0.55 },
       volume: this.params.orbDb,
     }).connect(filter);
     fund.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
@@ -887,7 +887,7 @@ export class HandSynthEngine {
     const fifth = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'sine' },
       envelope: { attack: 0.003, decay: this.params.orbDecay * 0.7, sustain: 0, release: this.params.orbDecay * 0.4 },
-      volume: this.params.orbDb - 14,
+      volume: this.params.orbDb - 18,
     }).connect(filter);
     fifth.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
 
@@ -896,24 +896,24 @@ export class HandSynthEngine {
     const shimmerGain = new Tone.Gain(0).connect(filter);
 
     const auraSynth = new Tone.Synth({
-      oscillator: { type: 'fatsine4', count: 4, spread: 22 } as any,
-      envelope: { attack: 0.18, decay: 0.34, sustain: 0.82, release: 1.45 },
-      portamento: 0.075,
-      volume: this.params.orbDb - 8,
+      oscillator: { type: 'fatsine4', count: 3, spread: 16 } as any,
+      envelope: { attack: 0.22, decay: 0.38, sustain: 0.78, release: 1.8 },
+      portamento: 0.09,
+      volume: this.params.orbDb - 10,
     }).connect(auraGain);
 
     const subSynth = new Tone.Synth({
       oscillator: { type: 'sine' },
       envelope: { attack: 0.30, decay: 0.28, sustain: 0.74, release: 1.8 },
       portamento: 0.12,
-      volume: this.params.orbDb - 12,
+      volume: this.params.orbDb - 16,
     }).connect(subGain);
 
     const shimmerSynth = new Tone.Synth({
       oscillator: { type: 'triangle8' } as any,
       envelope: { attack: 0.055, decay: 0.22, sustain: 0.42, release: 0.85 },
       portamento: 0.045,
-      volume: this.params.orbDb - 18,
+      volume: this.params.orbDb - 22,
     }).connect(shimmerGain);
 
     return {
@@ -961,8 +961,8 @@ export class HandSynthEngine {
       const depth = clamp(gesture.depth, 0, 1);
       const radial = clamp(gesture.radius, 0, 1);
       const pitchT = clamp(heightN * 0.42 + angleN * 0.24 + depth * 0.24 + speed * 0.10, 0, 1);
-      const noteIndex = pickNoteIndex(pitchT, orb.lastNoteIdx, ORB_GESTURE_NOTES.length);
-      const note = ORB_GESTURE_NOTES[noteIndex];
+      const noteIndex = pickNoteIndex(pitchT, orb.lastNoteIdx, JAM_ORB_GESTURE_NOTES.length);
+      const note = JAM_ORB_GESTURE_NOTES[noteIndex];
       const subNote = transposeInterval(note, -12);
       const shimmerNote = transposeInterval(note, speed > 0.62 ? 19 : 12);
 
@@ -991,23 +991,23 @@ export class HandSynthEngine {
         } catch { /* best-effort continuous retune */ }
       }
 
-      const fineBend = gesture.x * 18 + gesture.z * 9 + speed * 16;
+      const fineBend = gesture.x * 8 + gesture.z * 4 + speed * 6;
       try {
         orb.auraSynth.detune?.rampTo?.(fineBend, PARAM_RAMP);
         orb.subSynth.detune?.rampTo?.(fineBend * 0.35, PARAM_RAMP * 1.5);
         orb.shimmerSynth.detune?.rampTo?.(fineBend * 1.8, PARAM_RAMP);
       } catch { /* detune is optional on Tone nodes */ }
 
-      const aura = clamp(0.06 + depth * 0.38 + speed * 0.20 + gesture.intensity * 0.12, 0, 0.72);
-      const sub = clamp(depth * depth * 0.40 + (1 - radial) * 0.12, 0, 0.50);
-      const shimmer = clamp(speed * 0.36 + Math.max(0, gesture.y) * 0.10, 0, 0.46);
+      const aura = clamp(0.06 + depth * 0.34 + speed * 0.14 + gesture.intensity * 0.10, 0, 0.62);
+      const sub = clamp(depth * depth * 0.30 + (1 - radial) * 0.08, 0, 0.38);
+      const shimmer = clamp(speed * 0.24 + Math.max(0, gesture.y) * 0.08, 0, 0.34);
       orb.auraGain.gain.rampTo(aura, PARAM_RAMP);
       orb.subGain.gain.rampTo(sub, PARAM_RAMP * 1.4);
       orb.shimmerGain.gain.rampTo(shimmer, PARAM_RAMP);
 
-      const filterHz = 420 + depth * 1800 + speed * 5600 + heightN * 1200;
-      orb.filter.frequency.rampTo(clamp(filterHz, 240, 9200), PARAM_RAMP);
-      orb.filter.Q.rampTo(0.45 + depth * 1.1 + speed * 3.2, PARAM_RAMP);
+      const filterHz = 360 + depth * 1500 + speed * 4300 + heightN * 1050;
+      orb.filter.frequency.rampTo(clamp(filterHz, 220, 7800), PARAM_RAMP);
+      orb.filter.Q.rampTo(0.40 + depth * 0.75 + speed * 1.8, PARAM_RAMP);
       orb.panner.pan.rampTo(clamp((player === 'local' ? -0.10 : 0.10) + gesture.x * 0.36, -0.85, 0.85), PARAM_RAMP);
 
       const sparkGap = 0.16 - speed * 0.085;
@@ -1036,9 +1036,9 @@ export class HandSynthEngine {
     }
 
     // Wet send rises with energy — more reverb tail when actively playing.
-    const wet = clamp(0.24 + orb.energy * 0.58 + (gestureActive ? gesture.depth * 0.16 : 0), 0, 1);
+    const wet = clamp(0.30 + orb.energy * 0.52 + (gestureActive ? gesture.depth * 0.12 : 0), 0, 1);
     orb.wetSend.gain.rampTo(wet * this.params.reverbWetMax, PARAM_RAMP * 2);
-    orb.dryGain.gain.rampTo(0.95, PARAM_RAMP);
+    orb.dryGain.gain.rampTo(0.78, PARAM_RAMP);
   }
 
   private silenceOrb(player: PlayerKey): void {
@@ -1108,7 +1108,7 @@ export class HandSynthEngine {
     try {
       orb.fund.triggerAttackRelease(frequency, this.params.orbDecay, undefined, synthVel);
       if (harmonics > 0.02) {
-        orb.fifth.triggerAttackRelease(fifthHz, this.params.orbDecay * 0.7, undefined, synthVel * harmonics * 0.55);
+        orb.fifth.triggerAttackRelease(fifthHz, this.params.orbDecay * 0.7, undefined, synthVel * harmonics * 0.42);
       }
     } catch (err) {
       console.warn('[handSynth] orb trigger failed', err);
@@ -1202,7 +1202,7 @@ export class HandSynthEngine {
       return;
     }
 
-    const auraNote = STARLACE_NOTES[clamp(starlace.lastNoteIdx, 0, STARLACE_NOTES.length - 1)] ?? 'D4';
+    const auraNote = JAM_STARLACE_NOTES[clamp(starlace.lastNoteIdx, 0, JAM_STARLACE_NOTES.length - 1)] ?? 'D4';
     if (starlace.energy > 0.08) {
       if (!starlace.auraActive) {
         try {
@@ -1419,7 +1419,7 @@ export class HandSynthEngine {
     }
 
     const avgIdx = Math.round(((local.currentNoteIdx < 0 ? 0 : local.currentNoteIdx) + (remote.currentNoteIdx < 0 ? 0 : remote.currentNoteIdx)) * 0.5);
-    const note = DUET_NOTES[clamp(avgIdx, 0, DUET_NOTES.length - 1)];
+    const note = JAM_DUET_NOTES[clamp(avgIdx, 0, JAM_DUET_NOTES.length - 1)];
     if (!this.duetActive) {
       this.duetSynth.triggerAttack(note);
       this.duetNote = note;
@@ -1629,10 +1629,6 @@ function pickNoteIndex(yN: number, currentIdx: number, noteCount: number): numbe
     return Math.max(0, Math.floor(continuous));
   }
   return currentIdx;
-}
-
-function transposeOctaveDown(note: string): string {
-  return transposeInterval(note, -12);
 }
 
 function transposeInterval(note: string, semitones: number): string {

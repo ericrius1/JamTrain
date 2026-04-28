@@ -1,8 +1,7 @@
-/* TrainJam intro / "press start" screen — immersive full-bleed.
-   The lion painting fills the 1920×1014 stage and UI lives only on top +
-   bottom rails so the artwork is never covered. The outer wrap is a fixed
-   black frame; the inner stage scales to fit the viewport (letterboxed) so
-   the painting and rails always keep their designed proportions.
+/* TrainJam intro / "press start" screen.
+   Transparent overlay sitting on top of the live (but heavily dimmed) Three
+   scene. The 1920×1014 stage scales to fit the viewport (letterboxed) so the
+   title and conductor field always keep their designed proportions.
 
    Tokens (--sun, --brass, --leather, --parchment, --text-dim, --danger) are
    defined in src/hud/style.css. The intro relies on style.css being loaded
@@ -11,10 +10,11 @@
 .begin-gate {
   position: fixed;
   inset: 0;
-  background: #050607;
+  background: transparent;
   overflow: hidden;
   z-index: 100;
-  pointer-events: auto;
+  pointer-events: none;
+  transition: opacity 0.5s ease;
 }
 .begin-stage {
   position: absolute;
@@ -24,38 +24,38 @@
   height: 1014px;
   transform-origin: center center;
   transform: translate(-50%, -50%) scale(1);
-  background: #000;
-  overflow: hidden;
+  background: transparent;
+  overflow: visible;
   font-family: 'IM Fell English', Georgia, serif;
   color: var(--parchment);
-  box-shadow: 0 30px 120px rgba(0, 0, 0, 0.6);
 }
 
-.begin-lion {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  animation: beginParallax 18s ease-in-out infinite alternate;
-  user-select: none;
-  -webkit-user-drag: none;
-}
-
+/* Soft, low-opacity vignette — just enough to anchor the UI without painting
+   over the scene behind. The center stays clear so the central sculpture /
+   sky show through. */
 .begin-vignette {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background: radial-gradient(ellipse 75% 60% at 60% 50%, transparent 50%, rgba(0, 0, 0, 0.55) 100%);
+  background: radial-gradient(ellipse 80% 65% at 50% 52%, transparent 55%, rgba(0, 0, 0, 0.45) 100%);
 }
 .begin-top-fade {
   position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: 220px;
+  height: 320px;
   pointer-events: none;
-  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.62) 0%, rgba(0, 0, 0, 0) 100%);
+}
+.begin-bottom-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 280px;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 100%);
 }
 
 /* Top rail — sparse meta on either side. The headphones message has moved
@@ -139,8 +139,9 @@
   letter-spacing: 0.01em;
   margin-top: 6px;
   text-shadow:
-    0 2px 0 rgba(0, 0, 0, 0.6),
-    0 0 50px rgba(246, 179, 51, 0.35);
+    0 2px 0 rgba(0, 0, 0, 0.7),
+    0 0 32px rgba(0, 0, 0, 0.85),
+    0 0 70px rgba(246, 179, 51, 0.45);
 }
 .begin-title-block .begin-headphones-pill {
   margin-top: 22px;
@@ -288,10 +289,18 @@
   animation-iteration-count: infinite;
 }
 
-@keyframes beginParallax {
-  0%   { transform: scale(1.04) translate(0, 0); }
-  100% { transform: scale(1.06) translate(-12px, -6px); }
+.begin-gate.fade-out { opacity: 0; }
+
+/* Re-arm pointer events on actual UI controls — the gate root is
+   `pointer-events: none` so the live scene behind keeps reacting to (future)
+   pointer interactions, but the conductor input + buttons must remain
+   clickable. */
+.begin-conductor-input,
+.begin-reroll,
+.begin-start {
+  pointer-events: auto;
 }
+
 @keyframes beginFadeUp {
   from { opacity: 0; transform: translateY(18px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -318,6 +327,5 @@
     opacity: 1;
     transform: none;
   }
-  .begin-lion { animation: none; }
   .begin-ember { animation: none; opacity: 0; }
 }
