@@ -28,11 +28,12 @@ import {
   lorenzFlow,
   thomasFlow,
   type AttractorKind,
+  type AttractorPreset,
 } from './sculptor/strangeAttractors';
 
 export const SCULPTOR_DEFS = {
   particleCount:        { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
-  particleSize:         { default: 0.022, min: 0.004, max: 0.08, step: 0.001, label: 'particle size' },
+  particleSize:         { default: 0.005, min: 0.001, max: 0.03, step: 0.001, label: 'particle size' },
   particleOpacity:      { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
   flowSpeed:            { default: 1.0,   min: 0.1,   max: 3,    step: 0.05, label: 'flow speed' },
   velocityBlend:        { default: 0.92,  min: 0.4,   max: 1,    step: 0.005, label: 'velocity smoothing' },
@@ -41,7 +42,7 @@ export const SCULPTOR_DEFS = {
   containmentStrength:  { default: 6.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
   lifeSeconds:          { default: 60,    min: 4,    max: 240,  step: 0.5, label: 'life seconds' },
   fadeFraction:         { default: 0.25,  min: 0.05, max: 0.6,  step: 0.01, label: 'fade fraction' },
-  settleAmount:         { default: 0.85,  min: 0,    max: 1,    step: 0.01, label: 'settle amount' },
+  settleAmount:         { default: 1.0,   min: 0,    max: 1,    step: 0.01, label: 'settle amount' },
   settleStart:          { default: 0.5,   min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
   fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
   fieldBreathAmount:    { default: 0.15,  min: 0,    max: 0.5,  step: 0.01, label: 'field breath' },
@@ -174,6 +175,37 @@ export class EnergySculptor implements EnergySink {
   private aizawaF = uniform(0.1);
   private halvorsenA = uniform(1.4);
 
+  // Base values for parameter breathing. The active uniforms above oscillate
+  // around these by ±fieldBreathAmount on slow independent periods.
+  private thomasABase = 0.19;
+  private lorenzRhoBase = 28;
+  private aizawaABase = 0.95;
+  private halvorsenABase = 1.4;
+  private fieldRotationRate = 1.0;
+  private fieldBreathAmount = 0.15;
+
+  // Age-based settling uniforms — older particles freeze into sediment.
+  private settleAmountUniform = uniform(0.85);
+  private settleStartUniform = uniform(0.5);
+
+  // Sample-space rotation — slowly tumbles the attractor through world space
+  // so the orbit isn't static. Shader does R^-1 * p before sampling, R * flow
+  // afterwards, so particle motion follows the rotated frame consistently.
+  private sampleRotUniform = uniform(new THREE.Matrix3());
+  private sampleRotInvUniform = uniform(new THREE.Matrix3());
+  private sampleRotScratchEuler = new THREE.Euler();
+  private sampleRotScratchMat4 = new THREE.Matrix4();
+
+  // Attractor crossfade — during an archetype change, the shader evaluates
+  // both the current and target flow fields and lerps between them. Preset
+  // values (worldScale, containmentRadius, ...) are also lerped on CPU.
+  private attractorTargetUniform = uniform(1);
+  private crossfadeWeightUniform = uniform(0);
+  private crossfadeRemaining = 0;
+  private static readonly CROSSFADE_DURATION = 6;
+  private fromPreset = ATTRACTOR_PRESETS.aizawa;
+  private toPreset = ATTRACTOR_PRESETS.aizawa;
+
   // Compute passes (ComputeNode produced by Fn(...)().compute(N)).
   private emitCompute!: THREE.ComputeNode;
   private integrateCompute!: THREE.ComputeNode;
@@ -186,6 +218,7 @@ export class EnergySculptor implements EnergySink {
   private dissolveMode = 0;
   private synchronyBoost = 0;
   private synchronyRingAge = 1;
+  private elapsed = 0;
 
   // Decorative scene elements.
   private synchronyRing?: THREE.Mesh;
@@ -229,6 +262,10 @@ export class EnergySculptor implements EnergySink {
     this.duetBoostUniform.value = this.params.duetBoost;
     this.speedGlowUniform.value = this.params.speedGlow;
     this.stretchScaleUniform.value = this.params.stretchScale;
+    this.settleAmountUniform.value = this.params.settleAmount;
+    this.settleStartUniform.value = this.params.settleStart;
+    this.fieldRotationRate = this.params.fieldRotationRate;
+    this.fieldBreathAmount = this.params.fieldBreathAmount;
 
     this.registered = registerTweaks(paneDock, 'energySculptor', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
@@ -250,6 +287,10 @@ export class EnergySculptor implements EnergySink {
         containmentStrength: v => { this.containmentStrengthUniform.value = v; },
         lifeSeconds: v => { this.lifeMaxUniform.value = v; },
         fadeFraction: v => { this.fadeFractionUniform.value = v; },
+        settleAmount: v => { this.settleAmountUniform.value = v; },
+        settleStart: v => { this.settleStartUniform.value = v; },
+        fieldRotationRate: v => { this.fieldRotationRate = v; },
+        fieldBreathAmount: v => { this.fieldBreathAmount = v; },
         dissolveBurstSpeed: v => { this.dissolveBurstUniform.value = v; },
         duetBoost: v => { this.duetBoostUniform.value = v; },
       },
@@ -269,7 +310,7 @@ export class EnergySculptor implements EnergySink {
     const next = ARCHETYPE_TO_ATTRACTOR[id];
     if (next !== this.currentAttractor) {
       this.currentAttractor = next;
-      this.applyAttractorPreset(next);
+      this.beginAttractorCrossfade(next);
     }
   }
 
@@ -311,6 +352,7 @@ export class EnergySculptor implements EnergySink {
     if (delta <= 0) return;
     const dt = Math.min(delta, 1 / 30);
     this.dtUniform.value = dt;
+    this.elapsed += delta;
 
     // Music + synchrony decay.
     this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
@@ -321,6 +363,9 @@ export class EnergySculptor implements EnergySink {
     this.grooveUniform.value = this.musicField.groovePhase * TAU;
     this.tickSynchronyRing(delta);
     this.updateProjectorRing();
+    this.tickSampleRotation();
+    this.tickFieldBreath();
+    this.tickAttractorCrossfade(delta);
 
     // Drain CPU emit queue into the spawn uniformArrays.
     this.fillSpawnQueue();
@@ -400,6 +445,34 @@ export class EnergySculptor implements EnergySink {
     });
     this.emitCompute = emitFn().compute(MAX_SPAWNS_PER_FRAME);
 
+    // Helper: branch over the attractor index uniform and assign the matching
+    // flow vector. Used twice — once for the current attractor and once for
+    // the crossfade target — so we can lerp between two fields smoothly.
+    const sampleFlow = (sel: any, samplePos: any) => {
+      const out = vec3(0).toVar();
+      If(sel.lessThan(0.5), () => {
+        out.assign(thomasFlow(samplePos, this.thomasA));
+      });
+      If(sel.greaterThanEqual(0.5).and(sel.lessThan(1.5)), () => {
+        out.assign(lorenzFlow(samplePos, this.lorenzSigma, this.lorenzRho, this.lorenzBeta));
+      });
+      If(sel.greaterThanEqual(1.5).and(sel.lessThan(2.5)), () => {
+        out.assign(aizawaFlow(
+          samplePos,
+          this.aizawaA,
+          this.aizawaB,
+          this.aizawaC,
+          this.aizawaD,
+          this.aizawaE,
+          this.aizawaF,
+        ));
+      });
+      If(sel.greaterThanEqual(2.5), () => {
+        out.assign(halvorsenFlow(samplePos, this.halvorsenA));
+      });
+      return out;
+    };
+
     // Integrate pass: per-particle attractor flow + life update.
     const integrateFn = Fn(() => {
       const i = instanceIndex;
@@ -415,30 +488,15 @@ export class EnergySculptor implements EnergySink {
       // Used by the renderer to stretch / squish the sprite along travel.
       const oldSpeed = vel.length().toVar();
 
-      // Compute candidate flow from each attractor; select via uniform branch.
-      const flow = vec3(0).toVar();
-
-      const sel = this.attractorSelectUniform;
-      If(sel.lessThan(0.5), () => {
-        flow.assign(thomasFlow(pos, this.thomasA));
-      });
-      If(sel.greaterThanEqual(0.5).and(sel.lessThan(1.5)), () => {
-        flow.assign(lorenzFlow(pos, this.lorenzSigma, this.lorenzRho, this.lorenzBeta));
-      });
-      If(sel.greaterThanEqual(1.5).and(sel.lessThan(2.5)), () => {
-        flow.assign(aizawaFlow(
-          pos,
-          this.aizawaA,
-          this.aizawaB,
-          this.aizawaC,
-          this.aizawaD,
-          this.aizawaE,
-          this.aizawaF,
-        ));
-      });
-      If(sel.greaterThanEqual(2.5), () => {
-        flow.assign(halvorsenFlow(pos, this.halvorsenA));
-      });
+      // Sample the attractor in a slowly-rotating frame: unrotate the position
+      // (R^-1 * p), evaluate the flow there, then rotate the flow back into
+      // particle space (R * f). The orbits stay structurally intact but tumble
+      // through world space, giving a "moving through a meta-realm" feel.
+      const samplePos = this.sampleRotInvUniform.mul(pos);
+      const flowA = sampleFlow(this.attractorSelectUniform, samplePos);
+      const flowB = sampleFlow(this.attractorTargetUniform, samplePos);
+      const sampledFlow = mix(flowA, flowB, this.crossfadeWeightUniform);
+      const flow = this.sampleRotUniform.mul(sampledFlow);
 
       // Music modulation: pulse boosts flow speed; sustained adds gentle swirl.
       const musicGain = float(1)
@@ -447,35 +505,55 @@ export class EnergySculptor implements EnergySink {
       const synchronyGain = float(1).add(this.synchronyBoostUniform.mul(this.duetBoostUniform));
       const speedGain = this.flowSpeedUniform.mul(musicGain).mul(synchronyGain);
 
+      // Age fraction (0 born → 1 dead).
+      const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
+
+      // Settling. Three things have to happen for a particle to actually
+      // freeze in place rather than drift toward an attractor fixed point:
+      //   (1) targetVel damped — so the inertial blend stops pulling toward
+      //       residual flow (which converges to the attractor's equilibria),
+      //   (2) containment damped — so particles near the safe-radius edge
+      //       aren't yanked inward by a velocity-magnitude push every frame,
+      //   (3) position step damped — so the rotating field can't re-aim a
+      //       low-but-nonzero velocity at a new direction each frame.
+      // Without (2) and (3) the sediment all collapses into the same handful
+      // of fixed-point clusters even though velocity goes near-zero.
+      const fadeStart = float(1).sub(this.fadeFractionUniform);
+      const settleT = smoothstep(this.settleStartUniform, fadeStart, lifeT);
+      const settleStop = float(1).sub(settleT.mul(this.settleAmountUniform));
+
       // Smoothly blend velocity toward flow so trajectories feel inertial
       // rather than instantaneously snapping to dp/dt.
-      const targetVel = flow.mul(speedGain);
+      const targetVel = flow.mul(speedGain).mul(settleStop);
       const newVel = mix(targetVel, vel, this.velocityBlendUniform).toVar();
 
       // Soft containment: when a particle drifts past the safe radius for
-      // this attractor, push it back so we don't accumulate runaways.
+      // this attractor, push it back so we don't accumulate runaways. Gated
+      // by settleStop so settled particles aren't dragged off their resting
+      // positions, but active particles still stay bounded.
       const r = pos.length();
       const overshoot = smoothstep(this.containmentRadiusUniform.mul(0.85), this.containmentRadiusUniform, r);
       const inward = pos.normalize().negate().mul(overshoot).mul(this.containmentStrengthUniform);
-      newVel.addAssign(inward);
+      newVel.addAssign(inward.mul(settleStop));
 
       // Dissolve burst: blow particles outward away from origin and shorten life.
       const dm = this.dissolveModeUniform;
       const outward = pos.normalize().mul(this.dissolveBurstUniform);
       newVel.assign(mix(newVel, outward, dm));
 
-      // Step.
-      const newPos = pos.add(newVel.mul(this.dtUniform));
+      // Step. Position update scaled by settleStop so settled particles truly
+      // freeze; dissolve overrides settling so the burst can still throw them.
+      const moveScale = mix(settleStop, float(1), dm);
+      const newPos = pos.add(newVel.mul(this.dtUniform).mul(moveScale));
 
       // Age + alpha.
       const ageStep = this.dtUniform.mul(float(1).add(dm.mul(2.0)));
       const newAge = m.x.add(ageStep);
       const lifeMax = m.y;
-      const lifeT = newAge.div(lifeMax.max(0.0001)).clamp(0, 1);
+      const newLifeT = newAge.div(lifeMax.max(0.0001)).clamp(0, 1);
       // Linear fade-in over 0.15s (born), linear fade-out over fadeFraction of life
       const born = newAge.div(0.15).clamp(0, 1);
-      const fadeStart = float(1).sub(this.fadeFractionUniform);
-      const fadeOut = float(1).sub(smoothstep(fadeStart, 1.0, lifeT));
+      const fadeOut = float(1).sub(smoothstep(fadeStart, 1.0, newLifeT));
       const alphaLife = born.mul(fadeOut);
 
       // Signed acceleration along the path, low-passed across frames so the
@@ -630,6 +708,71 @@ export class EnergySculptor implements EnergySink {
     this.projectorRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.12 + build * 0.18;
   }
 
+  // Mutually irrational base periods (in seconds) for the three Euler axes.
+  // Picked so the rotation never repeats — the sampling frame just keeps
+  // wandering through new orientations.
+  private static readonly ROT_PERIOD_X = 120;
+  private static readonly ROT_PERIOD_Y = 187;
+  private static readonly ROT_PERIOD_Z = 251;
+
+  private tickSampleRotation(): void {
+    const rate = this.fieldRotationRate;
+    const t = this.elapsed * rate;
+    const yaw = (t / EnergySculptor.ROT_PERIOD_X) * TAU;
+    const pitch = (t / EnergySculptor.ROT_PERIOD_Y) * TAU;
+    const roll = (t / EnergySculptor.ROT_PERIOD_Z) * TAU;
+    this.sampleRotScratchEuler.set(yaw, pitch, roll, 'XYZ');
+    this.sampleRotScratchMat4.makeRotationFromEuler(this.sampleRotScratchEuler);
+    this.sampleRotUniform.value.setFromMatrix4(this.sampleRotScratchMat4);
+    // Rotation matrices are orthogonal → inverse is the transpose. Cheaper
+    // than calling .invert() and avoids the determinant check.
+    this.sampleRotInvUniform.value.copy(this.sampleRotUniform.value).transpose();
+  }
+
+  // Slow ±fieldBreathAmount oscillation of each attractor's most shape-defining
+  // parameter, on independent slow periods so the orbit's structure morphs as
+  // the music plays. Zero shader cost — just CPU-side uniform writes.
+  private tickFieldBreath(): void {
+    const amount = this.fieldBreathAmount;
+    if (amount <= 0) {
+      this.thomasA.value = this.thomasABase;
+      this.lorenzRho.value = this.lorenzRhoBase;
+      this.aizawaA.value = this.aizawaABase;
+      this.halvorsenA.value = this.halvorsenABase;
+      return;
+    }
+    const t = this.elapsed;
+    this.thomasA.value = this.thomasABase * (1 + amount * Math.sin((t / 47) * TAU));
+    this.lorenzRho.value = this.lorenzRhoBase * (1 + amount * Math.sin((t / 53) * TAU + 1.7));
+    this.aizawaA.value = this.aizawaABase * (1 + amount * Math.sin((t / 41) * TAU + 0.9));
+    this.halvorsenA.value = this.halvorsenABase * (1 + amount * Math.sin((t / 59) * TAU + 2.4));
+  }
+
+  private tickAttractorCrossfade(delta: number): void {
+    if (this.crossfadeRemaining <= 0) return;
+    this.crossfadeRemaining = Math.max(0, this.crossfadeRemaining - delta);
+    const dur = EnergySculptor.CROSSFADE_DURATION;
+    const t = 1 - this.crossfadeRemaining / dur;
+    const eased = t * t * (3 - 2 * t); // smoothstep
+    this.crossfadeWeightUniform.value = eased;
+    const from = this.fromPreset;
+    const to = this.toPreset;
+    this.worldScaleUniform.value = lerp(from.worldScale, to.worldScale, eased);
+    this.containmentRadiusUniform.value = lerp(from.containmentRadius, to.containmentRadius, eased);
+    this.velocityBlendUniform.value = Math.min(
+      this.params.velocityBlend,
+      lerp(from.velocityBlend, to.velocityBlend, eased),
+    );
+    this.flowSpeedUniform.value = this.params.flowSpeed * lerp(from.dt, to.dt, eased);
+    if (this.crossfadeRemaining === 0) {
+      // Snap select to the new attractor and reset the weight so any future
+      // crossfade starts from a clean lerp(flowA, flowB, 0) state.
+      this.attractorSelectUniform.value = this.attractorTargetUniform.value;
+      this.crossfadeWeightUniform.value = 0;
+      this.fromPreset = this.toPreset;
+    }
+  }
+
   private tickSynchronyRing(delta: number): void {
     if (!this.synchronyRing || !this.synchronyRingMaterial) return;
     this.synchronyRingAge += delta;
@@ -696,17 +839,56 @@ export class EnergySculptor implements EnergySink {
     this.spawnCursorCpu = (this.spawnCursorCpu + cursor) % this.count;
   }
 
+  private static readonly ATTRACTOR_INDEX: Record<AttractorKind, number> = {
+    thomas: 0,
+    lorenz: 1,
+    aizawa: 2,
+    halvorsen: 3,
+  };
+
+  // Snap to a preset instantly. Used at construction; runtime archetype
+  // changes go through beginAttractorCrossfade so the field morphs smoothly.
   private applyAttractorPreset(kind: AttractorKind): void {
     const preset = ATTRACTOR_PRESETS[kind];
     this.worldScaleUniform.value = preset.worldScale;
     this.containmentRadiusUniform.value = preset.containmentRadius;
     this.velocityBlendUniform.value = Math.min(this.params.velocityBlend, preset.velocityBlend);
     this.flowSpeedUniform.value = this.params.flowSpeed * preset.dt;
-    const kindIdx: Record<AttractorKind, number> = { thomas: 0, lorenz: 1, aizawa: 2, halvorsen: 3 };
-    this.attractorSelectUniform.value = kindIdx[kind];
+    const idx = EnergySculptor.ATTRACTOR_INDEX[kind];
+    this.attractorSelectUniform.value = idx;
+    this.attractorTargetUniform.value = idx;
+    this.crossfadeWeightUniform.value = 0;
+    this.fromPreset = preset;
+    this.toPreset = preset;
+    this.crossfadeRemaining = 0;
+  }
+
+  private beginAttractorCrossfade(kind: AttractorKind): void {
+    // Snapshot the currently-displayed preset (which may itself be mid-lerp)
+    // so the next crossfade starts from where we visually are. The target's
+    // index goes into attractorTargetUniform; the shader then evaluates both
+    // flows and lerps as crossfadeWeightUniform climbs from 0→1.
+    const captured: AttractorPreset = {
+      kind: this.fromPreset.kind,
+      worldScale: this.worldScaleUniform.value,
+      containmentRadius: this.containmentRadiusUniform.value,
+      velocityBlend: this.velocityBlendUniform.value,
+      // Recover the preset's dt by undoing the params.flowSpeed scaling.
+      dt: this.flowSpeedUniform.value / Math.max(0.0001, this.params.flowSpeed),
+    };
+    this.fromPreset = captured;
+    this.toPreset = ATTRACTOR_PRESETS[kind];
+    this.attractorSelectUniform.value = EnergySculptor.ATTRACTOR_INDEX[captured.kind];
+    this.attractorTargetUniform.value = EnergySculptor.ATTRACTOR_INDEX[kind];
+    this.crossfadeWeightUniform.value = 0;
+    this.crossfadeRemaining = EnergySculptor.CROSSFADE_DURATION;
   }
 }
 
 function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }

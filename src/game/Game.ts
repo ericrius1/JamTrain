@@ -4,6 +4,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { JamAudioGraph } from './audioGraph';
 import { AudioEngine } from './audio';
 import { attachHandDepthPane } from './handDepth';
+import { attachCreatureLightPane, creatureLightConfig } from './creatureShading';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
 import { clamp } from './math';
@@ -13,8 +14,8 @@ import { Starlace } from './visuals/Starlace';
 import { RoundDirector } from './RoundDirector';
 import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
-import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
-import { isInstrumentId, normalizeInstrumentId } from './instruments';
+import type { HandContactPoint, InstrumentId, PlayerVisual, VoiceState } from './instruments';
+import { INSTRUMENTS, isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
 import { makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
@@ -174,6 +175,19 @@ export class Game {
   private readonly localRightPalm = new THREE.Vector3();
   private readonly remoteLeftPalm = new THREE.Vector3();
   private readonly remoteRightPalm = new THREE.Vector3();
+  private readonly instrumentLightPos: Record<PlayerSlot, THREE.Vector3> = {
+    local: new THREE.Vector3(),
+    remote: new THREE.Vector3(),
+  };
+  private readonly instrumentLightColor: Record<PlayerSlot, THREE.Color> = {
+    local: new THREE.Color('#000000'),
+    remote: new THREE.Color('#000000'),
+  };
+  private readonly instrumentLightTarget: Record<PlayerSlot, THREE.Color> = {
+    local: new THREE.Color(INSTRUMENTS.drum.color),
+    remote: new THREE.Color(INSTRUMENTS.starlace.color),
+  };
+  private instrumentLightIntensity: Record<PlayerSlot, number> = { local: 0, remote: 0 };
   private readonly ambientBaseColor = new THREE.Color(0x3f2a1d);
   private readonly ambientDayColor = new THREE.Color(0xffc37a);
   private readonly ambientUnderwaterColor = new THREE.Color(0x2ac9d3);
@@ -285,6 +299,7 @@ export class Game {
     this.setupPlayersPane();
     this.handTracker.attachPane(this.paneDock);
     attachHandDepthPane(this.paneDock);
+    attachCreatureLightPane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
     window.addEventListener('blur', this.handleVisibilityChange);
@@ -1130,6 +1145,42 @@ export class Game {
 
     this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta, localContacts);
     this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta, remoteContacts);
+
+    this.updateInstrumentLight('local', this.localRig, localLeft, localRight, localVoice, delta);
+    this.updateInstrumentLight('remote', this.remoteRig, remoteLeft, remoteRight, remoteVoice, delta);
+  }
+
+  private updateInstrumentLight(
+    slot: PlayerSlot,
+    rig: HumanoidRig,
+    leftPalm: THREE.Vector3,
+    rightPalm: THREE.Vector3,
+    voice: VoiceState,
+    delta: number,
+  ): void {
+    const cfg = creatureLightConfig;
+
+    // Anchor: midpoint between the player's two palms — a stable proxy for
+    // where the instrument is being played from. Single-light start; can split
+    // into per-hand lights later if drum/starlace want different feels.
+    const pos = this.instrumentLightPos[slot];
+    pos.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
+
+    // Target color tracks the active instrument so swaps fade through.
+    const target = this.instrumentLightTarget[slot];
+    target.set(INSTRUMENTS[this.playerInstruments[slot]].color);
+    const colorAlpha = 1 - Math.exp(-delta * Math.max(cfg.smoothing, 0.001));
+    this.instrumentLightColor[slot].lerp(target, colorAlpha);
+
+    // Intensity blends sustained energy with attack pulse, then eases.
+    const targetIntensity = Math.min(
+      cfg.intensityMax,
+      voice.energy * cfg.energyScale + voice.pulse * cfg.pulseScale,
+    );
+    const intensityAlpha = 1 - Math.exp(-delta * Math.max(cfg.smoothing, 0.001));
+    this.instrumentLightIntensity[slot] += (targetIntensity - this.instrumentLightIntensity[slot]) * intensityAlpha;
+
+    rig.setInstrumentLight(pos, this.instrumentLightColor[slot], this.instrumentLightIntensity[slot], cfg.radius);
   }
 
   private updateVisualContacts(
