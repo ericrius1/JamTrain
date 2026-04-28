@@ -1,8 +1,8 @@
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 
 export const ROUND_DEFS = {
-  roundDuration:    { default: 30,   min: 10,  max: 120, step: 1,   label: 'round seconds' },
-  dissolveDuration: { default: 1.5,  min: 0.5, max: 4,   step: 0.1, label: 'dissolve seconds' },
+  roundDuration:    { default: 30,   min: 5,   max: 300, step: 1,   label: 'shape build seconds' },
+  dissolveDuration: { default: 1.5,  min: 0.5, max: 4,   step: 0.1, label: 'dissolve seconds', hidden: true },
 } as const;
 
 export type RoundParams = ParamsOf<typeof ROUND_DEFS>;
@@ -56,11 +56,6 @@ export class RoundDirector {
     this.inState += delta;
     if (this.state === 'playing') {
       this.roundElapsed += delta;
-      if (this.roundElapsed >= this.params.roundDuration) {
-        this.state = 'dissolving';
-        this.inState = 0;
-        for (const l of this.dissolvingStartListeners) l();
-      }
     } else if (this.state === 'dissolving') {
       this.roundElapsed += delta;
       if (this.inState >= this.params.dissolveDuration) {
@@ -77,7 +72,7 @@ export class RoundDirector {
 
   snapshot(): RoundSnapshot {
     const progress = this.state === 'playing'
-      ? Math.min(1, this.roundElapsed / Math.max(0.001, this.params.roundDuration))
+      ? this.roundElapsed / Math.max(0.001, this.params.roundDuration)
       : (this.state === 'dissolving' ? 1 : 0);
     return {
       state: this.state,

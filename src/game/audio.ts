@@ -388,6 +388,16 @@ export class AudioEngine {
     return this.params.muteDrums ? 0 : Math.pow(bell, 1.4);
   }
 
+  getChordProgress(): number {
+    return this.running ? clamp(this.chordPhase / Math.max(0.001, this.params.chordCycleSeconds), 0, 1) : 0;
+  }
+
+  getGroovePhase(): number {
+    if (!this.running) return 0;
+    const beats = this.elapsed * Math.max(1, this.params.drumBpm) / 60;
+    return beats - Math.floor(beats);
+  }
+
   // Backing slider (bed + drums). Independent from the player synth's mix
   // slider — that lives on HandSynthEngine.
   setMasterGain(value: number): void {

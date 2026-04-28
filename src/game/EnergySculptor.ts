@@ -13,19 +13,42 @@ const ARCHETYPES: Record<ArchetypeId, Archetype> = {
 };
 
 export const SCULPTOR_DEFS = {
-  particlePoolSize:     { default: 12288, min: 4096, max: 24576, step: 256, label: 'particle pool', hidden: true },
-  attractorStrength:    { default: 1.5,   min: 0,    max: 4,    step: 0.05, label: 'attractor strength' },
-  particleSize:         { default: 0.007, min: 0.001, max: 0.02, step: 0.001, label: 'particle size' },
-  velocityDamping:      { default: 0.985, min: 0.9,  max: 1,    step: 0.001, label: 'velocity damping' },
-  crossCurrentStrength: { default: 0.55,  min: 0,    max: 2,    step: 0.01, label: 'cross-current' },
+  particlePoolSize:     { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
+  attractorStrength:    { default: 3.1,   min: 0,    max: 8,    step: 0.05, label: 'attractor strength' },
+  particleSize:         { default: 0.005, min: 0.001, max: 0.02, step: 0.001, label: 'particle size' },
+  particleOpacity:      { default: 0.54,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
+  filamentOpacity:      { default: 0.26,  min: 0,     max: 0.8,  step: 0.01,  label: 'filament opacity' },
+  filamentLength:       { default: 0.070, min: 0,     max: 0.24, step: 0.002, label: 'filament length' },
+  filamentDensity:      { default: 0.66,  min: 0,     max: 1,    step: 0.01,  label: 'filament density' },
+  velocityDamping:      { default: 0.972, min: 0.9,  max: 1,    step: 0.001, label: 'velocity damping' },
+  crossCurrentStrength: { default: 0.8,   min: 0,    max: 2,    step: 0.01, label: 'cross-current' },
+  memorySeconds:        { default: 200,   min: 10,   max: 600,  step: 1,    label: 'memory seconds' },
+  fadeSeconds:          { default: 18,    min: 2,    max: 90,   step: 1,    label: 'fade seconds' },
+  settleDistance:       { default: 0.035, min: 0.01, max: 0.2,  step: 0.001, label: 'settle distance', hidden: true },
+  settledRadius:        { default: 0.055, min: 0.005, max: 0.18, step: 0.001, label: 'settled radius' },
+  settledMotion:        { default: 0.72,  min: 0,     max: 2.0,  step: 0.01,  label: 'settled motion' },
+  fieldStrength:        { default: 0.42,  min: 0,    max: 1.5,  step: 0.01, label: 'attractor field' },
   duetBonusGain:        { default: 1.2,   min: 0,    max: 2,    step: 0.05, label: 'duet bonus gain' },
   dissolveBurstSpeed:   { default: 3,     min: 0,    max: 8,    step: 0.1,  label: 'dissolve burst' },
-  timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'timer ring radius' },
+  timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'projector base radius' },
+  projectorRingCount:   { default: 3,     min: 1,    max: 5,    step: 1,    label: 'projector ring count' },
+  projectorRingSpacing: { default: 0.055, min: 0.01, max: 0.25, step: 0.005, label: 'projector ring spacing' },
+  projectorRingScale:   { default: 0.74,  min: 0.4,  max: 1.0,  step: 0.01, label: 'projector ring scale' },
+  projectorBaseY:       { default: -0.27, min: -0.6, max: 0.3,  step: 0.01, label: 'projector base height' },
   synchronyRingColor:   { type: 'color', default: '#fff5d6', label: 'synchrony ring' },
-  timerRingColor:       { type: 'color', default: '#ffd166', label: 'timer ring' },
+  timerRingColor:       { type: 'color', default: '#ffd166', label: 'projector rings' },
 } as const;
 
 export type SculptorParams = ParamsOf<typeof SCULPTOR_DEFS>;
+
+export type SculptorMusicField = {
+  pulse: number;
+  drumLevel: number;
+  sustained: number;
+  intensity: number;
+  chordProgress: number;
+  groovePhase: number;
+};
 
 const TMP_VEC = new THREE.Vector3();
 const TMP_VEC_2 = new THREE.Vector3();
@@ -33,11 +56,21 @@ const TMP_MATRIX = new THREE.Matrix4();
 const TMP_QUAT = new THREE.Quaternion();
 const TMP_SCALE = new THREE.Vector3();
 const ZERO_SCALE = new THREE.Vector3(0, 0, 0);
+const TAU = Math.PI * 2;
+const DEFAULT_MUSIC_FIELD: SculptorMusicField = {
+  pulse: 0,
+  drumLevel: 0,
+  sustained: 0,
+  intensity: 0,
+  chordProgress: 0,
+  groovePhase: 0,
+};
 
 /**
  * Particle-built sound sculpture at the center of the scene. Particles emitted
- * from the instruments stream toward `center`, get pulled by an attractor (a
- * single point for now; archetype-driven targets land in Task 5), and age out.
+ * from the instruments stream toward `center`, get pulled through archetype
+ * attractor fields, settle into the shared form, and only start aging out after
+ * the memory window has passed.
  *
  * Integration runs CPU-side over the pool each frame; rendering uses a single
  * InstancedMesh with per-instance positions/colors written each frame. We can
@@ -49,6 +82,10 @@ export class EnergySculptor implements EnergySink {
   readonly params: SculptorParams;
 
   private mesh!: THREE.InstancedMesh;
+  private material!: THREE.MeshBasicMaterial;
+  private filamentGeometry!: THREE.BufferGeometry;
+  private filamentMaterial!: THREE.LineBasicMaterial;
+  private filamentLine!: THREE.LineSegments;
   private size: number;
 
   // Per-particle CPU state. Length = size for scalars, size * 3 for vec3s.
@@ -56,8 +93,14 @@ export class EnergySculptor implements EnergySink {
   private velocities: Float32Array;
   private targets: Float32Array;
   private colors: Float32Array;
+  private baseColors: Float32Array;
   private lifeCurrent: Float32Array;
   private lifeMax: Float32Array;
+  private particleAges: Float32Array;
+  private settledAges: Float32Array;
+  private sizeScales: Float32Array;
+  private filamentPositions: Float32Array;
+  private filamentColors: Float32Array;
   private freeList: number[];
 
   // GPU instance color attribute.
@@ -67,6 +110,7 @@ export class EnergySculptor implements EnergySink {
   private registered?: ReturnType<typeof registerTweaks<typeof SCULPTOR_DEFS>>;
   private currentArchetype: Archetype = drumMelody;
   private roundProgress = 0;
+  private musicField: SculptorMusicField = { ...DEFAULT_MUSIC_FIELD };
   private static SHAPE_TMP = new THREE.Vector3();
   private static FLOW_TMP = new THREE.Vector3();
   private static GRID_TMP = new THREE.Vector3();
@@ -102,21 +146,27 @@ export class EnergySculptor implements EnergySink {
     this.velocities = new Float32Array(this.size * 3);
     this.targets = new Float32Array(this.size * 3);
     this.colors = new Float32Array(this.size * 3);
+    this.baseColors = new Float32Array(this.size * 3);
     this.lifeCurrent = new Float32Array(this.size);
     this.lifeMax = new Float32Array(this.size);
+    this.particleAges = new Float32Array(this.size);
+    this.settledAges = new Float32Array(this.size);
+    this.sizeScales = new Float32Array(this.size);
     this.kinds = new Uint8Array(this.size);
+    this.settledAges.fill(-1);
     this.freeList = [];
     for (let i = this.size - 1; i >= 0; i -= 1) this.freeList.push(i);
 
     const geometry = new THREE.SphereGeometry(1, 5, 4);
-    const material = new THREE.MeshBasicMaterial({
+    this.material = new THREE.MeshBasicMaterial({
       transparent: true,
+      opacity: this.params.particleOpacity,
       depthWrite: false,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       // Per-instance color comes through InstancedMesh.setColorAt.
     });
 
-    this.mesh = new THREE.InstancedMesh(geometry, material, this.size);
+    this.mesh = new THREE.InstancedMesh(geometry, this.material, this.size);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 32;
     this.mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -151,8 +201,8 @@ export class EnergySculptor implements EnergySink {
     this.synchronyRing.renderOrder = 33;
     scene.add(this.synchronyRing);
 
-    // In-world round timer ring — a Line that draws an arc from 0 to
-    // progress*TAU each frame using setDrawRange.
+    // In-world halo ring. It used to be a countdown, but the sculpture now
+    // keeps accruing; this stays as a quiet reference circle at the center.
     this.timerRingPositions = new Float32Array((EnergySculptor.TIMER_SEGMENTS + 1) * 3);
     const timerGeom = new THREE.BufferGeometry();
     timerGeom.setAttribute('position', new THREE.BufferAttribute(this.timerRingPositions, 3));
@@ -177,6 +227,7 @@ export class EnergySculptor implements EnergySink {
         synchronyRingColor: v => this.synchronyRingMaterial?.color.set(v),
         timerRingColor: v => this.timerRingMaterial?.color.set(v),
         timerRingRadius: () => this.refreshTimerRingGeometry(),
+        particleOpacity: v => { this.material.opacity = v; },
       },
     });
   }
@@ -213,7 +264,16 @@ export class EnergySculptor implements EnergySink {
   }
 
   setRoundProgress(progress: number): void {
-    this.roundProgress = Math.max(0, Math.min(1, progress));
+    this.roundProgress = Math.max(0, progress);
+  }
+
+  setMusicField(field: SculptorMusicField): void {
+    this.musicField.pulse = Math.max(0, Math.min(1, field.pulse));
+    this.musicField.drumLevel = Math.max(0, Math.min(1, field.drumLevel));
+    this.musicField.sustained = Math.max(0, Math.min(1, field.sustained));
+    this.musicField.intensity = Math.max(0, Math.min(1, field.intensity));
+    this.musicField.chordProgress = field.chordProgress - Math.floor(field.chordProgress);
+    this.musicField.groovePhase = field.groovePhase - Math.floor(field.groovePhase);
   }
 
   /**
@@ -250,11 +310,9 @@ export class EnergySculptor implements EnergySink {
   private updateTimerRing(): void {
     if (!this.timerRingLine || !this.timerRingMaterial) return;
     const segs = EnergySculptor.TIMER_SEGMENTS;
-    const drawCount = this.dissolveMode > 0
-      ? segs + 1
-      : Math.max(2, Math.floor((1 - this.roundProgress) * segs) + 1);
-    this.timerRingLine.geometry.setDrawRange(0, drawCount);
-    this.timerRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.55;
+    const build = Math.min(1, this.roundProgress);
+    this.timerRingLine.geometry.setDrawRange(0, segs + 1);
+    this.timerRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.12 + build * 0.18;
   }
 
   dispose(): void {
@@ -288,7 +346,7 @@ export class EnergySculptor implements EnergySink {
       for (let i = 0; i < allowed; i += 1) {
         const idx = this.freeList.pop()!;
         const o3 = idx * 3;
-        const jitter = 0.18;
+        const jitter = 0.12;
         const jx = (Math.random() - 0.5) * jitter;
         const jy = (Math.random() - 0.5) * jitter;
         const jz = (Math.random() - 0.5) * jitter;
@@ -305,17 +363,23 @@ export class EnergySculptor implements EnergySink {
         // Per-particle archetype target. Sampled once at emit time so the
         // particle has a stable destination throughout its life — this is
         // what makes the sculpture have a recognizable silhouette.
-        const norm = Math.random();
+        const norm = allowed > 1 ? (i + Math.random()) / allowed : Math.random();
         const seed = Math.random();
         const localTarget = archetype.shape(norm, t, seed, req.kind, EnergySculptor.SHAPE_TMP);
         this.targets[o3] = this.center.x + localTarget.x;
         this.targets[o3 + 1] = this.center.y + localTarget.y;
         this.targets[o3 + 2] = this.center.z + localTarget.z;
+        this.baseColors[o3] = req.color.r;
+        this.baseColors[o3 + 1] = req.color.g;
+        this.baseColors[o3 + 2] = req.color.b;
         this.colors[o3] = req.color.r;
         this.colors[o3 + 1] = req.color.g;
         this.colors[o3 + 2] = req.color.b;
-        this.lifeCurrent[idx] = req.lifetime;
-        this.lifeMax[idx] = req.lifetime;
+        this.lifeCurrent[idx] = 1;
+        this.lifeMax[idx] = Math.max(0.55, req.lifetime);
+        this.particleAges[idx] = 0;
+        this.settledAges[idx] = -1;
+        this.sizeScales[idx] = 0.75 + req.intensity * 0.7 + Math.random() * 0.25;
         this.kinds[idx] = req.kind === 'starlace' ? 1 : 0;
       }
     }
@@ -383,18 +447,34 @@ export class EnergySculptor implements EnergySink {
   }
 
   private integrate(delta: number): void {
-    const damping = this.params.velocityDamping;
+    const damping = Math.pow(this.params.velocityDamping, delta * 60);
+    const settledDamping = Math.pow(0.91, delta * 60);
     const baseAttractor = this.params.attractorStrength;
     const cross = this.params.crossCurrentStrength;
+    const field = this.params.fieldStrength;
     const duet = this.params.duetBonusGain;
     const boost = this.synchronyBoost;
     const pull = baseAttractor * (1 + boost * duet);
+    const memorySeconds = Math.max(0, this.params.memorySeconds);
+    const fadeSeconds = Math.max(0.001, this.params.fadeSeconds);
+    const settleDistance = this.params.settleDistance;
+    const settledRadius = this.params.settledRadius;
+    const settledMotion = this.params.settledMotion;
     const size = this.size;
     const dissolving = this.dissolveMode > 0;
     const burstSpeed = this.params.dissolveBurstSpeed;
-    const lifeAccel = dissolving ? 5 : 1;
+    const fieldPhase = this.roundProgress * Math.PI * 2;
+    const musicPulse = this.musicField.pulse;
+    const musicLevel = this.musicField.drumLevel;
+    const musicSustain = this.musicField.sustained;
+    const musicIntensity = this.musicField.intensity;
+    const groovePhase = this.musicField.groovePhase * TAU;
+    const chordPhase = this.musicField.chordProgress * TAU;
+    const musicWaveAmp = musicLevel * 0.045 + musicPulse * 0.085 + musicIntensity * 0.025;
+    const fieldBoost = field * (1 + musicIntensity * 0.9 + musicPulse * 1.1);
     for (let i = 0; i < size; i += 1) {
       if (this.lifeCurrent[i] <= 0) continue;
+      this.particleAges[i] += delta;
       const o3 = i * 3;
       const px = this.positions[o3];
       const py = this.positions[o3 + 1];
@@ -402,14 +482,29 @@ export class EnergySculptor implements EnergySink {
       const tx = this.targets[o3];
       const ty = this.targets[o3 + 1];
       const tz = this.targets[o3 + 2];
-      let dx = tx - px;
-      let dy = ty - py;
-      let dz = tz - pz;
+      const rx = tx - this.center.x;
+      const ry = ty - this.center.y;
+      const rz = tz - this.center.z;
+      const targetRadius = Math.hypot(rx, rz);
+      const targetAngle = Math.atan2(rz, rx);
+      const wave = Math.sin(targetRadius * 18 - groovePhase * 2 + ry * 7 + chordPhase) * musicWaveAmp;
+      const chordTilt = Math.sin(chordPhase + ry * 3.5 + targetAngle * 2) * musicSustain * 0.045;
+      const attractX = tx + Math.cos(targetAngle) * wave - Math.sin(targetAngle) * chordTilt;
+      const attractY = ty
+        + Math.cos(targetRadius * 12 - groovePhase * 4 + chordPhase) * musicWaveAmp * 0.58
+        + Math.sin(targetAngle * 3 + chordPhase) * musicPulse * 0.026;
+      const attractZ = tz + Math.sin(targetAngle) * wave + Math.cos(targetAngle) * chordTilt;
+      let dx = attractX - px;
+      let dy = attractY - py;
+      let dz = attractZ - pz;
       const dist = Math.hypot(dx, dy, dz) || 0.001;
-      dx /= dist; dy /= dist; dz /= dist;
+      const ndx = dx / dist;
+      const ndy = dy / dist;
+      const ndz = dz / dist;
       let vx = this.velocities[o3];
       let vy = this.velocities[o3 + 1];
       let vz = this.velocities[o3 + 2];
+      const settled = this.settledAges[i] >= 0;
       if (dissolving) {
         // Outward burst from center; ignores attractor.
         let ox = px - this.center.x;
@@ -420,10 +515,51 @@ export class EnergySculptor implements EnergySink {
         vx += ox * burstSpeed * delta;
         vy += oy * burstSpeed * delta;
         vz += oz * burstSpeed * delta;
+        this.lifeCurrent[i] -= delta * 1.8;
+      } else if (settled) {
+        const settledAge = this.settledAges[i] + delta;
+        this.settledAges[i] = settledAge;
+        const seedA = Math.sin((i + 1) * 12.9898) * 43758.5453;
+        const seedB = Math.sin((i + 1) * 78.233) * 19341.719;
+        const a = seedA - Math.floor(seedA);
+        const b = seedB - Math.floor(seedB);
+        const phase = settledAge * (0.65 + a * 0.85) * settledMotion + a * TAU + groovePhase * (0.35 + b * 0.55);
+        const pocket = settledRadius * (0.55 + b * 0.75) * (1 + musicPulse * 0.7 + musicLevel * 0.24);
+        const driftX = Math.cos(phase) * pocket;
+        const driftY = Math.sin(phase * 0.73 + b * TAU) * pocket * 0.46
+          + Math.sin(groovePhase * 2 + targetRadius * 10 + b * TAU) * musicWaveAmp * 0.8;
+        const driftZ = Math.sin(phase * (0.9 + b * 0.22)) * pocket;
+        const fdx = attractX + driftX - px;
+        const fdy = attractY + driftY - py;
+        const fdz = attractZ + driftZ - pz;
+        const flen = Math.hypot(fdx, fdy, fdz) || 1;
+        vx += fdx * pull * 1.05 * delta;
+        vy += fdy * pull * 1.05 * delta;
+        vz += fdz * pull * 1.05 * delta;
+        // A small tangential field keeps settled particles alive without
+        // letting them leave their local attractor pocket.
+        const settledDrive = settledMotion * (0.38 + musicPulse * 0.26 + musicLevel * 0.08);
+        vx += (-fdz / flen) * settledDrive * delta;
+        vy += Math.cos(phase * 1.37 + chordPhase) * settledMotion * (0.08 + musicPulse * 0.08) * delta;
+        vz += (fdx / flen) * settledDrive * delta;
       } else {
-        vx += dx * pull * delta;
-        vy += dy * pull * delta;
-        vz += dz * pull * delta;
+        const lx = px - this.center.x;
+        const ly = py - this.center.y;
+        const lz = pz - this.center.z;
+        const lr = Math.hypot(lx, lz) || 1;
+        const handed = this.kinds[i] === 1 ? -1 : 1;
+        const beatWave = Math.sin(lr * 15 - groovePhase * 3 + ly * 6 + chordPhase) * (musicPulse * 0.34 + musicLevel * 0.12);
+        const curlX = -lz * 0.92 + Math.sin(ly * 6.0 + fieldPhase + lx * 2.2) * 0.18 + (lx / lr) * beatWave;
+        const curlY = Math.sin((lx - lz) * 7.0 + fieldPhase * 0.7 + chordPhase) * 0.22 + 0.08 + musicPulse * 0.05;
+        const curlZ = lx * 0.92 + Math.cos(ly * 5.2 - fieldPhase + lz * 2.4) * 0.18 + (lz / lr) * beatWave;
+        vx += (dx * pull + ndx * pull * 0.18 + curlX * fieldBoost * handed) * delta;
+        vy += (dy * pull + ndy * pull * 0.18 + curlY * fieldBoost) * delta;
+        vz += (dz * pull + ndz * pull * 0.18 + curlZ * fieldBoost * handed) * delta;
+
+        const flightWindow = this.lifeMax[i] * 3.6;
+        if (dist < settleDistance || this.particleAges[i] > flightWindow) {
+          this.settledAges[i] = 0;
+        }
       }
       // Cross-current: deflect from the other kind's local density. We use a
       // tangent of the to-target direction as the deflection axis so streams
@@ -432,27 +568,34 @@ export class EnergySculptor implements EnergySink {
         const otherDensity = this.sampleOtherDensity(this.kinds[i], px, py, pz);
         if (otherDensity > 0.5) {
           // Tangent = up x toTarget normalized, fallback if degenerate.
-          let tdx = -dz;
+          let tdx = -ndz;
           let tdy = 0;
-          let tdz = dx;
+          let tdz = ndx;
           const tlen = Math.hypot(tdx, tdy, tdz) || 1;
           tdx /= tlen; tdy /= tlen; tdz /= tlen;
-          const dscale = Math.min(1, otherDensity / 6) * cross * delta;
+          const dscale = Math.min(1, otherDensity / 6) * cross * delta * (settled ? 0.08 : 1);
           vx += tdx * dscale;
           vy += tdy * dscale;
           vz += tdz * dscale;
         }
       }
-      vx *= damping; vy *= damping; vz *= damping;
+      const damp = settled ? settledDamping : damping;
+      vx *= damp; vy *= damp; vz *= damp;
       this.velocities[o3] = vx;
       this.velocities[o3 + 1] = vy;
       this.velocities[o3 + 2] = vz;
       this.positions[o3] = px + vx * delta;
       this.positions[o3 + 1] = py + vy * delta;
       this.positions[o3 + 2] = pz + vz * delta;
-      this.lifeCurrent[i] -= delta * lifeAccel;
+      if (!dissolving && this.settledAges[i] >= memorySeconds) {
+        this.lifeCurrent[i] = Math.max(0, 1 - (this.settledAges[i] - memorySeconds) / fadeSeconds);
+      } else if (!dissolving) {
+        this.lifeCurrent[i] = 1;
+      }
       if (this.lifeCurrent[i] <= 0) {
         this.lifeCurrent[i] = 0;
+        this.particleAges[i] = 0;
+        this.settledAges[i] = -1;
         this.freeList.push(i);
       }
     }
@@ -460,17 +603,29 @@ export class EnergySculptor implements EnergySink {
 
   private writeMatrices(): void {
     const baseSize = this.params.particleSize;
+    const musicSize = 1 + this.musicField.pulse * 0.14 + this.musicField.drumLevel * 0.08;
+    const musicColor = 0.74 + this.musicField.intensity * 0.13 + this.musicField.pulse * 0.10;
     const size = this.size;
     for (let i = 0; i < size; i += 1) {
       const o3 = i * 3;
-      const lifeFrac = this.lifeMax[i] > 0 ? this.lifeCurrent[i] / this.lifeMax[i] : 0;
-      const s = lifeFrac > 0 ? baseSize * (0.55 + lifeFrac * 0.6) : 0;
+      const alpha = this.lifeCurrent[i];
+      const born = alpha > 0 ? Math.min(1, this.particleAges[i] / 0.22) : 0;
+      const settled = this.settledAges[i] >= 0;
+      const settleScale = settled ? 1.18 : 0.82;
+      const s = alpha > 0
+        ? baseSize * this.sizeScales[i] * settleScale * musicSize * born * (0.2 + Math.sqrt(alpha) * 0.8)
+        : 0;
+      const colorScale = alpha > 0 ? (0.16 + Math.sqrt(alpha) * 0.68) * musicColor : 0;
+      this.colors[o3] = this.baseColors[o3] * colorScale;
+      this.colors[o3 + 1] = this.baseColors[o3 + 1] * colorScale;
+      this.colors[o3 + 2] = this.baseColors[o3 + 2] * colorScale;
       TMP_VEC.set(this.positions[o3], this.positions[o3 + 1], this.positions[o3 + 2]);
       TMP_SCALE.setScalar(s);
       TMP_MATRIX.compose(TMP_VEC, TMP_QUAT.identity(), TMP_SCALE);
       this.mesh.setMatrixAt(i, TMP_MATRIX);
     }
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.instanceColors.needsUpdate = true;
   }
 }
 

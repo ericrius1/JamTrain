@@ -217,7 +217,7 @@ export class Drum implements PlayerVisual {
   private pointerMoveListener?: (event: PointerEvent) => void;
   private pointerDownListener?: (event: PointerEvent) => void;
   private pointerUpListener?: (event: PointerEvent) => void;
-  private pointerLeaveListener?: () => void;
+  private pointerLeaveListener?: (event: PointerEvent) => void;
 
   private uniforms: OrbUniforms;
 
@@ -525,30 +525,8 @@ export class Drum implements PlayerVisual {
   }
 
   private attachPointerEvents(canvas: HTMLCanvasElement): void {
-    const updatePointer = (event: PointerEvent) => {
-      const rect = canvas.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return;
-      const x = (event.clientX - rect.left) / rect.width;
-      const y = (event.clientY - rect.top) / rect.height;
-      this.pointerNdc.set(x * 2 - 1, -(y * 2 - 1));
-      this.pointerLastAtMs = performance.now();
-    };
-
-    this.pointerMoveListener = event => updatePointer(event);
-    this.pointerDownListener = event => {
-      event.preventDefault();
-      updatePointer(event);
-      this.pointerDown = true;
-      this.pointerClickQueued = true;
-      try { canvas.setPointerCapture(event.pointerId); } catch { /* pointer may already be captured elsewhere */ }
-    };
-    this.pointerUpListener = event => {
-      this.pointerDown = false;
-      try { canvas.releasePointerCapture(event.pointerId); } catch { /* noop */ }
-    };
-    this.pointerLeaveListener = () => {
+    const clearPointer = () => {
       if (this.pointerDown) return;
-      this.pointerDown = false;
       this.pointerInside = false;
       this.pointerClickQueued = false;
       this.pointerNdcPrevValid = false;
@@ -556,22 +534,60 @@ export class Drum implements PlayerVisual {
       for (let i = 0; i < ORB_COUNT; i += 1) this.pointerOrbInside[i] = false;
     };
 
-    canvas.addEventListener('pointermove', this.pointerMoveListener);
-    canvas.addEventListener('pointerdown', this.pointerDownListener);
-    window.addEventListener('pointerup', this.pointerUpListener);
-    canvas.addEventListener('pointerleave', this.pointerLeaveListener);
+    const updatePointer = (event: PointerEvent): boolean => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = (event.clientY - rect.top) / rect.height;
+      if (x < 0 || x > 1 || y < 0 || y > 1) return false;
+      this.pointerNdc.set(x * 2 - 1, -(y * 2 - 1));
+      this.pointerLastAtMs = performance.now();
+      return true;
+    };
+
+    this.pointerMoveListener = event => {
+      if (this.isPointerUiTarget(event)) {
+        clearPointer();
+        return;
+      }
+      if (!updatePointer(event)) clearPointer();
+    };
+    this.pointerDownListener = event => {
+      if (this.isPointerUiTarget(event)) return;
+      if (!updatePointer(event)) return;
+      this.pointerDown = true;
+      this.pointerClickQueued = true;
+    };
+    this.pointerUpListener = () => {
+      this.pointerDown = false;
+    };
+    this.pointerLeaveListener = () => {
+      this.pointerDown = false;
+      clearPointer();
+    };
+
+    window.addEventListener('pointermove', this.pointerMoveListener, true);
+    window.addEventListener('pointerdown', this.pointerDownListener, true);
+    window.addEventListener('pointerup', this.pointerUpListener, true);
+    window.addEventListener('pointercancel', this.pointerLeaveListener, true);
   }
 
   private detachPointerEvents(): void {
-    if (!this.canvas) return;
-    if (this.pointerMoveListener) this.canvas.removeEventListener('pointermove', this.pointerMoveListener);
-    if (this.pointerDownListener) this.canvas.removeEventListener('pointerdown', this.pointerDownListener);
-    if (this.pointerUpListener) window.removeEventListener('pointerup', this.pointerUpListener);
-    if (this.pointerLeaveListener) this.canvas.removeEventListener('pointerleave', this.pointerLeaveListener);
+    if (this.pointerMoveListener) window.removeEventListener('pointermove', this.pointerMoveListener, true);
+    if (this.pointerDownListener) window.removeEventListener('pointerdown', this.pointerDownListener, true);
+    if (this.pointerUpListener) window.removeEventListener('pointerup', this.pointerUpListener, true);
+    if (this.pointerLeaveListener) window.removeEventListener('pointercancel', this.pointerLeaveListener, true);
     this.pointerMoveListener = undefined;
     this.pointerDownListener = undefined;
     this.pointerUpListener = undefined;
     this.pointerLeaveListener = undefined;
+  }
+
+  private isPointerUiTarget(event: PointerEvent): boolean {
+    const target = event.target;
+    if (!(target instanceof Element)) return false;
+    if (target === this.canvas) return false;
+    return !!target.closest('button,input,textarea,select,a,[contenteditable="true"],[role="button"],#ui > *,#stage > *');
   }
 
   // Middle-row keyboard binding for the local player. A maps to the orb
@@ -610,11 +626,8 @@ export class Drum implements PlayerVisual {
     _hitDir.normalize();
     _strikePoint.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
     const velocity = 0.7;
-    this.addRippleAt(_strikePoint, velocity);
-    orb.lastHitAt = this.elapsed;
-    orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
-    const noteIndex = this.noteIndexForOrb(orbIndex);
-    const worldStrike = _strikePoint.clone().add(this.mesh.position);
+    const worldStrike = _strikePoint.clone();
+    this.mesh.localToWorld(worldStrike);
     this.dispatchHit(orbIndex, velocity, worldStrike);
   }
 
@@ -756,18 +769,22 @@ export class Drum implements PlayerVisual {
     const orb = this.orbs[orbIndex];
     if (!orb) return false;
     if (this.elapsed - orb.lastHitAt <= this.params.hitCooldown) return false;
-    this.dispatchHit(orbIndex, velocity, worldPoint);
+    this.dispatchHit(orbIndex, velocity, worldPoint, true);
     return true;
   }
 
-  private dispatchHit(orbIndex: number, velocity: number, worldPosition: THREE.Vector3): void {
+  private dispatchHit(orbIndex: number, velocity: number, worldPosition: THREE.Vector3, rippleBurst = false): void {
     const orb = this.orbs[orbIndex];
     if (!orb) return;
     orb.lastHitAt = this.elapsed;
 
     _strikePoint.copy(worldPosition);
     this.mesh.worldToLocal(_strikePoint);
-    this.addImpactRipples(_strikePoint, velocity);
+    if (rippleBurst) {
+      this.addImpactRipples(_strikePoint, velocity);
+    } else {
+      this.addRippleAt(_strikePoint, velocity);
+    }
 
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
     const noteIndex = this.noteIndexForOrb(orbIndex);

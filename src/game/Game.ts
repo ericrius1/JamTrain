@@ -44,6 +44,12 @@ const PLAYERS_DEFS = {
   backOffset: { default: 0.08, min: -0.4, max: 0.8, step: 0.01, label: 'back offset' },
 } as const;
 
+const INTRO_SCENE_DEFS = {
+  opacity:    { default: 0.28, min: 0.08, max: 0.60, step: 0.01, label: 'opacity' },
+  brightness: { default: 0.30, min: 0.08, max: 0.70, step: 0.01, label: 'brightness' },
+  saturation: { default: 0.72, min: 0.20, max: 1.20, step: 0.01, label: 'saturation' },
+} as const;
+
 const CABIN_DEFS = {
   bevelRadius:    { default: 0.04, min: 0, max: 0.12, step: 0.005, label: 'bevel radius' },
   furnitureBevel: { default: 0.10, min: 0, max: 0.18, step: 0.005, label: 'furniture bevel' },
@@ -147,6 +153,8 @@ export class Game {
   private cabinPlateTexture?: THREE.Texture;
   private cabinPlateMaskTexture?: THREE.Texture;
   private readonly cabinParams = makeParams(CABIN_DEFS);
+  private introSceneTweaks?: ReturnType<typeof registerTweaks<typeof INTRO_SCENE_DEFS>>;
+  private readonly introSceneParams = makeParams(INTRO_SCENE_DEFS);
   private playersTweaks?: ReturnType<typeof registerTweaks<typeof PLAYERS_DEFS>>;
   private readonly playersParams = makeParams(PLAYERS_DEFS);
   readonly paneDock: HTMLElement;
@@ -175,6 +183,7 @@ export class Game {
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(1)
     this.paneDock = this.createPaneDock();
+    this.setupIntroScenePane();
     this.handTracker = new HandTracker(ui.inputStatus);
     this.audioGraph = new JamAudioGraph();
     this.audio = new AudioEngine(this.audioGraph, ui.musicStatus, this.paneDock);
@@ -431,6 +440,7 @@ export class Game {
     this.cameraTweaks?.dispose();
     this.shadowsTweaks?.dispose();
     this.cabinTweaks?.dispose();
+    this.introSceneTweaks?.dispose();
     this.playersTweaks?.dispose();
     this.disposeCabinPlate();
     this.paneDock.remove();
@@ -499,6 +509,28 @@ export class Game {
         fov: () => this.lockGameCamera(),
       },
     });
+  }
+
+  private setupIntroScenePane(): void {
+    if (this.introSceneTweaks) return;
+    this.introSceneTweaks = registerTweaks(this.paneDock, 'introScene', INTRO_SCENE_DEFS, {
+      title: 'Intro Scene',
+      expanded: true,
+      params: this.introSceneParams,
+      onChange: {
+        opacity:    () => this.applyIntroSceneTweaks(),
+        brightness: () => this.applyIntroSceneTweaks(),
+        saturation: () => this.applyIntroSceneTweaks(),
+      },
+    });
+    this.applyIntroSceneTweaks();
+  }
+
+  private applyIntroSceneTweaks(): void {
+    const root = document.documentElement;
+    root.style.setProperty('--intro-scene-opacity', String(this.introSceneParams.opacity));
+    root.style.setProperty('--intro-scene-brightness', String(this.introSceneParams.brightness));
+    root.style.setProperty('--intro-scene-saturation', String(this.introSceneParams.saturation));
   }
 
   private createCabin(): void {
@@ -808,6 +840,8 @@ export class Game {
         title: `Starlace (${player === 'local' ? 'Local' : 'Partner'})`,
         sculptor: this.sculptor,
         anchor,
+        camera: player === 'local' ? this.camera : undefined,
+        canvas: player === 'local' ? this.canvas : undefined,
         onPluck: pluck => {
           this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
           this.lastStarlacePluckAt = performance.now() / 1000;
@@ -882,9 +916,13 @@ export class Game {
   setPlayerInstrument(player: PlayerSlot, id: string): void {
     if (!isInstrumentId(id)) return;
     if (player === 'remote') {
-      // Queue partner-instrument changes so the in-progress sculpture's
-      // archetype doesn't shift mid-round. Applied on the next playing edge.
-      if (this.playerInstruments.remote !== id) this.pendingPartnerInstrument = id;
+      if (this.playerInstruments.remote === id) return;
+      if (this.introActive) {
+        this.installPlayerVisualImmediate(player, id);
+        this.refreshArchetype();
+        return;
+      }
+      void this.swapPlayerVisual(player, id).then(() => this.refreshArchetype());
       return;
     }
     if (this.playerInstruments[player] === id) return;
@@ -1030,6 +1068,14 @@ export class Game {
 
     const alpha = 1 - Math.exp(-delta * 7);
     this.musicIntensity += (targetIntensity - this.musicIntensity) * alpha;
+    this.sculptor?.setMusicField({
+      pulse,
+      drumLevel,
+      sustained,
+      intensity: this.musicIntensity,
+      chordProgress: this.audio.getChordProgress(),
+      groovePhase: this.audio.getGroovePhase(),
+    });
 
     // Cabin lights: very subtle warm breath. Drum kicks give a tiny bump,
     // sustained activity adds a touch of overall warmth. Stays under ±10%

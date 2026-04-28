@@ -41,6 +41,8 @@ type StarlaceOptions = {
   onPluck?: (event: StarlacePluck) => void;
   sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   anchor?: THREE.Vector3;
+  camera?: THREE.Camera;
+  canvas?: HTMLCanvasElement;
 };
 
 type StarNode = {
@@ -75,6 +77,9 @@ const _pointDelta = new THREE.Vector3();
 const _closest = new THREE.Vector3();
 const _scratch = new THREE.Vector3();
 const _scratch2 = new THREE.Vector3();
+const _pointerDelta = new THREE.Vector3();
+const _pointerNdcSample = new THREE.Vector2();
+const _raycaster = new THREE.Raycaster();
 const _dummy = new THREE.Object3D();
 const _colorA = new THREE.Color();
 const _colorB = new THREE.Color();
@@ -162,6 +167,21 @@ export class Starlace implements PlayerVisual {
   private onPluckCallback?: (event: StarlacePluck) => void;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   private keyDownListener?: (e: KeyboardEvent) => void;
+  private camera?: THREE.Camera;
+  private canvas?: HTMLCanvasElement;
+  private pointerNdc = new THREE.Vector2(999, 999);
+  private pointerNdcPrev = new THREE.Vector2(999, 999);
+  private pointerNdcPrevValid = false;
+  private pointerLastAtMs = -Infinity;
+  private pointerDown = false;
+  private pointerClickQueued = false;
+  private pointerNodeInside: boolean[] = [];
+  private pointerSweepSeen: boolean[] = [];
+  private pointerFrameFired: boolean[] = [];
+  private pointerMoveListener?: (event: PointerEvent) => void;
+  private pointerDownListener?: (event: PointerEvent) => void;
+  private pointerUpListener?: (event: PointerEvent) => void;
+  private pointerCancelListener?: (event: PointerEvent) => void;
   private palette: StarlacePalette;
   private fixedAnchor?: THREE.Vector3;
   private registered?: ReturnType<typeof registerTweaks<typeof STARLACE_DEFS>>;
@@ -173,6 +193,8 @@ export class Starlace implements PlayerVisual {
     this.sculptor = opts.sculptor;
     this.palette = opts.palette ?? 'local';
     this.fixedAnchor = opts.anchor?.clone();
+    this.camera = opts.camera;
+    this.canvas = opts.canvas;
 
     this.mesh = new THREE.Group();
     this.mesh.name = `starlace-harp-${opts.palette ?? 'local'}`;
@@ -180,6 +202,9 @@ export class Starlace implements PlayerVisual {
 
     this.createNodes();
     this.createEdges();
+    this.pointerNodeInside = Array.from({ length: this.nodes.length }, () => false);
+    this.pointerSweepSeen = Array.from({ length: this.nodes.length }, () => false);
+    this.pointerFrameFired = Array.from({ length: this.nodes.length }, () => false);
 
     this.linePositions = new Float32Array(this.edges.length * 2 * 3);
     this.pulseLinePositions = new Float32Array(this.edges.length * 2 * 3);
@@ -238,7 +263,10 @@ export class Starlace implements PlayerVisual {
     this.applyColors();
     this.writeHiddenSparks();
 
-    if (this.palette === 'local') this.attachKeyboardEvents();
+    if (this.palette === 'local') {
+      this.attachKeyboardEvents();
+      if (this.camera && this.canvas) this.attachPointerEvents(this.canvas);
+    }
 
     this.registered = registerTweaks(paneDock, paneKey, STARLACE_DEFS, {
       title: opts.title ?? 'Starlace',
@@ -454,6 +482,9 @@ export class Starlace implements PlayerVisual {
     this.updateRevealValues();
     if (this.revealedFully && !this.revealActive) {
       this.processContacts(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
+      this.processPointer(delta);
+    } else {
+      this.clearPointerState();
     }
     this.decayPulses(delta);
     this.writeLines();
@@ -464,6 +495,7 @@ export class Starlace implements PlayerVisual {
 
   dispose(): void {
     this.detachKeyboardEvents();
+    this.detachPointerEvents();
     this.registered?.dispose();
     this.lineGeometry.dispose();
     this.pulseLineGeometry.dispose();
@@ -685,6 +717,167 @@ export class Starlace implements PlayerVisual {
     this.fallbackContacts[0].position.copy(leftPalm);
     this.fallbackContacts[1].position.copy(rightPalm);
     return this.fallbackContacts;
+  }
+
+  private attachPointerEvents(canvas: HTMLCanvasElement): void {
+    const updatePointer = (event: PointerEvent): boolean => {
+      const rect = canvas.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return false;
+      const x = (event.clientX - rect.left) / rect.width;
+      const y = (event.clientY - rect.top) / rect.height;
+      if (x < 0 || x > 1 || y < 0 || y > 1) return false;
+      this.pointerNdc.set(x * 2 - 1, -(y * 2 - 1));
+      this.pointerLastAtMs = performance.now();
+      return true;
+    };
+
+    this.pointerMoveListener = event => {
+      if (this.isPointerUiTarget(event)) {
+        this.clearPointerState();
+        return;
+      }
+      if (!updatePointer(event) && !this.pointerDown) this.clearPointerState();
+    };
+    this.pointerDownListener = event => {
+      if (this.isPointerUiTarget(event)) return;
+      if (!updatePointer(event)) return;
+      this.pointerDown = true;
+      this.pointerClickQueued = true;
+    };
+    this.pointerUpListener = () => {
+      this.pointerDown = false;
+    };
+    this.pointerCancelListener = () => {
+      this.pointerDown = false;
+      this.clearPointerState();
+    };
+
+    window.addEventListener('pointermove', this.pointerMoveListener, true);
+    window.addEventListener('pointerdown', this.pointerDownListener, true);
+    window.addEventListener('pointerup', this.pointerUpListener, true);
+    window.addEventListener('pointercancel', this.pointerCancelListener, true);
+  }
+
+  private detachPointerEvents(): void {
+    if (this.pointerMoveListener) window.removeEventListener('pointermove', this.pointerMoveListener, true);
+    if (this.pointerDownListener) window.removeEventListener('pointerdown', this.pointerDownListener, true);
+    if (this.pointerUpListener) window.removeEventListener('pointerup', this.pointerUpListener, true);
+    if (this.pointerCancelListener) window.removeEventListener('pointercancel', this.pointerCancelListener, true);
+    this.pointerMoveListener = undefined;
+    this.pointerDownListener = undefined;
+    this.pointerUpListener = undefined;
+    this.pointerCancelListener = undefined;
+  }
+
+  private isPointerUiTarget(event: PointerEvent): boolean {
+    const target = event.target;
+    if (!(target instanceof Element)) return false;
+    if (target === this.canvas) return false;
+    return !!target.closest('button,input,textarea,select,a,[contenteditable="true"],[role="button"],#ui > *,#stage > *');
+  }
+
+  private clearPointerState(): void {
+    if (this.pointerDown) return;
+    this.pointerClickQueued = false;
+    this.pointerNdcPrevValid = false;
+    this.pointerLastAtMs = -Infinity;
+    this.pointerNodeInside.fill(false);
+  }
+
+  private processPointer(delta: number): void {
+    const camera = this.camera;
+    if (!camera || !this.canvas) {
+      this.clearPointerState();
+      return;
+    }
+
+    const recent = (performance.now() - this.pointerLastAtMs) / 1000 < 0.42 || this.pointerDown;
+    if (!recent) {
+      this.clearPointerState();
+      return;
+    }
+
+    let ndcSpeed = 0;
+    if (this.pointerNdcPrevValid && delta > 0) {
+      ndcSpeed = this.pointerNdc.distanceTo(this.pointerNdcPrev) / delta;
+    }
+
+    const clickQueued = this.pointerClickQueued;
+    this.pointerClickQueued = false;
+    const hadPrevious = this.pointerNdcPrevValid;
+    const ndcDistance = hadPrevious ? this.pointerNdc.distanceTo(this.pointerNdcPrev) : 0;
+    const sampleCount = hadPrevious ? clamp(Math.ceil(ndcDistance / 0.022), 1, 40) : 1;
+    this.pointerSweepSeen.fill(false);
+    this.pointerFrameFired.fill(false);
+
+    for (let s = 0; s <= sampleCount; s += 1) {
+      if (hadPrevious) {
+        _pointerNdcSample.copy(this.pointerNdcPrev).lerp(this.pointerNdc, s / sampleCount);
+      } else {
+        _pointerNdcSample.copy(this.pointerNdc);
+      }
+      const nodeIndex = this.pickPointerNode(_pointerNdcSample, camera);
+      if (nodeIndex < 0 || this.pointerSweepSeen[nodeIndex]) continue;
+      this.pointerSweepSeen[nodeIndex] = true;
+    }
+
+    const activeNode = this.pickPointerNode(this.pointerNdc, camera);
+    const velocity = this.pointerVelocity(ndcSpeed, clickQueued);
+
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      if (!this.pointerSweepSeen[i] || this.pointerNodeInside[i]) continue;
+      this.pointerFrameFired[i] = this.firePointerNode(i, velocity);
+    }
+
+    if (clickQueued && activeNode >= 0 && !this.pointerFrameFired[activeNode]) {
+      this.pointerFrameFired[activeNode] = this.firePointerNode(activeNode, velocity);
+    }
+
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      this.pointerNodeInside[i] = i === activeNode;
+    }
+    this.pointerNdcPrev.copy(this.pointerNdc);
+    this.pointerNdcPrevValid = true;
+  }
+
+  private pickPointerNode(ndc: THREE.Vector2, camera: THREE.Camera): number {
+    _raycaster.setFromCamera(ndc, camera);
+    const ray = _raycaster.ray;
+    const hitRadius = Math.max(this.params.nodeRadius * 2.65, 0.040);
+    const hitRadiusSq = hitRadius * hitRadius;
+    let best = -1;
+    let bestDistSq = Infinity;
+    let bestAlongRay = Infinity;
+
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      if ((this.nodeRevealT[i] ?? 1) < 0.2) continue;
+      const node = this.nodes[i];
+      _pointerDelta.copy(node.world).sub(ray.origin);
+      const alongRay = _pointerDelta.dot(ray.direction);
+      if (alongRay <= 0) continue;
+      const distSq = ray.distanceSqToPoint(node.world);
+      if (distSq > hitRadiusSq) continue;
+      if (distSq > bestDistSq && Math.abs(distSq - bestDistSq) > 1e-6) continue;
+      if (distSq >= bestDistSq && alongRay >= bestAlongRay) continue;
+      best = i;
+      bestDistSq = distSq;
+      bestAlongRay = alongRay;
+    }
+
+    return best;
+  }
+
+  private pointerVelocity(ndcSpeed: number, clickQueued: boolean): number {
+    const motion = clamp(ndcSpeed / 7.5, 0, 1);
+    const contactBoost = clickQueued ? 0.24 : (this.pointerDown ? 0.12 : 0);
+    return clamp(0.22 + contactBoost + motion * 0.64, 0.2, 1);
+  }
+
+  private firePointerNode(nodeIndex: number, velocity: number): boolean {
+    const node = this.nodes[nodeIndex];
+    if (!node || this.elapsed - node.lastHitAt < this.params.hitCooldown) return false;
+    this.fireNode(nodeIndex, velocity);
+    return true;
   }
 
   private processContacts(contacts: readonly HandContactPoint[], delta: number): void {

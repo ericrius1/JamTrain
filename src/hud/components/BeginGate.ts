@@ -153,18 +153,12 @@ export class BeginGate {
     display.textContent = 'Jam Train';
     block.appendChild(display);
 
-    const pill = document.createElement('span');
-    pill.className = 'begin-headphones-pill';
-    pill.innerHTML = `
-      <svg viewBox="0 0 22 18" fill="none" stroke="currentColor" stroke-width="1.4"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M3 12V10a8 8 0 0 1 16 0v2" />
-        <rect x="1" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
-        <rect x="17" y="11" width="4" height="6" rx="0.8" fill="currentColor" stroke="none" />
-      </svg>
-      <span>Best experienced with headphones</span>
+    const tagline = this.div('begin-tagline');
+    tagline.innerHTML = `
+      <p>Conduct sound with your hands, mouse, or keyboard</p>
+      <p>Share your room link with a friend to climb aboard and jam together.</p>
     `;
-    block.appendChild(pill);
+    block.appendChild(tagline);
 
     return block;
   }

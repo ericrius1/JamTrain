@@ -18,6 +18,9 @@
   --danger:       #cc4a2c;
   --text:         #efe0bf;
   --text-dim:     rgba(239, 224, 191, 0.55);
+  --intro-scene-opacity: 0.28;
+  --intro-scene-brightness: 0.30;
+  --intro-scene-saturation: 0.72;
 }
 
 * {
@@ -47,13 +50,13 @@ input {
    The filter is what makes characters and instruments feel "in the
    background" without needing per-system dim hooks. */
 #scene {
-  opacity: 0.24;
-  filter: brightness(0.26) saturate(0.72);
+  opacity: var(--intro-scene-opacity);
+  filter: brightness(var(--intro-scene-brightness)) saturate(var(--intro-scene-saturation));
   transition: opacity 1.4s ease, filter 1.4s ease;
 }
 #scene.scene-dim {
-  opacity: 0.24;
-  filter: brightness(0.26) saturate(0.72);
+  opacity: var(--intro-scene-opacity);
+  filter: brightness(var(--intro-scene-brightness)) saturate(var(--intro-scene-saturation));
 }
 #scene.scene-active {
   opacity: 1;
@@ -71,7 +74,7 @@ input {
 }
 #ui.ui-active {
   opacity: 1;
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 #stage-wrap.intro-active #stage,
@@ -80,8 +83,8 @@ input {
 }
 
 #stage-wrap.intro-active #scene {
-  opacity: 0.24;
-  filter: brightness(0.22) saturate(0.66);
+  opacity: var(--intro-scene-opacity);
+  filter: brightness(var(--intro-scene-brightness)) saturate(var(--intro-scene-saturation));
   pointer-events: none;
   transition: none;
 }

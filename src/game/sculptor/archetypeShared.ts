@@ -4,10 +4,11 @@ import type { ParticleKind } from './EnergyEmitter';
 export type ArchetypeId = 'drumDrum' | 'melodyMelody' | 'drumMelody';
 
 /**
- * Per-archetype shape sampler. Given a normalized index 0..1 (stable per
- * particle), a round progress 0..1, and a per-particle seed, returns a target
- * world-space offset relative to the sculptor center. Particles are pulled
- * toward this point instead of a single attractor center.
+ * Per-archetype shape sampler. Given a normalized index 0..1 inside the emit
+ * burst, continuous build progress where 1 is roughly the first full 30s form,
+ * and a per-particle seed, returns a target world-space offset relative to the
+ * sculptor center. Particles are pulled toward this point instead of a single
+ * attractor center.
  */
 export type ShapeSampler = (
   particleNorm: number,
