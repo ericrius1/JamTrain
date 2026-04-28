@@ -160,6 +160,9 @@ export class Game {
   private pendingPartnerInstrument: InstrumentId | null = null;
   private roundDirector!: RoundDirector;
   private sculptor!: EnergySculptor;
+  private lastDrumHitAt = -10;
+  private lastStarlacePluckAt = -10;
+  private lastSynchronyAt = -10;
   private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
@@ -836,6 +839,8 @@ export class Game {
         sculptor: this.sculptor,
         onPluck: pluck => {
           this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
+          this.lastStarlacePluckAt = performance.now() / 1000;
+          this.checkSynchrony();
         },
       });
     } else {
@@ -847,6 +852,8 @@ export class Game {
         sculptor: this.sculptor,
         onHit: hit => {
           this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
+          this.lastDrumHitAt = performance.now() / 1000;
+          this.checkSynchrony();
         },
         onGesture: gesture => {
           this.handSynth.setOrbGesture(player, gesture);
@@ -854,6 +861,15 @@ export class Game {
       });
     }
     this.handSynth.setInstrument(player, id);
+  }
+
+  private checkSynchrony(): void {
+    const now = performance.now() / 1000;
+    if (Math.abs(this.lastDrumHitAt - this.lastStarlacePluckAt) < 0.4 &&
+        now - this.lastSynchronyAt > 0.25) {
+      this.lastSynchronyAt = now;
+      this.sculptor?.fireSynchrony();
+    }
   }
 
   setPlayerInstrument(player: PlayerSlot, id: string): void {
