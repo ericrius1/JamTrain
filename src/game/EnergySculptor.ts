@@ -560,7 +560,11 @@ export class EnergySculptor implements EnergySink {
         .add(coreRepel.mul(flowInfluence.add(this.residualFieldUniform)));
       const dragFactor = float(1).div(float(1).add(drag.mul(this.dtUniform)));
       const newVel = vel.add(accel.mul(this.dtUniform)).mul(dragFactor).toVar();
-      const maxWorldSpeed = mix(0.035, 0.42, fieldInfluence);
+      // Young particles need to actually travel from emit origin into the
+      // sculpture before getting parked on the attractor — clamp them loosely
+      // so a starlace pluck or drum hit reads as a visible stream.
+      const youngBoost = float(1).sub(m.x.div(0.6).clamp(0, 1));
+      const maxWorldSpeed = mix(0.035, mix(0.42, 1.4, youngBoost), fieldInfluence);
       const maxSpeed = maxWorldSpeed.div(this.worldScaleUniform.max(0.001));
       const speedNow = newVel.length();
       newVel.assign(newVel.mul(maxSpeed.div(speedNow.max(maxSpeed))));
@@ -577,8 +581,10 @@ export class EnergySculptor implements EnergySink {
       const newAge = m.x.add(ageStep);
       const lifeMax = m.y;
       const newLifeT = newAge.div(lifeMax.max(0.0001)).clamp(0, 1);
-      // Linear fade-in over 0.15s (born), linear fade-out over fadeFraction of life
-      const born = newAge.div(0.15).clamp(0, 1);
+      // Linear fade-in over 0.04s (born), linear fade-out over fadeFraction of life.
+      // Short fade-in so emit-bursts read as emanating from the source node,
+      // not blooming into existence already mid-flight.
+      const born = newAge.div(0.04).clamp(0, 1);
       const fadeOut = float(1).sub(smoothstep(fadeStart, 1.0, newLifeT));
       const alphaLife = born.mul(fadeOut);
 
@@ -827,12 +833,31 @@ export class EnergySculptor implements EnergySink {
       if (cursor >= MAX_SPAWNS_PER_FRAME) break;
       const allowed = Math.min(req.count, MAX_SPAWNS_PER_FRAME - cursor);
       const dirNormSq = req.direction.lengthSq();
-      const dirX = dirNormSq > 1e-6 ? req.direction.x : 0;
-      const dirY = dirNormSq > 1e-6 ? req.direction.y : 1;
-      const dirZ = dirNormSq > 1e-6 ? req.direction.z : 0;
+      const dirLen = dirNormSq > 1e-6 ? Math.sqrt(dirNormSq) : 1;
+      const dirX = dirNormSq > 1e-6 ? req.direction.x / dirLen : 0;
+      const dirY = dirNormSq > 1e-6 ? req.direction.y / dirLen : 1;
+      const dirZ = dirNormSq > 1e-6 ? req.direction.z / dirLen : 0;
       const kind = req.kind === 'starlace' ? KIND_STARLACE : KIND_DRUM;
-      const jitterRadius = req.kind === 'starlace' ? 0.16 : 0.6;
-      const speedScale = req.kind === 'starlace' ? 1.45 : 1.0;
+      const launchRadius = req.kind === 'starlace' ? 0.44 : 0.95;
+      const coneSpread = req.kind === 'starlace' ? 0.62 : 0.48;
+      const speedScale = req.kind === 'starlace' ? 1.28 : 0.92;
+
+      // Build a stable basis around the instrument->sculpture direction. The
+      // burst starts clustered, but each particle is launched toward a slightly
+      // different slice of the active field instead of a single center ray.
+      const upX = Math.abs(dirY) < 0.92 ? 0 : 1;
+      const upY = Math.abs(dirY) < 0.92 ? 1 : 0;
+      const upZ = 0;
+      let sideX = dirY * upZ - dirZ * upY;
+      let sideY = dirZ * upX - dirX * upZ;
+      let sideZ = dirX * upY - dirY * upX;
+      const sideLen = Math.hypot(sideX, sideY, sideZ) || 1;
+      sideX /= sideLen;
+      sideY /= sideLen;
+      sideZ /= sideLen;
+      const liftX = sideY * dirZ - sideZ * dirY;
+      const liftY = sideZ * dirX - sideX * dirZ;
+      const liftZ = sideX * dirY - sideY * dirX;
 
       for (let i = 0; i < allowed; i += 1) {
         const slot = cursor;
@@ -840,21 +865,29 @@ export class EnergySculptor implements EnergySink {
         const oxLocal = (req.origin.x - this.center.x) * invWorldScale;
         const oyLocal = (req.origin.y - this.center.y) * invWorldScale;
         const ozLocal = (req.origin.z - this.center.z) * invWorldScale;
-        // Add a small jitter so a burst doesn't all collapse onto one orbit.
-        const jx = (Math.random() - 0.5) * jitterRadius;
-        const jy = (Math.random() - 0.5) * jitterRadius;
-        const jz = (Math.random() - 0.5) * jitterRadius;
-        this.spawnPosArray[slot].set(oxLocal + jx, oyLocal + jy, ozLocal + jz);
+        const theta = Math.random() * TAU;
+        const disc = Math.sqrt(Math.random());
+        const lateralA = Math.cos(theta) * disc;
+        const lateralB = Math.sin(theta) * disc;
+        const forwardJitter = (Math.random() - 0.5) * launchRadius * 0.28;
+        const launchA = lateralA * launchRadius;
+        const launchB = lateralB * launchRadius;
+        this.spawnPosArray[slot].set(
+          oxLocal + sideX * launchA + liftX * launchB + dirX * forwardJitter,
+          oyLocal + sideY * launchA + liftY * launchB + dirY * forwardJitter,
+          ozLocal + sideZ * launchA + liftZ * launchB + dirZ * forwardJitter,
+        );
 
         // Initial velocity: emit direction, in attractor space. Magnitude is
-        // intentionally hefty — particles coast along their emit trajectory
-        // for a beat before flow captures them, leaving a visible streak from
-        // the emit point that becomes part of the frozen echo trail.
+        // still biased inward, but with enough lateral cone spread that one
+        // burst fans into neighboring field streamlines before it settles.
         const seedSpeed = (0.4 + Math.random() * 0.6) * req.speed * speedScale;
+        const lateralSpeed = seedSpeed * coneSpread * (0.35 + Math.random() * 0.65);
+        const swirlSpeed = seedSpeed * coneSpread * (Math.random() - 0.5) * 0.55;
         this.spawnVelArray[slot].set(
-          dirX * seedSpeed,
-          dirY * seedSpeed,
-          dirZ * seedSpeed,
+          dirX * seedSpeed + sideX * lateralA * lateralSpeed + liftX * lateralB * lateralSpeed + sideX * swirlSpeed,
+          dirY * seedSpeed + sideY * lateralA * lateralSpeed + liftY * lateralB * lateralSpeed + sideY * swirlSpeed,
+          dirZ * seedSpeed + sideZ * lateralA * lateralSpeed + liftZ * lateralB * lateralSpeed + sideZ * swirlSpeed,
         );
 
         this.spawnColorArray[slot].set(req.color.r, req.color.g, req.color.b);
