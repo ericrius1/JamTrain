@@ -40,12 +40,4 @@ export type PlayerPose = {
   updatedAt: number;
 };
 
-export type LinkSample = {
-  from: Vec3Data;
-  to: Vec3Data;
-  finger: FingerName;
-  hand: Handedness;
-  tension: number;
-};
-
 export type ConnectionState = 'local' | 'connecting' | 'spacetime' | 'offline';

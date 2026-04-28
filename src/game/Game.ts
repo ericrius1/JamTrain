@@ -24,7 +24,7 @@ import { HumanoidRig } from './rig/HumanoidRig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { hashString } from './seedRandom';
-import { fingerJointNames, fingerNames, handednesses, type PlayerPose, type Vec3Data } from './types';
+import { fingerJointNames, fingerNames, handednesses, type PlayerPose } from './types';
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 
@@ -90,35 +90,6 @@ function makeHandContactPoints(): HandContactPoint[] {
   return contacts;
 }
 
-function makeLinkSamples(): LinkSample[] {
-  const links: LinkSample[] = [];
-  for (const hand of handednesses) {
-    for (const finger of fingerNames) {
-      links.push({
-        from: { x: 0, y: 0, z: 0 },
-        to: { x: 0, y: 0, z: 0 },
-        finger,
-        hand,
-        tension: 0,
-      });
-    }
-  }
-  return links;
-}
-
-function copyVectorData(from: THREE.Vector3, to: Vec3Data): void {
-  to.x = from.x;
-  to.y = from.y;
-  to.z = from.z;
-}
-
-function distanceBetween(a: THREE.Vector3, b: THREE.Vector3): number {
-  const x = a.x - b.x;
-  const y = a.y - b.y;
-  const z = a.z - b.z;
-  return Math.sqrt(x * x + y * y + z * z);
-}
-
 export class Game {
   private renderer: THREE.WebGPURenderer;
   private scene = new THREE.Scene();
@@ -144,12 +115,7 @@ export class Game {
   private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
   private localRig: HumanoidRig;
   private remoteRig: HumanoidRig;
-  private particles: LinkParticles;
   private robotMotion: RobotMotionController;
-  private linkPositions = new Float32Array(10 * 2 * 3);
-  private linkGeometry = new THREE.BufferGeometry();
-  private linkLines: THREE.LineSegments;
-  private readonly linkSamples = makeLinkSamples();
   private scenery: ScenerySystem;
   private ambientLight?: THREE.AmbientLight;
   private keyLight?: THREE.DirectionalLight;
@@ -257,23 +223,10 @@ export class Game {
       this.remoteRig.setSeatIndex(partnerSeat);
       this.applyPlayerBackOffset();
     });
-    this.particles = new LinkParticles(this.scene);
     this.robotMotion = new RobotMotionController(this.paneDock);
     this.scenery = new ScenerySystem(this.scene, this.paneDock, {
       roomSeed: this.roomSeed,
     });
-
-    this.linkGeometry.setAttribute('position', new THREE.BufferAttribute(this.linkPositions, 3));
-    const linkMaterial = new THREE.LineBasicMaterial({
-      color: 0xf6bd4b,
-      transparent: true,
-      opacity: 0.42,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    });
-    this.linkLines = new THREE.LineSegments(this.linkGeometry, linkMaterial);
-    this.linkLines.frustumCulled = false;
-    this.scene.add(this.linkLines);
   }
 
   async start(): Promise<void> {
@@ -282,7 +235,6 @@ export class Game {
     this.createCabin();
     await this.renderer.init();
     this.setupOrbitControls();
-    this.particles.initialize(this.renderer);
     this.roundDirector = new RoundDirector(this.paneDock);
     this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.paneDock);
     this.roundDirector.onPlayingStart(() => {
@@ -973,11 +925,9 @@ export class Game {
     this.localRig.update(localPose, delta, 0);
     this.remoteRig.update(remotePose, delta, robotTarget);
 
-    const links = this.updateLinks();
     this.updatePlayerVisuals(delta);
     this.sculptor.setRoundProgress(this.roundDirector.snapshot().progress);
     this.sculptor.update(delta);
-    this.particles.update(this.renderer, links, elapsed);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
     this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
@@ -986,38 +936,6 @@ export class Game {
     this.poseSession.sendLocalPose(localPose, elapsed);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
-  }
-
-  private updateLinks(): LinkSample[] {
-    let cursor = 0;
-    let sampleIndex = 0;
-    let totalTension = 0;
-
-    for (const handedness of handednesses) {
-      for (const finger of fingerNames) {
-        const from = this.localRig.getFingertipWorld(handedness, finger);
-        const to = this.remoteRig.getFingertipWorld(handedness, finger);
-        const tension = clamp(1.25 - Math.abs(distanceBetween(from, to) - 1.1) * 0.42, 0.08, 1);
-        const sample = this.linkSamples[sampleIndex++];
-        copyVectorData(from, sample.from);
-        copyVectorData(to, sample.to);
-        sample.tension = tension;
-        totalTension += tension;
-
-        this.linkPositions[cursor++] = from.x;
-        this.linkPositions[cursor++] = from.y;
-        this.linkPositions[cursor++] = from.z;
-        this.linkPositions[cursor++] = to.x;
-        this.linkPositions[cursor++] = to.y;
-        this.linkPositions[cursor++] = to.z;
-      }
-    }
-
-    this.linkGeometry.attributes.position.needsUpdate = true;
-    const material = this.linkLines.material as THREE.LineBasicMaterial;
-    const energy = totalTension / Math.max(this.linkSamples.length, 1);
-    material.opacity = 0.18 + energy * 0.48;
-    return this.linkSamples;
   }
 
   private updatePlayerVisuals(delta: number): void {
@@ -1067,8 +985,6 @@ export class Game {
 
     const alpha = 1 - Math.exp(-delta * 7);
     this.musicIntensity += (targetIntensity - this.musicIntensity) * alpha;
-
-    this.particles.setMusicIntensity(this.musicIntensity * 0.7);
 
     // Cabin lights: very subtle warm breath. Drum kicks give a tiny bump,
     // sustained activity adds a touch of overall warmth. Stays under ±10%

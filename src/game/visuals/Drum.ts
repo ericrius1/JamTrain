@@ -41,6 +41,8 @@ export const DRUM_DEFS = {
   baseColor:       { type: 'color', default: '#1d3247', label: 'base' },
   rimColor:        { type: 'color', default: '#7ad9ff', label: 'rim' },
   hotColor:        { type: 'color', default: '#fff8d6', label: 'hot' },
+  hitTint:         { type: 'color', default: '#52ffaa', label: 'hit tint' },
+  hitTintAmount:   { default: 0.85, min: 0, max: 1, step: 0.01, label: 'hit tint amount' },
 } as const;
 
 export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
@@ -116,6 +118,8 @@ function createOrbUniforms(params: DrumParams) {
     baseColor:    uniform(new THREE.Color(params.baseColor)),
     rimColor:     uniform(new THREE.Color(params.rimColor)),
     hotColor:     uniform(new THREE.Color(params.hotColor)),
+    hitTint:      uniform(new THREE.Color(params.hitTint)),
+    hitTintAmount: uniform(params.hitTintAmount),
     orbRadius:    uniform(params.orbRadius),
     rippleSpeed:  uniform(params.rippleSpeed),
     rippleFreq:   uniform(params.rippleFreq),
@@ -163,7 +167,6 @@ const _segment = new THREE.Vector3();
 const _pointToStart = new THREE.Vector3();
 const _pointerWorld = new THREE.Vector3();
 const _pointerLocal = new THREE.Vector3();
-const _pointerPrev = new THREE.Vector3();
 const _rayClosest = new THREE.Vector3();
 const _rayFront = new THREE.Vector3();
 const _rayBack = new THREE.Vector3();
@@ -195,12 +198,15 @@ export class Drum implements PlayerVisual {
   private rippleStarts: number[] = [];
   private rippleCursor = 0;
   private pointerNdc = new THREE.Vector2(999, 999);
+  private pointerNdcPrev = new THREE.Vector2(999, 999);
+  private pointerNdcPrevValid = false;
   private pointerLastAtMs = -Infinity;
   private pointerDown = false;
   private pointerInside = false;
-  private pointerPrevValid = false;
   private pointerGlow = 0;
   private lastPointerRippleAt = -Infinity;
+  // Per-orb "ray currently inside this orb" — flips false→true to fire entry hits.
+  private pointerOrbInside: boolean[] = Array.from({ length: ORB_COUNT }, () => false);
   private pointerMoveListener?: (event: PointerEvent) => void;
   private pointerDownListener?: (event: PointerEvent) => void;
   private pointerUpListener?: (event: PointerEvent) => void;
@@ -280,6 +286,8 @@ export class Drum implements PlayerVisual {
         baseColor:    () => this.uniforms.baseColor.value.set(this.params.baseColor),
         rimColor:     () => this.uniforms.rimColor.value.set(this.params.rimColor),
         hotColor:     () => this.uniforms.hotColor.value.set(this.params.hotColor),
+        hitTint:      () => this.uniforms.hitTint.value.set(this.params.hitTint),
+        hitTintAmount: v => { this.uniforms.hitTintAmount.value = v; },
         rippleSpeed:  v => { this.uniforms.rippleSpeed.value = v; },
         rippleFreq:   v => { this.uniforms.rippleFreq.value = v; },
         rippleDecay:  v => { this.uniforms.rippleDecay.value = v; },
@@ -413,8 +421,9 @@ export class Drum implements PlayerVisual {
     this.pointerLeaveListener = () => {
       this.pointerDown = false;
       this.pointerInside = false;
-      this.pointerPrevValid = false;
+      this.pointerNdcPrevValid = false;
       this.pointerLastAtMs = -Infinity;
+      for (let i = 0; i < ORB_COUNT; i += 1) this.pointerOrbInside[i] = false;
     };
 
     canvas.addEventListener('pointermove', this.pointerMoveListener);
@@ -435,11 +444,12 @@ export class Drum implements PlayerVisual {
     this.pointerLeaveListener = undefined;
   }
 
-  // Middle-row keyboard binding for the local player. A S D F G map directly
-  // to the 5 orbs in left-to-right order. Each key fires a synthetic hit on
-  // the corresponding orb.
+  // Middle-row keyboard binding for the local player. A maps to the orb
+  // closest to the camera; G to the furthest. The cluster lays out along +X
+  // and the locked game camera sits at +X looking toward -X, so highest-index
+  // orb (i=4) is nearest the player and bound to A.
   private static KEY_MAP: ReadonlyMap<string, number> = new Map([
-    ['a', 0], ['s', 1], ['d', 2], ['f', 3], ['g', 4],
+    ['a', 4], ['s', 3], ['d', 2], ['f', 1], ['g', 0],
   ]);
 
   private attachKeyboardEvents(): void {
@@ -467,56 +477,94 @@ export class Drum implements PlayerVisual {
     // Strike from the front of the orb (toward +z in local space).
     _hitDir.set(0, 0.2, 1);
     _hitDir.normalize();
-    this.collisionBVH.getPoint(orbIndex, _orbCenter);
-    _strikePoint.copy(_orbCenter).addScaledVector(_hitDir, this.params.orbRadius);
+    _strikePoint.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
     const velocity = 0.7;
     this.addRippleAt(_strikePoint, velocity);
     orb.lastHitAt = this.elapsed;
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
     const noteIndex = this.noteIndexForOrb(orbIndex);
+    const worldStrike = _strikePoint.clone().add(this.mesh.position);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
+      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: worldStrike });
     }
-    this.emitSparks(_strikePoint, velocity);
+    this.emitSparks(worldStrike, velocity);
   }
 
   private updatePointerGesture(delta: number): void {
-    const orb = this.orbs[0];
     const camera = this.camera;
-    if (!orb || !camera || !this.canvas) {
+    if (!camera || !this.canvas) {
       this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
       return;
     }
 
     const recent = (performance.now() - this.pointerLastAtMs) / 1000 < 0.42 || this.pointerDown;
     if (!recent) {
-      this.pointerInside = false;
-      this.pointerPrevValid = false;
-      this.pointerGlow += (0 - this.pointerGlow) * (1 - Math.exp(-delta * 8));
-      this.uniforms.gesture.value.w = this.pointerGlow;
-      this.uniforms.gestureDepth.value += (0 - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 8));
+      this.clearPointerVisualState(delta);
+      for (let i = 0; i < ORB_COUNT; i += 1) this.pointerOrbInside[i] = false;
+      this.pointerNdcPrevValid = false;
       this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
       return;
     }
 
-    _sphereCenter.copy(this.mesh.position).add(orb.mesh.position);
+    // NDC-space pointer speed. Independent of which orb is intersected; used
+    // as the "swipe speed" velocity for any hits triggered this frame.
+    let ndcSpeed = 0;
+    if (this.pointerNdcPrevValid && delta > 0) {
+      ndcSpeed = this.pointerNdc.distanceTo(this.pointerNdcPrev) / delta;
+    }
+    this.pointerNdcPrev.copy(this.pointerNdc);
+    this.pointerNdcPrevValid = true;
+
     _raycaster.setFromCamera(this.pointerNdc, camera);
     const ray = _raycaster.ray;
     const radius = this.params.orbRadius;
-    const distSq = ray.distanceSqToPoint(_sphereCenter);
-    const inside = distSq <= radius * radius;
 
-    if (!inside) {
-      this.pointerInside = false;
-      this.pointerPrevValid = false;
-      this.pointerGlow += (0 - this.pointerGlow) * (1 - Math.exp(-delta * 8));
-      this.uniforms.gesture.value.w = this.pointerGlow;
-      this.uniforms.gestureDepth.value += (0 - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 8));
+    // Find the orb the ray actually hits first (closest along ray) and update
+    // per-orb inside flags. An orb that flips false→true fires an entry hit.
+    let activeOrb = -1;
+    let bestT = Infinity;
+    for (let i = 0; i < ORB_COUNT; i += 1) {
+      _sphereCenter.copy(this.mesh.position).add(this.orbs[i].mesh.position);
+      const distSq = ray.distanceSqToPoint(_sphereCenter);
+      const inside = distSq <= radius * radius;
+      if (!inside) {
+        this.pointerOrbInside[i] = false;
+        continue;
+      }
+      ray.closestPointToPoint(_sphereCenter, _rayClosest);
+      const chordHalf = Math.sqrt(Math.max(0, radius * radius - distSq));
+      const tCenter = _rayClosest.distanceTo(ray.origin);
+      const tFront = Math.max(0, tCenter - chordHalf);
+      if (tFront < bestT) {
+        bestT = tFront;
+        activeOrb = i;
+      }
+    }
+
+    // Fire entry hits for any newly-entered orb (only the active one this
+    // frame; orbs occluded behind it don't trigger). Velocity scales with
+    // swipe speed so faster sweeps play louder, ripple harder, spray more.
+    if (activeOrb >= 0 && !this.pointerOrbInside[activeOrb]) {
+      const velocity = clamp(0.28 + ndcSpeed * 0.55 + (this.pointerDown ? 0.22 : 0), 0.22, 1);
+      this.firePointerHit(activeOrb, velocity);
+    }
+    for (let i = 0; i < ORB_COUNT; i += 1) {
+      this.pointerOrbInside[i] = i === activeOrb;
+    }
+
+    if (activeOrb < 0) {
+      this.clearPointerVisualState(delta);
       this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
       return;
     }
 
+    // Visual gesture render uses the active orb's chord-interpolated point in
+    // cluster-local space. The fragment shader compares that point to each
+    // sample position and lights up only the orb being hovered.
+    const orb = this.orbs[activeOrb];
+    _sphereCenter.copy(this.mesh.position).add(orb.mesh.position);
     ray.closestPointToPoint(_sphereCenter, _rayClosest);
+    const distSq = ray.distanceSqToPoint(_sphereCenter);
     const chordHalf = Math.sqrt(Math.max(0, radius * radius - distSq));
     const screenDepth = clamp(1 - Math.sqrt(distSq) / Math.max(radius, 1e-4), 0, 1);
     const chordT = clamp(0.18 + screenDepth * 0.64 + (this.pointerDown ? 0.14 : 0), 0.08, 0.94);
@@ -525,32 +573,52 @@ export class Drum implements PlayerVisual {
     _pointerWorld.copy(_rayFront).lerp(_rayBack, chordT);
     _pointerLocal.copy(_pointerWorld).sub(this.mesh.position);
 
-    let speedUnits = 0;
-    if (this.pointerPrevValid && delta > 0) {
-      speedUnits = _pointerLocal.distanceTo(_pointerPrev) / Math.max(radius, 1e-4) / delta;
-    }
-    _pointerPrev.copy(_pointerLocal);
-    this.pointerPrevValid = true;
-
-    const radial = clamp(_pointerLocal.length() / Math.max(radius, 1e-4), 0, 1);
+    const radial = clamp(_pointerLocal.distanceTo(orb.mesh.position) / Math.max(radius, 1e-4), 0, 1);
     const depth = clamp(1 - radial, 0, 1);
-    const speed = clamp(speedUnits / 7.5, 0, 1);
+    const speed = clamp(ndcSpeed / 4.0, 0, 1);
     const intensity = clamp(0.18 + speed * 0.52 + depth * 0.42 + (this.pointerDown ? 0.20 : 0), 0, 1);
     this.pointerGlow += (intensity - this.pointerGlow) * (1 - Math.exp(-delta * 12));
     this.uniforms.gesture.value.set(_pointerLocal.x, _pointerLocal.y, _pointerLocal.z, this.pointerGlow);
     this.uniforms.gestureDepth.value += (depth - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 10));
-
-    const newlyEntered = !this.pointerInside;
-    const shouldRipple = newlyEntered
-      || ((this.pointerDown || speed > 0.055) && this.elapsed - this.lastPointerRippleAt > 0.052);
-    if (shouldRipple) {
-      this.addRippleAt(_pointerLocal, clamp(intensity, 0.18, 1));
-      orb.hitPulse = Math.min(1, orb.hitPulse + 0.14 + intensity * 0.26);
-      this.lastPointerRippleAt = this.elapsed;
-    }
-
     this.pointerInside = true;
     this.emitGesture(true, _pointerLocal, depth, radial, speed);
+  }
+
+  private clearPointerVisualState(delta: number): void {
+    this.pointerInside = false;
+    this.pointerGlow += (0 - this.pointerGlow) * (1 - Math.exp(-delta * 8));
+    this.uniforms.gesture.value.w = this.pointerGlow;
+    this.uniforms.gestureDepth.value += (0 - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 8));
+  }
+
+  private firePointerHit(orbIndex: number, velocity: number): void {
+    const orb = this.orbs[orbIndex];
+    if (!orb) return;
+    if (this.elapsed - orb.lastHitAt <= this.params.hitCooldown) return;
+    orb.lastHitAt = this.elapsed;
+
+    // Strike from the orb surface facing the camera. Local strike point is
+    // for the cluster-shader ripple sampler; world position drives the
+    // sound-sculpture spark direction.
+    this.collisionBVH.getPoint(orbIndex, _orbCenter);
+    if (this.camera) {
+      _hitDir.copy(this.camera.position).sub(_orbCenter);
+      if (_hitDir.lengthSq() < 1e-6) _hitDir.set(0, 0, 1);
+      _hitDir.normalize();
+    } else {
+      _hitDir.set(0, 0, 1);
+    }
+    _strikePoint.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
+    this.addRippleAt(_strikePoint, velocity);
+
+    orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
+    const noteIndex = this.noteIndexForOrb(orbIndex);
+    const worldStrike = _strikePoint.clone().add(this.mesh.position);
+    if (this.onHitCallback) {
+      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: worldStrike });
+    }
+    this.emitSparks(worldStrike, velocity);
+    this.lastPointerRippleAt = this.elapsed;
   }
 
   private emitGesture(active: boolean, localPoint: THREE.Vector3, depth: number, radius: number, speed: number): void {
@@ -667,10 +735,11 @@ export class Drum implements PlayerVisual {
 
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
     const noteIndex = this.noteIndexForOrb(orbIndex);
+    const worldStrike = _strikePoint.clone().add(this.mesh.position);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
+      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: worldStrike });
     }
-    this.emitSparks(_strikePoint, velocity);
+    this.emitSparks(worldStrike, velocity);
   }
 
   private emitSparks(worldPosition: THREE.Vector3, velocity: number): void {
@@ -800,9 +869,13 @@ export class Drum implements PlayerVisual {
       // that cast-metal read.
       const latShade = float(1).sub(float(1).sub(positionLocal.y.abs()).mul(0.18));
 
+      // Hit-tint lerp: base orb color shifts toward hitTint while the per-orb
+      // pulse decays. So a struck orb visibly glows green and fades back.
+      const tintBase = mix(u.baseColor, u.hitTint, perOrb.pulse.mul(u.hitTintAmount).clamp(0, 1)).toVar('orbTintBase');
+
       const lit = mix(
-        u.baseColor.mul(0.45),
-        u.baseColor,
+        tintBase.mul(0.45),
+        tintBase,
         smoothstep(float(0), float(1), ndl),
       ).mul(latShade).toVar('lit');
 
