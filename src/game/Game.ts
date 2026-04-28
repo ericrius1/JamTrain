@@ -8,7 +8,6 @@ import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
 import { clamp } from './math';
 import { MultiplayerClient } from './multiplayer';
-import { LinkParticles } from './particles';
 import { Drum } from './visuals/Drum';
 import { Starlace } from './visuals/Starlace';
 import { RoundDirector } from './RoundDirector';
@@ -25,7 +24,7 @@ import { HumanoidRig } from './rig/HumanoidRig';
 import { RobotMotionController } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { hashString } from './seedRandom';
-import { fingerJointNames, fingerNames, handednesses, type LinkSample, type PlayerPose, type Vec3Data } from './types';
+import { fingerJointNames, fingerNames, handednesses, type PlayerPose, type Vec3Data } from './types';
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 
