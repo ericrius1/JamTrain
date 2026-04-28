@@ -46,6 +46,24 @@ export type HandContactPoint = {
   position: THREE.Vector3;
 };
 
+export type OrbGestureState = {
+  active: boolean;
+  /** Local orb coordinates normalized by radius, roughly -1..1. */
+  x: number;
+  y: number;
+  z: number;
+  /** 0 at the outer shell, 1 near the orb core. */
+  depth: number;
+  /** 0 near the core, 1 near the outer shell. */
+  radius: number;
+  /** 0..1 normalized pointer/contact speed. */
+  speed: number;
+  /** Azimuth around the orb in radians. */
+  angle: number;
+  /** 0..1 visual/audio energy for the current gesture sample. */
+  intensity: number;
+};
+
 export type InstrumentMeta = {
   id: InstrumentId;
   /** Human-friendly name for plaques and tooltips. */
@@ -75,10 +93,10 @@ export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
   },
   orbs: {
     id: 'orbs',
-    label: 'Hang Orbs',
-    subtitle: 'tap · steel · ripples',
+    label: 'Ripple Orb',
+    subtitle: 'move · dive · resonate',
     color: '#9be7ff',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.4" cy="9.4" r="2.6"/><circle cx="12" cy="6" r="2.6"/><circle cx="17.6" cy="9.4" r="2.6"/><circle cx="8.6" cy="16.6" r="2.6"/><circle cx="15.4" cy="16.6" r="2.6"/><circle cx="12" cy="6" r="0.9" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="8.6" cy="16.6" r="0.9" fill="currentColor" stroke="none" opacity="0.7"/></svg>`,
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="7.2"/><circle cx="12" cy="12" r="3.2" opacity="0.7"/><path d="M4.8 12c3.4-2.3 10.1-2.3 14.4 0"/><path d="M4.8 12c3.4 2.3 10.1 2.3 14.4 0"/><circle cx="14.2" cy="9.2" r="1.1" fill="currentColor" stroke="none"/></svg>`,
   },
 };
 

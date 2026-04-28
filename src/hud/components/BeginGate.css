@@ -259,29 +259,7 @@
   max-width: 320px;
   text-align: center;
 }
-.begin-webcam-notice {
-  margin-top: 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  max-width: 360px;
-  padding: 8px 14px;
-  border: 1px solid var(--brass-2);
-  border-radius: 2px;
-  background: rgba(0, 0, 0, 0.4);
-  color: var(--parchment);
-  font-family: 'IM Fell English', serif;
-  font-style: italic;
-  font-size: 13px;
-  line-height: 1.35;
-  text-align: left;
-}
-.begin-webcam-notice svg {
-  width: 18px;
-  height: 18px;
-  color: var(--sun);
-  flex: 0 0 auto;
-}
+
 
 .begin-err {
   font-family: 'JetBrains Mono', monospace;

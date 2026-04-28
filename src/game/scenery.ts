@@ -38,10 +38,15 @@ const PAINTED_TERRAIN_CHUNKS = [
   { id: 'red-mesa', texture: '/scenery/far-terrain-chunk-04-red-mesa.webp' },
   { id: 'coastal-lake', texture: '/scenery/far-terrain-chunk-05-coastal-lake.webp' },
   { id: 'meadow-fields', texture: '/scenery/far-terrain-chunk-06-meadow-fields.webp' },
+  { id: 'cypress-wetland', texture: '/scenery/far-terrain-chunk-07-cypress-wetland.webp' },
+  { id: 'autumn-moor', texture: '/scenery/far-terrain-chunk-08-autumn-moor.webp' },
+  { id: 'basalt-coast', texture: '/scenery/far-terrain-chunk-09-basalt-coast.webp' },
+  { id: 'lavender-steppe', texture: '/scenery/far-terrain-chunk-10-lavender-steppe.webp' },
+  { id: 'crystal-ravine', texture: '/scenery/far-terrain-chunk-11-crystal-ravine.webp' },
 ] as const;
 const PAINTED_TERRAIN_SEQUENCE = [
-  0, 1, 4, 2, 5, 3,
-  1, 0, 4, 5, 2, 3,
+  0, 1, 6, 4, 8, 2, 10, 7, 5, 9, 3,
+  1, 0, 4, 6, 5, 7, 10, 2, 8, 9, 3,
 ] as const;
 const PAINTED_TERRAIN_CHUNK_WIDTH = 12.6;
 const PAINTED_TERRAIN_BLEND_WIDTH = 2.4;
@@ -49,7 +54,7 @@ const PAINTED_TERRAIN_CHUNK_STRIDE = PAINTED_TERRAIN_CHUNK_WIDTH - PAINTED_TERRA
 const PAINTED_TERRAIN_HEIGHT = 3.15;
 const PAINTED_TERRAIN_X_DISTANCE = 4.86;
 const PAINTED_TERRAIN_Y = 1.34;
-const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 240;
+const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 360;
 const PAINTED_TERRAIN_MAX_SPEED = 3;
 
 export const SCENERY_DEFS = {

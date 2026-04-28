@@ -17,27 +17,27 @@ import {
   vec4,
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
-import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments';
+import type { HandContactPoint, OrbGestureState, PlayerVisual, VoiceState } from '../instruments';
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
 export const ORB_DRUMS_DEFS = {
-  orbRadius:       { default: 0.085, min: 0.04, max: 0.16, step: 0.001, label: 'orb radius' },
-  ringRadius:      { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'ring radius' },
-  bobAmount:       { default: 0.012, min: 0,    max: 0.06, step: 0.001, label: 'bob amount' },
+  orbRadius:       { default: 0.285, min: 0.16, max: 0.52, step: 0.001, label: 'orb radius' },
+  ringRadius:      { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'ring radius', hidden: true },
+  bobAmount:       { default: 0.018, min: 0,    max: 0.06, step: 0.001, label: 'bob amount' },
   bobSpeed:        { default: 0.7,   min: 0,    max: 3,    step: 0.05,  label: 'bob speed' },
-  rippleSpeed:     { default: 1.55,  min: 0.2,  max: 4,    step: 0.01,  label: 'wave speed' },
-  rippleFreq:      { default: 22,    min: 4,    max: 80,   step: 0.5,   label: 'wave number' },
-  rippleDecay:     { default: 2.4,   min: 0.2,  max: 4,    step: 0.05,  label: 'wave decay s' },
-  rippleSigma:     { default: 0.24,  min: 0.05, max: 1.5,  step: 0.01,  label: 'packet width' },
-  rippleDisplace:  { default: 0.030, min: 0,    max: 0.12, step: 0.001, label: 'surface ripple' },
-  rippleGlow:      { default: 1.15,  min: 0,    max: 4,    step: 0.05,  label: 'crest glow' },
-  hitDistance:     { default: 0.055, min: 0,    max: 0.14, step: 0.001, label: 'hit margin' },
-  palmRadius:      { default: 0.080, min: 0.02, max: 0.14, step: 0.001, label: 'palm radius' },
-  fingerRadius:    { default: 0.038, min: 0.01, max: 0.10, step: 0.001, label: 'finger radius' },
-  hitCooldown:     { default: 0.10,  min: 0.03, max: 0.6,  step: 0.005, label: 'hit cooldown s' },
-  hitVelMin:       { default: 0.02,  min: 0,    max: 1,    step: 0.005, label: 'hit vel min m/s' },
-  anchorSmoothing: { default: 4.0,   min: 0.2,  max: 12,   step: 0.1,   label: 'anchor smoothing s' },
+  rippleSpeed:     { default: 1.28,  min: 0.2,  max: 4,    step: 0.01,  label: 'wave speed' },
+  rippleFreq:      { default: 27,    min: 4,    max: 80,   step: 0.5,   label: 'wave number' },
+  rippleDecay:     { default: 3.1,   min: 0.2,  max: 6,    step: 0.05,  label: 'wave decay s' },
+  rippleSigma:     { default: 0.18,  min: 0.05, max: 1.5,  step: 0.01,  label: 'packet width' },
+  rippleDisplace:  { default: 0.050, min: 0,    max: 0.16, step: 0.001, label: 'surface ripple' },
+  rippleGlow:      { default: 1.65,  min: 0,    max: 4,    step: 0.05,  label: 'crest glow' },
+  hitDistance:     { default: 0.045, min: 0,    max: 0.20, step: 0.001, label: 'hit margin' },
+  palmRadius:      { default: 0.100, min: 0.02, max: 0.18, step: 0.001, label: 'palm radius' },
+  fingerRadius:    { default: 0.050, min: 0.01, max: 0.12, step: 0.001, label: 'finger radius' },
+  hitCooldown:     { default: 0.075, min: 0.03, max: 0.6,  step: 0.005, label: 'hit cooldown s' },
+  hitVelMin:       { default: 0.012, min: 0,    max: 1,    step: 0.005, label: 'hit vel min m/s' },
+  anchorSmoothing: { default: 8.0,   min: 0.2,  max: 18,   step: 0.1,   label: 'anchor smoothing s' },
   baseColor:       { type: 'color', default: '#1d3247', label: 'base' },
   rimColor:        { type: 'color', default: '#7ad9ff', label: 'rim' },
   hotColor:        { type: 'color', default: '#fff8d6', label: 'hot' },
@@ -46,7 +46,7 @@ export const ORB_DRUMS_DEFS = {
 export type OrbDrumsParams = ParamsOf<typeof ORB_DRUMS_DEFS>;
 
 export type OrbHit = {
-  /** Index of the orb (0..ORB_COUNT-1). */
+  /** Scale field selected from the strike point on the single orb. */
   orbIndex: number;
   /** Hertz — pre-computed for the orb's note. */
   frequency: number;
@@ -60,22 +60,24 @@ type OrbDrumsOptions = {
   palette?: OrbDrumsPalette;
   title?: string;
   onHit?: (event: OrbHit) => void;
+  onGesture?: (gesture: OrbGestureState) => void;
+  camera?: THREE.Camera;
+  canvas?: HTMLCanvasElement;
 };
 
-// 7 orbs in a hang-drum-style hex pattern: 1 center "ding" + 6 outer notes.
-const ORB_COUNT = 7;
+// One playable orb. Pitch/color fields are carved out of the sphere instead of
+// spread across separate drum pads.
+const ORB_COUNT = 1;
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
-const MAX_RIPPLES = 15;
-const RIPPLE_MAX_AGE = 5.2;
+const MAX_RIPPLES = 24;
+const RIPPLE_MAX_AGE = 5.8;
 
 type AnyNode = any;
 
-// D minor pentatonic across one octave above D3, with the center orb at the
-// low D3 "ding". Reads like a real handpan: low fundamental + 6 melody fields.
-//   center: D3
-//   outer:  F3, G3, A3, C4, D4, F4
+// D minor pentatonic fields across the single orb. Hand strikes and mouse
+// dives pick from this field while the continuous synth bends between notes.
 const ORB_HZ: number[] = [
   146.832,  // D3 — center "ding"
   174.614,  // F3
@@ -84,21 +86,15 @@ const ORB_HZ: number[] = [
   261.626,  // C4
   293.665,  // D4
   349.228,  // F4
+  391.995,  // G4
+  440.000,  // A4
+  523.251,  // C5
+  587.330,  // D5
 ];
 
-// Local-space offsets (relative to anchor) for each orb. y stays at 0 — orbs
-// float on a flat horizontal plane in front of the player.
 function makeOrbOffsets(ringRadius: number): THREE.Vector3[] {
-  const offsets: THREE.Vector3[] = [new THREE.Vector3(0, 0, 0)];
-  for (let i = 0; i < 6; i += 1) {
-    const angle = (i / 6) * Math.PI * 2 - Math.PI / 2;
-    offsets.push(new THREE.Vector3(
-      Math.cos(angle) * ringRadius,
-      Math.sin(angle * 0.5) * ringRadius * 0.18, // tiny vertical wobble per orb
-      Math.sin(angle) * ringRadius,
-    ));
-  }
-  return offsets;
+  void ringRadius;
+  return [new THREE.Vector3(0, 0, 0)];
 }
 
 function createOrbUniforms(params: OrbDrumsParams) {
@@ -113,6 +109,8 @@ function createOrbUniforms(params: OrbDrumsParams) {
     rippleSigma:  uniform(params.rippleSigma),
     rippleDisplace: uniform(params.rippleDisplace),
     rippleGlow:   uniform(params.rippleGlow),
+    gesture:      uniform(new THREE.Vector4(0, 0, 0, 0)),
+    gestureDepth: uniform(0),
   };
 }
 type OrbUniforms = ReturnType<typeof createOrbUniforms>;
@@ -148,6 +146,14 @@ const _orbCenter = new THREE.Vector3();
 const _strikePoint = new THREE.Vector3();
 const _segment = new THREE.Vector3();
 const _pointToStart = new THREE.Vector3();
+const _pointerWorld = new THREE.Vector3();
+const _pointerLocal = new THREE.Vector3();
+const _pointerPrev = new THREE.Vector3();
+const _rayClosest = new THREE.Vector3();
+const _rayFront = new THREE.Vector3();
+const _rayBack = new THREE.Vector3();
+const _sphereCenter = new THREE.Vector3();
+const _raycaster = new THREE.Raycaster();
 
 export class OrbDrums implements PlayerVisual {
   readonly mesh: THREE.Group;
@@ -173,16 +179,33 @@ export class OrbDrums implements PlayerVisual {
   private rippleSources: THREE.Vector4[] = [];
   private rippleStarts: number[] = [];
   private rippleCursor = 0;
+  private pointerNdc = new THREE.Vector2(999, 999);
+  private pointerLastAtMs = -Infinity;
+  private pointerDown = false;
+  private pointerInside = false;
+  private pointerPrevValid = false;
+  private pointerGlow = 0;
+  private lastPointerRippleAt = -Infinity;
+  private pointerMoveListener?: (event: PointerEvent) => void;
+  private pointerDownListener?: (event: PointerEvent) => void;
+  private pointerUpListener?: (event: PointerEvent) => void;
+  private pointerLeaveListener?: () => void;
 
   private uniforms: OrbUniforms;
 
   private onHitCallback?: (e: OrbHit) => void;
+  private onGestureCallback?: (gesture: OrbGestureState) => void;
   private registered?: ReturnType<typeof registerTweaks<typeof ORB_DRUMS_DEFS>>;
+  private camera?: THREE.Camera;
+  private canvas?: HTMLCanvasElement;
 
   constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'orbDrums', opts: OrbDrumsOptions = {}) {
     this.params = { ...Object.fromEntries(Object.entries(ORB_DRUMS_DEFS).map(([k, d]) => [k, d.default])) } as OrbDrumsParams;
     applyPaletteDefaults(this.params, opts.palette ?? 'local');
     this.onHitCallback = opts.onHit;
+    this.onGestureCallback = opts.onGesture;
+    this.camera = opts.camera;
+    this.canvas = opts.canvas;
 
     this.mesh = new THREE.Group();
     this.mesh.name = `orb-drums-${opts.palette ?? 'local'}`;
@@ -246,6 +269,8 @@ export class OrbDrums implements PlayerVisual {
         ringRadius:   () => this.layoutOrbs(),
       },
     });
+
+    if (this.camera && this.canvas) this.attachPointerEvents(this.canvas);
   }
 
   setVisible(visible: boolean): void {
@@ -272,12 +297,15 @@ export class OrbDrums implements PlayerVisual {
       this.placeGroup();
     }
 
-    // Anchor follows hand cloud center with strong smoothing — feels like a
-    // table you've placed in front of you, not glued to your palms.
-    _palmTmp.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
-    _palmTmp.z -= 0.06;
-    const alpha = 1 - Math.exp(-delta / Math.max(0.05, this.params.anchorSmoothing));
-    this.anchor.lerp(_palmTmp, alpha);
+    // Anchor follows hand cloud center with strong smoothing. While the mouse
+    // is actively inside the orb, freeze the anchor so the instrument does not
+    // run away from the pointer.
+    if (!this.pointerInside && !this.pointerDown) {
+      _palmTmp.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
+      _palmTmp.z -= 0.06;
+      const alpha = 1 - Math.exp(-delta / Math.max(0.05, this.params.anchorSmoothing));
+      this.anchor.lerp(_palmTmp, alpha);
+    }
     this.placeGroup();
 
     this.smoothedEnergy += (voice.energy - this.smoothedEnergy) * (1 - Math.exp(-delta * 5));
@@ -296,6 +324,7 @@ export class OrbDrums implements PlayerVisual {
 
     this.collisionBVH.refit();
     this.processContactHits(this.resolveContacts(leftPalm, rightPalm, contacts), delta);
+    this.updatePointerGesture(delta);
 
     for (const orb of this.orbs) {
       // Decay the per-orb hit flash and push into shader uniform.
@@ -309,6 +338,7 @@ export class OrbDrums implements PlayerVisual {
 
   dispose(): void {
     this.registered?.dispose();
+    this.detachPointerEvents();
     for (const orb of this.orbs) {
       orb.mesh.geometry.dispose();
       orb.material.dispose();
@@ -410,15 +440,13 @@ export class OrbDrums implements PlayerVisual {
 
     const velocity = clamp(speed / 1.6, 0.18, 1);
 
-    const slot = this.rippleCursor % MAX_RIPPLES;
     _strikePoint.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
-    this.rippleSources[slot].set(_strikePoint.x, _strikePoint.y, _strikePoint.z, velocity);
-    this.rippleStarts[slot] = this.elapsed;
-    this.rippleCursor = (this.rippleCursor + 1) % MAX_RIPPLES;
+    this.addRippleAt(_strikePoint, velocity);
 
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency: ORB_HZ[orbIndex], velocity });
+      const noteIndex = this.noteIndexForPoint(_strikePoint);
+      this.onHitCallback({ orbIndex: noteIndex, frequency: ORB_HZ[noteIndex], velocity });
     }
   }
 

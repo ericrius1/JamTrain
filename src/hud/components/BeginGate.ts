@@ -227,16 +227,7 @@ export class BeginGate {
     button.innerHTML = 'ALL ABOARD <span aria-hidden="true">▸</span>';
     field.appendChild(button);
 
-    const webcamNotice = this.div('begin-webcam-notice');
-    webcamNotice.innerHTML = `
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"
-           stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="2" y="6" width="14" height="12" rx="2" />
-        <path d="M16 10l6-3v10l-6-3z" />
-      </svg>
-      <span>Play with mouse or trackpad now — camera hand play is optional.</span>
-    `;
-    field.appendChild(webcamNotice);
+  
 
     const err = this.div('begin-err');
     field.appendChild(err);
