@@ -145,8 +145,10 @@ export class Starlace implements PlayerVisual {
   private pulseLineMaterial: THREE.LineBasicMaterial;
   private lineSegments: THREE.LineSegments;
   private pulseLineSegments: THREE.LineSegments;
-  private nodeMesh: THREE.InstancedMesh;
-  private nodeMaterial: THREE.MeshBasicMaterial;
+  private nodeGeometry: THREE.SphereGeometry;
+  private nodeMeshes: THREE.InstancedMesh[] = [];
+  private nodeMaterials: THREE.MeshBasicMaterial[] = [];
+  private nodeMeshSlots: Array<{ meshIndex: number; slot: number }> = [];
   private sparkMesh: THREE.InstancedMesh;
   private sparkMaterial: THREE.MeshBasicMaterial;
 
@@ -295,18 +297,8 @@ export class Starlace implements PlayerVisual {
     this.pulseLineSegments.renderOrder = 17;
     this.mesh.add(this.lineSegments, this.pulseLineSegments);
 
-    this.nodeMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.82,
-      blending: THREE.NormalBlending,
-      depthWrite: false,
-      vertexColors: true,
-    });
-    this.nodeMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), this.nodeMaterial, this.nodes.length);
-    this.nodeMesh.frustumCulled = false;
-    this.nodeMesh.renderOrder = 20;
-    this.mesh.add(this.nodeMesh);
+    this.nodeGeometry = new THREE.SphereGeometry(1, 10, 8);
+    this.buildNodeMeshes();
 
     this.sparkMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
@@ -573,8 +565,8 @@ export class Starlace implements PlayerVisual {
     this.pulseLineGeometry.dispose();
     this.lineMaterial.dispose();
     this.pulseLineMaterial.dispose();
-    this.nodeMesh.geometry.dispose();
-    this.nodeMaterial.dispose();
+    this.nodeGeometry.dispose();
+    for (const material of this.nodeMaterials) material?.dispose();
     this.sparkMesh.geometry.dispose();
     this.sparkMaterial.dispose();
     this.mesh.removeFromParent();
@@ -684,6 +676,37 @@ export class Starlace implements PlayerVisual {
       });
     }
     this.keyboardStartCursor = Array.from({ length: this.hzTable.length }, () => 0);
+  }
+
+  private buildNodeMeshes(): void {
+    const paletteCount = STARLACE_NOTE_PALETTE.length;
+    const counts = Array.from({ length: paletteCount }, () => 0);
+    this.nodeMeshSlots = Array.from({ length: this.nodes.length }, () => ({ meshIndex: 0, slot: 0 }));
+
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      const meshIndex = this.notePaletteIndexForNode(this.nodes[i]);
+      const slot = counts[meshIndex];
+      counts[meshIndex] += 1;
+      this.nodeMeshSlots[i] = { meshIndex, slot };
+    }
+
+    for (let i = 0; i < paletteCount; i += 1) {
+      const count = counts[i];
+      if (count <= 0) continue;
+      const material = new THREE.MeshBasicMaterial({
+        color: STARLACE_NOTE_PALETTE[i],
+        transparent: true,
+        opacity: 0.88,
+        blending: THREE.NormalBlending,
+        depthWrite: false,
+      });
+      const mesh = new THREE.InstancedMesh(this.nodeGeometry, material, count);
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 20;
+      this.nodeMaterials[i] = material;
+      this.nodeMeshes[i] = mesh;
+      this.mesh.add(mesh);
+    }
   }
 
   private resolveAxes(): void {
@@ -797,22 +820,12 @@ export class Starlace implements PlayerVisual {
       _dummy.position.copy(node.world);
       _dummy.scale.setScalar(size);
       _dummy.updateMatrix();
-      this.nodeMesh.setMatrixAt(i, _dummy.matrix);
-
-      this.noteColorForNode(node, _colorA);
-      _colorB.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
-      _colorA.lerp(_colorB, 0.12 + twinkle * 0.06);
-      _colorA.lerp(this.gold, hash(node.seed * 29.1 + node.noteIndex) > 0.80 ? 0.08 : 0.015);
-      _colorA.lerp(this.hot, Math.pow(pulse, 2.4) * 0.045);
-      const boost = 0.86 + pulse * 0.24 + twinkle * 0.04;
-      _colorB.copy(_colorA).multiplyScalar(boost);
-      _colorB.r = Math.min(_colorB.r, 0.96);
-      _colorB.g = Math.min(_colorB.g, 0.92);
-      _colorB.b = Math.min(_colorB.b, 0.98);
-      this.nodeMesh.setColorAt(i, _colorB);
+      const slot = this.nodeMeshSlots[i];
+      this.nodeMeshes[slot.meshIndex]?.setMatrixAt(slot.slot, _dummy.matrix);
     }
-    this.nodeMesh.instanceMatrix.needsUpdate = true;
-    if (this.nodeMesh.instanceColor) this.nodeMesh.instanceColor.needsUpdate = true;
+    for (const mesh of this.nodeMeshes) {
+      if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    }
   }
 
   private writeSparks(): void {
@@ -1340,8 +1353,18 @@ export class Starlace implements PlayerVisual {
     this.noteColors = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex).multiplyScalar(1.00));
     this.lineMaterial.color.setRGB(0.98, 0.97, 0.94);
     this.pulseLineMaterial.color.setRGB(1.00, 0.96, 0.92);
-    this.nodeMaterial.color.setRGB(1.00, 0.98, 0.94);
+    for (let i = 0; i < this.nodeMaterials.length; i += 1) {
+      const material = this.nodeMaterials[i];
+      if (!material) continue;
+      material.color.copy(this.noteColors[i % this.noteColors.length]).lerp(this.gold, i % 4 === 0 ? 0.10 : 0.025);
+    }
     this.sparkMaterial.color.setRGB(1.00, 0.97, 0.92);
+  }
+
+  private notePaletteIndexForNode(node: StarNode): number {
+    const maxNote = Math.max(1, this.hzTable.length - 1);
+    const palettePos = (node.noteIndex / maxNote) * (STARLACE_NOTE_PALETTE.length - 1);
+    return clamp(Math.round(palettePos), 0, STARLACE_NOTE_PALETTE.length - 1);
   }
 
   private noteColorForNode(node: StarNode, target: THREE.Color): THREE.Color {
