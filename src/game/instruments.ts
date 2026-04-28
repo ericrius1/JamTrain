@@ -111,6 +111,7 @@ export function normalizeInstrumentId(value: string | undefined | null): Instrum
  * Per-player visual contract. Positions are world-space THREE.Vector3.
  */
 export interface PlayerVisual {
+  readonly mesh: THREE.Object3D;
   update(
     leftPalm: THREE.Vector3,
     rightPalm: THREE.Vector3,
@@ -118,6 +119,7 @@ export interface PlayerVisual {
     delta: number,
     contacts?: readonly HandContactPoint[],
   ): void;
+  setAnchor(anchor: THREE.Vector3): void;
   setVisible(visible: boolean): void;
   /** Hide the visual without an animation — used at construction time before
    *  the intro animation kicks in. */

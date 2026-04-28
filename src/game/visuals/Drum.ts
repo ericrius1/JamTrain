@@ -394,6 +394,12 @@ export class Drum implements PlayerVisual {
     this.mesh.visible = visible;
   }
 
+  setAnchor(anchor: THREE.Vector3): void {
+    this.fixedAnchor = anchor.clone();
+    this.anchor.copy(anchor);
+    this.placeGroup();
+  }
+
   startHidden(): void {
     this.mesh.visible = false;
     this.revealedFully = false;

@@ -4,6 +4,8 @@ export type JamChordVoicing = {
   bass: string;
 };
 
+export type JamStarlaceChord = readonly [string, string] | readonly [string, string, string];
+
 export const JAM_SCALE_NAME = 'D major pentatonic';
 
 export const JAM_PLAYABLE_NOTES_LOCAL: string[] = [
@@ -82,6 +84,26 @@ export const JAM_STARLACE_NOTES: string[] = [
   'E5',
   'F#5',
   'A5',
+];
+
+// Starlace chords stay inside the D major pentatonic set used by the orbs and
+// backing-bed upper voices, so node walks remain consonant across Bm/G/D/A bass
+// movement without C#/D or G/F# rubs.
+export const JAM_STARLACE_CHORDS: JamStarlaceChord[] = [
+  ['D3',  'A3',  'F#4'],
+  ['E3',  'B3',  'A4'],
+  ['F#3', 'A3',  'D4'],
+  ['A3',  'D4',  'E4'],
+  ['B3',  'D4',  'F#4'],
+  ['D4',  'F#4', 'A4'],
+  ['E4',  'A4',  'B4'],
+  ['F#4', 'A4',  'D5'],
+  ['A4',  'D5',  'E5'],
+  ['B4',  'D5',  'F#5'],
+  ['D5',  'F#5', 'A5'],
+  ['B4',  'E5',  'A5'],
+  ['A4',  'D5',  'F#5'],
+  ['E5',  'A5'],
 ];
 
 export const JAM_STARLACE_HZ: number[] = [

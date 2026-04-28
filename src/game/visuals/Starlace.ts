@@ -28,6 +28,7 @@ export type StarlaceParams = ParamsOf<typeof STARLACE_DEFS>;
 
 export type StarlacePluck = {
   nodeIndex: number;
+  noteIndex: number;
   frequency: number;
   velocity: number;
   x: number;
@@ -320,6 +321,12 @@ export class Starlace implements PlayerVisual {
       this.currentContactKeys.clear();
       this.keyboardPaths.clear();
     }
+  }
+
+  setAnchor(anchor: THREE.Vector3): void {
+    this.fixedAnchor = anchor.clone();
+    this.anchor.copy(anchor);
+    this.center.copy(anchor);
   }
 
   startHidden(): void {
@@ -1029,6 +1036,7 @@ export class Starlace implements PlayerVisual {
     if (this.onPluckCallback) {
       this.onPluckCallback({
         nodeIndex,
+        noteIndex: node.noteIndex,
         frequency: STARLACE_HZ[node.noteIndex],
         velocity,
         x: clamp(node.u + 0.5, 0, 1),

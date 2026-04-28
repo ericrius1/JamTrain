@@ -129,6 +129,10 @@ export class Game {
   private keyLight?: THREE.DirectionalLight;
   private cabinLights: { light: THREE.PointLight; baseIntensity: number }[] = [];
   private playerVisuals: Record<PlayerSlot, PlayerVisual | null> = { local: null, remote: null };
+  private playerVisualCache: Record<PlayerSlot, Partial<Record<InstrumentId, PlayerVisual>>> = {
+    local: {},
+    remote: {},
+  };
   private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'starlace' };
   private pendingPartnerInstrument: InstrumentId | null = null;
   private roundDirector!: RoundDirector;
@@ -242,6 +246,7 @@ export class Game {
       this.localRig.setSeatIndex(localSeat);
       this.remoteRig.setSeatIndex(partnerSeat);
       this.applyPlayerBackOffset();
+      this.updatePlayerVisualAnchors();
     });
     this.robotMotion = new RobotMotionController(this.paneDock);
     this.scenery = new ScenerySystem(this.scene, this.paneDock, {
@@ -273,6 +278,7 @@ export class Game {
       this.sculptor.beginDissolve();
     });
     this.installPlayerVisuals();
+    await this.prewarmPlayerVisuals();
     this.refreshArchetype();
     this.roundDirector.start();
     this.setupShadowsPane();
@@ -447,8 +453,7 @@ export class Game {
     this.scenery.dispose();
     this.sculptor?.dispose();
     this.roundDirector?.dispose();
-    this.playerVisuals.local?.dispose();
-    this.playerVisuals.remote?.dispose();
+    this.disposePlayerVisuals();
     this.audio.dispose();
     this.handSynth.dispose();
     this.audioGraph.dispose();
@@ -838,14 +843,17 @@ export class Game {
   }
 
   private installPlayerVisuals(): void {
+    this.ensurePlayerVisual('local', 'drum');
+    this.ensurePlayerVisual('local', 'starlace');
+    this.ensurePlayerVisual('remote', 'drum');
+    this.ensurePlayerVisual('remote', 'starlace');
     this.installPlayerVisualImmediate('local', this.playerInstruments.local);
     this.installPlayerVisualImmediate('remote', this.playerInstruments.remote);
   }
 
-  private installPlayerVisualImmediate(player: PlayerSlot, id: InstrumentId): void {
-    this.playerVisuals[player]?.dispose();
-    this.playerInstruments[player] = id;
-
+  private ensurePlayerVisual(player: PlayerSlot, id: InstrumentId): PlayerVisual {
+    const cached = this.playerVisualCache[player][id];
+    if (cached) return cached;
     const seatIndex = player === 'local' ? this.multiplayer.localSeatIndex : this.multiplayer.partnerSeatIndex;
     const anchor = this.computeInstrumentAnchor(seatIndex);
     let visual: PlayerVisual;
@@ -858,7 +866,15 @@ export class Game {
         camera: player === 'local' ? this.camera : undefined,
         canvas: player === 'local' ? this.canvas : undefined,
         onPluck: pluck => {
-          this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
+          this.handSynth.triggerStarlacePluck(
+            player,
+            pluck.frequency,
+            pluck.velocity,
+            pluck.nodeIndex,
+            pluck.x,
+            pluck.y,
+            pluck.noteIndex,
+          );
           this.lastStarlacePluckAt = performance.now() / 1000;
           this.checkSynchrony();
         },
@@ -882,7 +898,22 @@ export class Game {
         },
       });
     }
+    visual.startHidden();
+    this.playerVisualCache[player][id] = visual;
+    return visual;
+  }
+
+  private installPlayerVisualImmediate(player: PlayerSlot, id: InstrumentId): void {
+    const previous = this.playerVisuals[player];
+    const visual = this.ensurePlayerVisual(player, id);
+    if (previous && previous !== visual) {
+      previous.startHidden();
+    }
+
+    const seatIndex = player === 'local' ? this.multiplayer.localSeatIndex : this.multiplayer.partnerSeatIndex;
+    visual.setAnchor(this.computeInstrumentAnchor(seatIndex));
     this.playerVisuals[player] = visual;
+    this.playerInstruments[player] = id;
     this.handSynth.setInstrument(player, id);
     // Always start hidden — the caller decides when to play the intro
     // animation (after All Aboard, or on instrument swap).
@@ -890,6 +921,50 @@ export class Game {
     if (!this.introActive) {
       visual.playIntroAnimation();
     }
+  }
+
+  private async prewarmPlayerVisuals(): Promise<void> {
+    const visuals = new Set<PlayerVisual>();
+    for (const slot of ['local', 'remote'] as const) {
+      for (const id of ['drum', 'starlace'] as const) {
+        const visual = this.playerVisualCache[slot][id];
+        if (visual) visuals.add(visual);
+      }
+    }
+
+    for (const visual of visuals) {
+      const wasVisible = visual.mesh.visible;
+      visual.mesh.visible = true;
+      try {
+        await this.renderer.compileAsync(visual.mesh, this.camera, this.scene);
+      } catch (err) {
+        console.warn('[game] visual prewarm failed', err);
+      } finally {
+        visual.mesh.visible = wasVisible;
+      }
+    }
+  }
+
+  private updatePlayerVisualAnchors(): void {
+    for (const player of ['local', 'remote'] as const) {
+      const seatIndex = player === 'local' ? this.multiplayer.localSeatIndex : this.multiplayer.partnerSeatIndex;
+      const anchor = this.computeInstrumentAnchor(seatIndex);
+      for (const visual of Object.values(this.playerVisualCache[player])) {
+        visual?.setAnchor(anchor);
+      }
+    }
+  }
+
+  private disposePlayerVisuals(): void {
+    const visuals = new Set<PlayerVisual>();
+    for (const slot of ['local', 'remote'] as const) {
+      for (const visual of Object.values(this.playerVisualCache[slot])) {
+        if (visual) visuals.add(visual);
+      }
+      this.playerVisualCache[slot] = {};
+      this.playerVisuals[slot] = null;
+    }
+    for (const visual of visuals) visual.dispose();
   }
 
   private setLocalDrumOrbCount(count: number): void {

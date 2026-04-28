@@ -118,6 +118,14 @@ export function resetAllTweaks(): void {
   }
 }
 
+/** Register a non-tweakpane reset hook (e.g. mixer panel sliders) so it fires
+ *  alongside the tweakpane-bound resets when the user presses R. */
+export function registerResetHook(key: string, reset: () => void): () => void {
+  const entry: ResetEntry = { key, reset };
+  resetRegistry.add(entry);
+  return () => { resetRegistry.delete(entry); };
+}
+
 /* ----------- Bind ----------- */
 
 export type RegisterOptions<T extends Record<string, Def>> = {

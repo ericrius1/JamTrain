@@ -205,6 +205,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     { isCreatureId },
     { isInstrumentId },
     { preloadHandpose },
+    { registerResetHook },
   ] = await Promise.all([
     import('./game/Game'),
     import('./hud/Hud'),
@@ -213,13 +214,15 @@ async function createRuntime(): Promise<RuntimeApi> {
     import('./game/creatures'),
     import('./game/instruments'),
     import('./game/handTracking'),
+    import('./hud/tweakDefs'),
   ]);
 
-  const avPrefs = loadPrefs({
+  const defaultAvPrefs: AvPrefs = {
     backingVolume: DEFAULT_BACKING_VOLUME,
     musicVolume: DEFAULT_MUSIC_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
-  });
+  };
+  const avPrefs = loadPrefs(defaultAvPrefs);
 
   const canvas = document.querySelector<HTMLCanvasElement>('#scene');
   if (!canvas) {
@@ -453,6 +456,19 @@ async function createRuntime(): Promise<RuntimeApi> {
 
   hud.setMixerValues(avPrefs.backingVolume, avPrefs.musicVolume, avPrefs.voiceVolume);
   hud.setRemoteVolume(avPrefs.voiceVolume);
+
+  // Pressing R in debug mode resets tweakpane params; piggyback on the same
+  // registry to also restore the mixer panel + persisted A/V prefs.
+  registerResetHook('av-prefs', () => {
+    avPrefs.backingVolume = defaultAvPrefs.backingVolume;
+    avPrefs.musicVolume = defaultAvPrefs.musicVolume;
+    avPrefs.voiceVolume = defaultAvPrefs.voiceVolume;
+    try { localStorage.removeItem(PREFS_KEY); } catch { /* noop */ }
+    game.setBackingVolume(avPrefs.backingVolume);
+    game.setMusicVolume(avPrefs.musicVolume);
+    hud.setRemoteVolume(avPrefs.voiceVolume);
+    hud.setMixerValues(avPrefs.backingVolume, avPrefs.musicVolume, avPrefs.voiceVolume);
+  });
 
   await game.start();
   schedulePostSceneWarmup();

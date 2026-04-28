@@ -5,6 +5,7 @@ import {
   JAM_ORB_GESTURE_NOTES,
   JAM_PLAYABLE_NOTES_LOCAL,
   JAM_PLAYABLE_NOTES_REMOTE,
+  JAM_STARLACE_CHORDS,
   JAM_STARLACE_NOTES,
 } from './harmony';
 import { clamp } from './math';
@@ -31,9 +32,19 @@ export const HAND_SYNTH_DEFS = {
   orbDb:         { default: -2,    min: -30, max: 12,   step: 0.5,  label: 'orb dB' },
   orbDecay:      { default: 3.2,   min: 0.4, max: 6,    step: 0.05, label: 'orb decay s' },
   orbHarmonics:  { default: 0.38,  min: 0,   max: 1,    step: 0.01, label: 'orb partials' },
-  starlaceDb:    { default: -3,    min: -30, max: 12,   step: 0.5,  label: 'starlace dB' },
-  starlaceDecay: { default: 4.4,   min: 0.6, max: 8,    step: 0.05, label: 'starlace decay s' },
-  starlaceGlow:  { default: 0.72,  min: 0,   max: 1,    step: 0.01, label: 'starlace glow' },
+  starlaceDb:         { default: -3,    min: -30,  max: 12,   step: 0.5,   folder: 'Starlace', label: 'level dB' },
+  starlaceAttack:     { default: 0.018, min: 0.002, max: 0.20, step: 0.001, folder: 'Starlace', label: 'attack s' },
+  starlaceHold:       { default: 0.34,  min: 0.10,  max: 3.5,  step: 0.01,  folder: 'Starlace', label: 'hold s' },
+  starlaceDecay:      { default: 1.35,  min: 0.35,  max: 8,    step: 0.05,  folder: 'Starlace', label: 'fade s' },
+  starlaceSustain:    { default: 0.30,  min: 0.02,  max: 0.82, step: 0.01,  folder: 'Starlace', label: 'sustain' },
+  starlaceNoteGap:    { default: 0.24,  min: 0.08,  max: 0.55, step: 0.005, folder: 'Starlace', label: 'note gap s' },
+  starlaceRichness:   { default: 0.35,  min: 0,     max: 1,    step: 0.01,  folder: 'Starlace', label: 'richness' },
+  starlaceVoiceCap:   { default: 28,    min: 10,    max: 40,   step: 1,     folder: 'Starlace', label: 'voice cap' },
+  starlaceBrightness: { default: 0.54,  min: 0,     max: 1,    step: 0.01,  folder: 'Starlace', label: 'brightness' },
+  starlaceOvertones:  { default: 0.30,  min: 0,     max: 1,    step: 0.01,  folder: 'Starlace', label: 'overtones' },
+  starlaceGlint:      { default: 0.32,  min: 0,     max: 1,    step: 0.01,  folder: 'Starlace', label: 'glint' },
+  starlaceGlow:       { default: 0.72,  min: 0,     max: 1,    step: 0.01,  folder: 'Starlace', label: 'aura bloom' },
+  starlaceSpace:      { default: 1.0,   min: 0,     max: 1.5,  step: 0.01,  folder: 'Starlace', label: 'space' },
 } as const;
 
 export type HandSynthParams = ParamsOf<typeof HAND_SYNTH_DEFS>;
@@ -53,8 +64,9 @@ const CHIME_MAX_HITS_PER_WINDOW = 6;
 const CHIME_MAX_ACTIVE_VOICES = 12;
 const ORB_MAX_HITS_PER_WINDOW = 12;
 const ORB_MAX_ACTIVE_VOICES = 24;
-const STARLACE_MAX_HITS_PER_WINDOW = 8;
-const STARLACE_MAX_ACTIVE_VOICES = 14;
+const STARLACE_MAX_HITS_PER_WINDOW = 5;
+const STARLACE_MAX_ACTIVE_VOICES = 40;
+const STARLACE_GLINT_MAX_ACTIVE_VOICES = 10;
 const MAX_PENDING_ORB_HITS = 12;
 
 type PlayerKey = 'local' | 'remote';
@@ -166,9 +178,12 @@ type StarlaceVoice = {
   expression: number;
   tension: number;
   auraActive: boolean;
-  auraNote: string;
+  auraChordKey: string;
   lastHitCount: number;
   lastNoteIdx: number;
+  lastChordIndex: number;
+  lastAudioAt: number;
+  lastAuraRetuneAt: number;
 };
 
 export class HandSynthEngine {
@@ -233,8 +248,18 @@ export class HandSynthEngine {
     orbDecay: HAND_SYNTH_DEFS.orbDecay.default,
     orbHarmonics: HAND_SYNTH_DEFS.orbHarmonics.default,
     starlaceDb: HAND_SYNTH_DEFS.starlaceDb.default,
+    starlaceAttack: HAND_SYNTH_DEFS.starlaceAttack.default,
+    starlaceHold: HAND_SYNTH_DEFS.starlaceHold.default,
     starlaceDecay: HAND_SYNTH_DEFS.starlaceDecay.default,
+    starlaceSustain: HAND_SYNTH_DEFS.starlaceSustain.default,
+    starlaceNoteGap: HAND_SYNTH_DEFS.starlaceNoteGap.default,
+    starlaceRichness: HAND_SYNTH_DEFS.starlaceRichness.default,
+    starlaceVoiceCap: HAND_SYNTH_DEFS.starlaceVoiceCap.default,
+    starlaceBrightness: HAND_SYNTH_DEFS.starlaceBrightness.default,
+    starlaceOvertones: HAND_SYNTH_DEFS.starlaceOvertones.default,
+    starlaceGlint: HAND_SYNTH_DEFS.starlaceGlint.default,
     starlaceGlow: HAND_SYNTH_DEFS.starlaceGlow.default,
+    starlaceSpace: HAND_SYNTH_DEFS.starlaceSpace.default,
   };
 
   private registered?: ReturnType<typeof registerTweaks<typeof HAND_SYNTH_DEFS>>;
@@ -443,7 +468,7 @@ export class HandSynthEngine {
           starlace.dryGain.gain.setValueAtTime?.(0.95, this.tone.now());
         } catch { /* fallback to ramp */ }
         try {
-          this.fireStarlacePluck(starlace, 369.994, 0.7);
+          this.fireStarlaceChord(starlace, this.starlaceChordForIndex(7), 0.7);
           console.debug('[handSynth] starlace test ping fired', { player });
         } catch (err) {
           console.warn('[handSynth] starlace test ping failed', err);
@@ -599,6 +624,7 @@ export class HandSynthEngine {
     nodeIndex: number,
     x = 0.5,
     y = 0.5,
+    noteIndex = -1,
   ): void {
     if (!this.running || !this.tone) {
       if (!this._loggedStarlaceBlock) {
@@ -612,29 +638,42 @@ export class HandSynthEngine {
     const starlace = this.ensureStarlaceVoice(player);
     if (!starlace) return;
     if (!Number.isFinite(frequency) || frequency <= 0) return;
-    const activeVoices = Math.max(starlace.pluck?.activeVoices ?? 0, starlace.glint?.activeVoices ?? 0);
-    if (!this.allowHit(this.starlaceBudgets[player], STARLACE_MAX_HITS_PER_WINDOW, activeVoices, STARLACE_MAX_ACTIVE_VOICES)) {
+
+    const v = clamp(velocity, 0, 1);
+    const chordIndex = this.resolveStarlaceChordIndex(noteIndex, nodeIndex, starlace.lastHitCount);
+    const chord = this.starlaceChordForIndex(chordIndex);
+    this.absorbStarlaceGesture(starlace, v, x, y);
+
+    const noteGap = Math.max(0.04, this.params.starlaceNoteGap);
+    if (this.elapsed - starlace.lastAudioAt < noteGap) return;
+
+    const activeVoices = starlace.pluck?.activeVoices ?? 0;
+    const playableChord = this.starlacePlayableChord(chord, v, activeVoices);
+    if (playableChord.length === 0) return;
+    if (!this.allowHit(this.starlaceBudgets[player], STARLACE_MAX_HITS_PER_WINDOW, activeVoices + playableChord.length, this.starlaceVoiceCap())) {
       return;
     }
 
-    const v = clamp(velocity, 0, 1);
-    this.fireStarlacePluck(starlace, frequency, v);
+    this.fireStarlaceChord(starlace, playableChord, v);
+    starlace.lastAudioAt = this.elapsed;
+    starlace.lastNoteIdx = chordIndex % JAM_STARLACE_NOTES.length;
+    starlace.lastChordIndex = chordIndex;
     if (!this._loggedStarlaceFirstHit) {
-      console.debug('[handSynth] first starlace pluck', { player, frequency, velocity: v });
+      console.debug('[handSynth] first starlace chord', { player, chord: playableChord, frequency, velocity: v });
       this._loggedStarlaceFirstHit = true;
     }
-
-    const noteIdx = nodeIndex >= 0 ? nodeIndex % JAM_STARLACE_NOTES.length : starlace.lastHitCount % JAM_STARLACE_NOTES.length;
-    starlace.pulse = Math.min(1, starlace.pulse + 0.58 + v * 0.42);
-    starlace.energy = Math.min(1, starlace.energy + 0.20 + v * 0.23);
-    starlace.pitch += (clamp(y, 0, 1) - starlace.pitch) * 0.72;
-    starlace.expression += (clamp(x, 0, 1) - starlace.expression) * 0.62;
-    starlace.tension = Math.min(1, starlace.tension + 0.28 + v * 0.34);
-    starlace.lastNoteIdx = noteIdx;
-    starlace.lastHitCount += 1;
   }
   private _loggedStarlaceFirstHit = false;
   private _loggedStarlaceBlock = false;
+
+  private absorbStarlaceGesture(starlace: StarlaceVoice, velocity: number, x: number, y: number): void {
+    starlace.pulse = Math.min(1, starlace.pulse + 0.58 + velocity * 0.42);
+    starlace.energy = Math.min(1, starlace.energy + 0.20 + velocity * 0.23);
+    starlace.pitch += (clamp(y, 0, 1) - starlace.pitch) * 0.72;
+    starlace.expression += (clamp(x, 0, 1) - starlace.expression) * 0.62;
+    starlace.tension = Math.min(1, starlace.tension + 0.28 + velocity * 0.34);
+    starlace.lastHitCount += 1;
+  }
 
   getActivity(): number {
     let local = this.voices.local?.energy ?? 0;
@@ -1168,41 +1207,54 @@ export class HandSynthEngine {
     filter.connect(dryGain);
     filter.connect(wetSend);
 
-    const pluck = new Tone.PolySynth(Tone.FMSynth, {
-      harmonicity: 1.5,
-      modulationIndex: 4.2,
-      oscillator: { type: 'sine' },
-      envelope: {
-        attack: 0.004,
-        decay: this.params.starlaceDecay,
-        sustain: 0,
-        release: this.params.starlaceDecay * 0.7,
+    const pluck = new Tone.PolySynth({
+      maxPolyphony: STARLACE_MAX_ACTIVE_VOICES,
+      voice: Tone.FMSynth,
+      options: {
+        harmonicity: 1.18,
+        modulationIndex: this.starlaceModulationIndex(),
+        oscillator: { type: 'sine' },
+        envelope: {
+          attack: this.params.starlaceAttack,
+          decay: Math.max(0.18, this.params.starlaceHold * 0.42),
+          sustain: this.params.starlaceSustain,
+          release: this.params.starlaceDecay,
+        },
+        modulation: { type: 'sine' },
+        modulationEnvelope: { attack: 0.01, decay: 0.7, sustain: 0.08, release: 0.8 },
       },
-      modulation: { type: 'sine' },
-      modulationEnvelope: { attack: 0.002, decay: 0.32, sustain: 0, release: 0.3 },
-      volume: this.params.starlaceDb,
-    }).connect(filter);
+    } as any).connect(filter);
+    pluck.volume.value = this.params.starlaceDb - 4;
     pluck.maxPolyphony = STARLACE_MAX_ACTIVE_VOICES;
 
-    const glint = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'triangle8' } as any,
-      envelope: {
-        attack: 0.002,
-        decay: Math.max(0.5, this.params.starlaceDecay * 0.38),
-        sustain: 0,
-        release: Math.max(0.3, this.params.starlaceDecay * 0.25),
+    const glint = new Tone.PolySynth({
+      maxPolyphony: STARLACE_GLINT_MAX_ACTIVE_VOICES,
+      voice: Tone.Synth,
+      options: {
+        oscillator: { type: 'triangle8' } as any,
+        envelope: {
+          attack: 0.002,
+          decay: Math.max(0.5, this.params.starlaceDecay * 0.38),
+          sustain: 0,
+          release: Math.max(0.3, this.params.starlaceDecay * 0.25),
+        },
       },
-      volume: this.params.starlaceDb - 17,
-    }).connect(filter);
-    glint.maxPolyphony = STARLACE_MAX_ACTIVE_VOICES;
+    } as any).connect(filter);
+    glint.volume.value = this.params.starlaceDb + this.starlaceGlintDbOffset();
+    glint.maxPolyphony = STARLACE_GLINT_MAX_ACTIVE_VOICES;
 
     const auraGain = new Tone.Gain(0).connect(filter);
-    const auraSynth = new Tone.Synth({
-      oscillator: { type: 'fatsine4', count: 4, spread: 24 } as any,
-      envelope: { attack: 0.55, decay: 0.55, sustain: 0.74, release: 3.4 },
-      portamento: 0.10,
-      volume: this.params.starlaceDb - 13,
-    }).connect(auraGain);
+    const auraSynth = new Tone.PolySynth({
+      maxPolyphony: 12,
+      voice: Tone.Synth,
+      options: {
+        oscillator: { type: 'fatsine4', count: 4, spread: 24 } as any,
+        envelope: { attack: 0.55, decay: 0.55, sustain: 0.66, release: Math.max(2.4, this.params.starlaceDecay * 1.25) },
+        portamento: 0.10,
+      },
+    } as any).connect(auraGain);
+    auraSynth.volume.value = this.params.starlaceDb - 15;
+    auraSynth.maxPolyphony = 12;
 
     return {
       pluck,
@@ -1221,9 +1273,12 @@ export class HandSynthEngine {
       expression: 0.5,
       tension: 0.35,
       auraActive: false,
-      auraNote: '',
+      auraChordKey: '',
       lastHitCount: 0,
       lastNoteIdx: -1,
+      lastChordIndex: -1,
+      lastAudioAt: -Infinity,
+      lastAuraRetuneAt: -Infinity,
     };
   }
 
@@ -1235,33 +1290,50 @@ export class HandSynthEngine {
       return;
     }
 
-    const auraNote = JAM_STARLACE_NOTES[clamp(starlace.lastNoteIdx, 0, JAM_STARLACE_NOTES.length - 1)] ?? 'D4';
+    const auraChordIndex = starlace.lastChordIndex >= 0
+      ? starlace.lastChordIndex
+      : this.resolveStarlaceChordIndex(starlace.lastNoteIdx, -1, starlace.lastHitCount);
+    const auraChord = this.starlaceChordForIndex(auraChordIndex);
+    const auraChordKey = auraChord.join('|');
     if (starlace.energy > 0.08) {
       if (!starlace.auraActive) {
         try {
-          starlace.auraSynth.triggerAttack(auraNote);
+          starlace.auraSynth.triggerAttack(auraChord);
         } catch (err) {
           console.warn('[handSynth] starlace aura attack failed', err);
         }
         starlace.auraActive = true;
-        starlace.auraNote = auraNote;
-      } else if (auraNote !== starlace.auraNote) {
+        starlace.auraChordKey = auraChordKey;
+        starlace.lastAuraRetuneAt = this.elapsed;
+      } else if (
+        auraChordKey !== starlace.auraChordKey &&
+        this.elapsed - starlace.lastAuraRetuneAt >= Math.max(0.55, this.params.starlaceNoteGap * 2.5)
+      ) {
         try {
-          starlace.auraSynth.setNote(auraNote);
+          starlace.auraSynth.releaseAll?.(this.tone.now());
+          starlace.auraSynth.triggerAttack(auraChord, this.tone.now() + 0.015);
         } catch { /* best-effort retune */ }
-        starlace.auraNote = auraNote;
+        starlace.auraChordKey = auraChordKey;
+        starlace.lastAuraRetuneAt = this.elapsed;
       }
     } else {
       this.releaseStarlaceAura(starlace, false);
     }
 
     const glow = clamp(this.params.starlaceGlow, 0, 1);
-    const filterHz = 850 + starlace.expression * 1850 + starlace.energy * 3600 + starlace.tension * 1450;
+    const brightness = clamp(this.params.starlaceBrightness, 0, 1);
+    const space = clamp(this.params.starlaceSpace, 0, 1.5);
+    const filterHz = (
+      650 +
+      starlace.expression * 1500 +
+      starlace.energy * 3200 +
+      starlace.tension * 1100
+    ) * (0.58 + brightness * 0.94);
     starlace.filter.frequency.rampTo(clamp(filterHz, 500, 9500), PARAM_RAMP);
     starlace.filter.Q.rampTo(0.65 + starlace.tension * 2.1, PARAM_RAMP);
     starlace.panner.pan.rampTo(clamp((player === 'local' ? -0.18 : 0.18) + (starlace.expression - 0.5) * 0.32, -0.85, 0.85), PARAM_RAMP);
     starlace.auraGain.gain.rampTo(clamp(starlace.energy * (0.22 + glow * 0.30), 0, 0.52), PARAM_RAMP * 2);
-    starlace.wetSend.gain.rampTo(clamp(0.28 + starlace.energy * 0.60 + glow * 0.14, 0, 1) * this.params.reverbWetMax, PARAM_RAMP * 2);
+    starlace.wetSend.gain.rampTo(clamp(0.22 + starlace.energy * 0.54 + glow * 0.14, 0, 1) * this.params.reverbWetMax * space, PARAM_RAMP * 2);
     starlace.dryGain.gain.rampTo(0.82, PARAM_RAMP);
 
     starlace.pulse = Math.max(0, starlace.pulse - delta * 3.0);
@@ -1287,14 +1359,14 @@ export class HandSynthEngine {
       return;
     }
     try {
-      starlace.auraSynth.triggerRelease?.(this.tone?.now?.());
+      starlace.auraSynth.releaseAll?.(this.tone?.now?.());
     } catch (err) {
       console.warn('[handSynth] starlace aura release failed', err);
     }
     if (immediate) this.setGainNow(starlace.auraGain, 0);
     else starlace.auraGain.gain.rampTo(0, PARAM_RAMP * 2);
     starlace.auraActive = false;
-    starlace.auraNote = '';
+    starlace.auraChordKey = '';
   }
 
   private disposeStarlaceVoice(starlace: StarlaceVoice): void {
@@ -1313,19 +1385,54 @@ export class HandSynthEngine {
     starlace.reverbReturn?.dispose?.();
   }
 
-  private fireStarlacePluck(starlace: StarlaceVoice, frequency: number, velocity: number): void {
+  private fireStarlaceChord(starlace: StarlaceVoice, chord: readonly string[], velocity: number): void {
     const synthVel = 0.32 + velocity * 0.68;
-    const octaveHz = frequency * 2;
-    const fifthHz = frequency * 3;
+    const glintNote = this.starlaceGlintNote(chord);
+    const glint = clamp(this.params.starlaceGlint, 0, 1);
     try {
-      starlace.pluck.triggerAttackRelease(frequency, this.params.starlaceDecay, undefined, synthVel);
-      starlace.glint.triggerAttackRelease(octaveHz, Math.max(0.28, this.params.starlaceDecay * 0.28), undefined, synthVel * 0.26);
-      if (velocity > 0.52) {
-        starlace.glint.triggerAttackRelease(fifthHz, '8n', undefined, synthVel * 0.16);
+      starlace.pluck.triggerAttackRelease(chord, this.params.starlaceHold, undefined, synthVel);
+      if (glint > 0.01) {
+        starlace.glint.triggerAttackRelease(
+          glintNote,
+          Math.max(0.28, this.params.starlaceHold * 0.65),
+          undefined,
+          synthVel * (0.08 + glint * 0.24),
+        );
       }
     } catch (err) {
       console.warn('[handSynth] starlace trigger failed', err);
     }
+  }
+
+  private starlaceModulationIndex(): number {
+    return 1.2 + clamp(this.params.starlaceOvertones, 0, 1) * 4.0;
+  }
+
+  private starlaceGlintDbOffset(): number {
+    return -28 + clamp(this.params.starlaceGlint, 0, 1) * 18;
+  }
+
+  private resolveStarlaceChordIndex(noteIndex: number, nodeIndex: number, fallback: number): number {
+    const raw = Number.isFinite(noteIndex) && noteIndex >= 0
+      ? noteIndex
+      : Number.isFinite(nodeIndex) && nodeIndex >= 0
+        ? nodeIndex
+        : fallback;
+    return positiveModulo(Math.floor(raw), JAM_STARLACE_CHORDS.length);
+  }
+
+  private starlaceChordForIndex(index: number): readonly string[] {
+    return JAM_STARLACE_CHORDS[positiveModulo(index, JAM_STARLACE_CHORDS.length)] ?? ['D4', 'F#4', 'A4'];
+  }
+
+  private starlaceGlintNote(chord: readonly string[]): string {
+    const top = chord[chord.length - 1] ?? 'A4';
+    const match = top.match(/^([A-G]#?)(-?\d+)$/);
+    if (!match) return top;
+    const [, name, octaveText] = match;
+    const octave = Number(octaveText);
+    if (!Number.isFinite(octave) || octave >= 5) return top;
+    return `${name}${octave + 1}`;
   }
 
   private createDuetResonator(): void {
@@ -1569,6 +1676,12 @@ export class HandSynthEngine {
         chimeDb: () => this.applyChimeVolume(),
         orbDb:   () => this.applyOrbVolume(),
         starlaceDb: () => this.applyStarlaceVolume(),
+        starlaceAttack: () => this.applyStarlaceEnvelope(),
+        starlaceHold: () => this.applyStarlaceEnvelope(),
+        starlaceDecay: () => this.applyStarlaceEnvelope(),
+        starlaceSustain: () => this.applyStarlaceEnvelope(),
+        starlaceOvertones: () => this.applyStarlaceTone(),
+        starlaceGlint: () => this.applyStarlaceVolume(),
       },
     });
   }
@@ -1625,11 +1738,77 @@ export class HandSynthEngine {
   private applyStarlaceVolume(): void {
     for (const key of PLAYER_KEYS) {
       const s = this.starlaceVoices[key];
-      if (s?.pluck?.volume) s.pluck.volume.rampTo(this.params.starlaceDb, PARAM_RAMP);
-      if (s?.glint?.volume) s.glint.volume.rampTo(this.params.starlaceDb - 17, PARAM_RAMP);
-      if (s?.auraSynth?.volume) s.auraSynth.volume.rampTo(this.params.starlaceDb - 13, PARAM_RAMP);
+      if (s?.pluck?.volume) s.pluck.volume.rampTo(this.params.starlaceDb - 4, PARAM_RAMP);
+      if (s?.glint?.volume) s.glint.volume.rampTo(this.params.starlaceDb + this.starlaceGlintDbOffset(), PARAM_RAMP);
+      if (s?.auraSynth?.volume) s.auraSynth.volume.rampTo(this.params.starlaceDb - 15, PARAM_RAMP);
     }
   }
+
+  private applyStarlaceEnvelope(): void {
+    for (const key of PLAYER_KEYS) {
+      const s = this.starlaceVoices[key];
+      if (!s) continue;
+      const attack = Math.max(0.002, this.params.starlaceAttack);
+      const hold = Math.max(0.18, this.params.starlaceHold);
+      const fade = Math.max(0.35, this.params.starlaceDecay);
+      const sustain = clamp(this.params.starlaceSustain, 0.02, 0.82);
+      s.pluck.set?.({
+        envelope: {
+          attack,
+          decay: Math.max(0.18, hold * 0.42),
+          sustain,
+          release: fade,
+        },
+      });
+      s.glint.set?.({
+        envelope: {
+          attack: 0.002,
+          decay: Math.max(0.5, fade * 0.38),
+          sustain: 0,
+          release: Math.max(0.3, fade * 0.25),
+        },
+      });
+      s.auraSynth.set?.({
+        envelope: {
+          release: Math.max(2.4, fade * 1.25),
+        },
+      });
+      for (const voice of Object.values(s.pluck.voices ?? {}) as any[]) {
+        if (!voice?.envelope) continue;
+        voice.envelope.attack = attack;
+        voice.envelope.decay = Math.max(0.18, hold * 0.42);
+        voice.envelope.sustain = sustain;
+        voice.envelope.release = fade;
+      }
+      for (const voice of Object.values(s.glint.voices ?? {}) as any[]) {
+        if (!voice?.envelope) continue;
+        voice.envelope.decay = Math.max(0.5, fade * 0.38);
+        voice.envelope.release = Math.max(0.3, fade * 0.25);
+      }
+      for (const voice of Object.values(s.auraSynth.voices ?? {}) as any[]) {
+        if (!voice?.envelope) continue;
+        voice.envelope.release = Math.max(2.4, fade * 1.25);
+      }
+    }
+  }
+
+  private applyStarlaceTone(): void {
+    for (const key of PLAYER_KEYS) {
+      const s = this.starlaceVoices[key];
+      if (!s) continue;
+      s.pluck.set?.({ modulationIndex: this.starlaceModulationIndex() });
+      for (const voice of Object.values(s.pluck.voices ?? {}) as any[]) {
+        voice.set?.({ modulationIndex: this.starlaceModulationIndex() });
+        if (voice.modulationIndex?.rampTo) voice.modulationIndex.rampTo(this.starlaceModulationIndex(), PARAM_RAMP);
+        else if (voice.modulationIndex?.value !== undefined) voice.modulationIndex.value = this.starlaceModulationIndex();
+      }
+    }
+  }
+}
+
+function positiveModulo(value: number, modulus: number): number {
+  if (modulus <= 0) return 0;
+  return ((value % modulus) + modulus) % modulus;
 }
 
 function inactiveOrbGesture(): OrbGestureState {
