@@ -19,6 +19,7 @@ export const Player = __t.object("Player", {
   instrument: __t.string(),
   connectedAt: __t.timestamp(),
   updatedAt: __t.timestamp(),
+  creature: __t.string(),
 });
 export type Player = __Infer<typeof Player>;
 

@@ -7,8 +7,8 @@ import { buildHumanHead, type HumanHeadHandles } from './humanHead';
 import { buildHumanBody, type HumanBodyHandles } from './humanBody';
 import { buildLionHead, type LionHeadHandles } from './lionHead';
 import { buildLionBody, type LionBodyHandles } from './lionBody';
-import { OtterAvatar } from './otterAvatar';
-import { IllustratedLionAvatar } from './IllustratedLionAvatar';
+import { IllustratedPuppetAvatar } from './IllustratedPuppetAvatar';
+import { getIllustratedPuppetSpec } from './illustratedPuppets';
 
 export type HumanoidRigOptions = {
   seatIndex: number;
@@ -24,13 +24,11 @@ export class HumanoidRig {
   private creature: CreatureId;
   private seatIndex: number;
   private seatColor: number;
-  private readonly otterLightLayer: number;
   private lighting: CreatureLighting;
   private skeleton!: Skeleton;
   private head!: HeadHandles;
   private body!: BodyHandles;
-  private otter: OtterAvatar | null = null;
-  private illustratedLion: IllustratedLionAvatar | null = null;
+  private illustratedPuppet: IllustratedPuppetAvatar | null = null;
   private accentMaterial!: THREE.MeshBasicNodeMaterial;
   private fingertipNodesVisible = true;
   private elapsed = 0;
@@ -39,7 +37,6 @@ export class HumanoidRig {
     this.seatIndex = opts.seatIndex;
     this.seatColor = opts.color;
     this.creature = opts.creature;
-    this.otterLightLayer = opts.seatIndex === 0 ? 2 : 3;
     this.lighting = createCreatureLighting();
 
     this.buildForCreature();
@@ -66,8 +63,7 @@ export class HumanoidRig {
     void _robotTarget; // robot overlay was dropped — ignored, kept for caller compat.
     this.elapsed += delta;
     this.skeleton.update(pose, delta);
-    if (this.otter) this.otter.update(this.skeleton, pose, this.elapsed);
-    if (this.illustratedLion) this.illustratedLion.update(this.skeleton, pose, this.elapsed);
+    if (this.illustratedPuppet) this.illustratedPuppet.update(this.skeleton, pose, this.elapsed);
   }
 
   getPalmWorld(hand: Handedness): THREE.Vector3 {
@@ -111,22 +107,16 @@ export class HumanoidRig {
 
   private buildForCreature(): void {
     this.accentMaterial = makeAccentMaterial();
+    const puppetSpec = getIllustratedPuppetSpec(this.creature);
 
-    if (this.creature === 'lion') {
+    if (puppetSpec) {
       this.body = buildLionBody(this.lighting);
       this.head = buildLionHead(this.lighting);
-      this.otter = null;
-      this.illustratedLion = new IllustratedLionAvatar();
-    } else if (this.creature === 'otter') {
-      this.body = buildLionBody(this.lighting);
-      this.head = buildLionHead(this.lighting);
-      this.otter = new OtterAvatar(this.otterLightLayer);
-      this.illustratedLion = null;
+      this.illustratedPuppet = new IllustratedPuppetAvatar(puppetSpec);
     } else {
       this.body = buildHumanBody(this.lighting, this.seatColor);
       this.head = buildHumanHead(this.lighting);
-      this.otter = null;
-      this.illustratedLion = null;
+      this.illustratedPuppet = null;
     }
 
     this.skeleton = new Skeleton(
@@ -141,12 +131,9 @@ export class HumanoidRig {
 
     this.skeleton.setFingertipNodesVisible(this.fingertipNodesVisible);
 
-    if (this.otter) {
+    if (this.illustratedPuppet) {
       this.skeleton.root.visible = false;
-      this.root.add(this.otter.group);
-    } else if (this.illustratedLion) {
-      this.skeleton.root.visible = false;
-      this.root.add(this.illustratedLion.group);
+      this.root.add(this.illustratedPuppet.group);
     } else {
       this.skeleton.bodyAnchor.add(this.body.group);
       this.skeleton.headAnchor.add(this.head.group);
@@ -156,13 +143,9 @@ export class HumanoidRig {
   }
 
   private teardownCreatureScopedNodes(): void {
-    if (this.otter) {
-      this.otter.dispose();
-      this.otter = null;
-    }
-    if (this.illustratedLion) {
-      this.illustratedLion.dispose();
-      this.illustratedLion = null;
+    if (this.illustratedPuppet) {
+      this.illustratedPuppet.dispose();
+      this.illustratedPuppet = null;
     }
     if (this.skeleton) {
       this.root.remove(this.skeleton.root);

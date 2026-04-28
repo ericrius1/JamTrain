@@ -17,6 +17,7 @@ type CreatureListener = (creatureId: string) => void;
 const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
 const TOKEN_STORAGE_KEY = 'jam-train-spacetime-token';
+const ROBOT_PARTNER_CREATURE = 'robot';
 
 export class MultiplayerClient {
   localId = `local-${crypto.randomUUID()}`;
@@ -45,7 +46,7 @@ export class MultiplayerClient {
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
   private localCreature: string = 'lion';
-  private partnerCreature: string = 'lion';
+  private partnerCreature: string = ROBOT_PARTNER_CREATURE;
   private localCreatureListeners = new Set<CreatureListener>();
   private partnerCreatureListeners = new Set<CreatureListener>();
   private subscriptionApplied = false;
@@ -141,17 +142,6 @@ export class MultiplayerClient {
     }
   }
 
-  /**
-   * Direct push of partner instrument from a peer-to-peer transport (e.g.
-   * WebRTC state channel). Bypasses the spacetime row read so it works even
-   * when the deployed schema lags behind the client.
-   */
-  setPartnerInstrumentFromPeer(instrumentId: string): void {
-    if (instrumentId === this.partnerInstrument) return;
-    this.partnerInstrument = instrumentId;
-    for (const listener of this.partnerInstrumentListeners) listener(instrumentId);
-  }
-
   onLocalCreatureChange(listener: CreatureListener): void {
     this.localCreatureListeners.add(listener);
     listener(this.localCreature);
@@ -174,16 +164,12 @@ export class MultiplayerClient {
     if (this.localCreature === creatureId) return;
     this.localCreature = creatureId;
     for (const listener of this.localCreatureListeners) listener(creatureId);
-    // The deployed multiplayer schema does not currently include per-player
-    // creature sync. Keep local creature selection local so subscriptions
-    // stay compatible with maincloud.
-  }
-
-  /** Direct push from a peer-to-peer transport — see setPartnerInstrumentFromPeer. */
-  setPartnerCreatureFromPeer(creatureId: string): void {
-    if (creatureId === this.partnerCreature) return;
-    this.partnerCreature = creatureId;
-    for (const listener of this.partnerCreatureListeners) listener(creatureId);
+    if (!this.connection?.isActive) return;
+    try {
+      await this.connection.reducers.updateCreature({ creature: creatureId });
+    } catch (err) {
+      console.warn('[jam-train] update_creature failed', err);
+    }
   }
 
   async sendWebrtcSignal(recipientHex: string, kind: string, payload: string): Promise<void> {
@@ -272,9 +258,9 @@ export class MultiplayerClient {
             this.partnerInstrument = 'loom';
             for (const listener of this.partnerInstrumentListeners) listener('loom');
           }
-          if (this.partnerCreature !== 'lion') {
-            this.partnerCreature = 'lion';
-            for (const listener of this.partnerCreatureListeners) listener('lion');
+          if (this.partnerCreature !== ROBOT_PARTNER_CREATURE) {
+            this.partnerCreature = ROBOT_PARTNER_CREATURE;
+            for (const listener of this.partnerCreatureListeners) listener(ROBOT_PARTNER_CREATURE);
           }
           this.setState('local');
           this.scheduleReconnect();
@@ -373,11 +359,14 @@ export class MultiplayerClient {
         this.subscriptionApplied = true;
         // Now sync the partner plaque with whoever's actually online here.
         this.updatePartner();
-        // Push our current local instrument so the server row matches what
-        // we already chose locally (handles pre-connect picks and reconnects).
+        // Push our current local loadout so the server row matches what we
+        // already chose locally (handles pre-connect picks and reconnects).
         void conn.reducers
           .updateInstrument({ instrument: this.localInstrument })
           .catch(err => console.warn('[jam-train] update_instrument failed', err));
+        void conn.reducers
+          .updateCreature({ creature: this.localCreature })
+          .catch(err => console.warn('[jam-train] update_creature failed', err));
         console.info('[jam-train] subscription applied; room', this.roomId, 'partners', this.knownPlayers.size);
       })
       .onError(ctx => {
@@ -439,7 +428,7 @@ export class MultiplayerClient {
     let nextName: string | null = null;
     let nextIdentity: string | null = null;
     let nextInstrument: string = 'loom';
-    let nextCreature: string = 'lion';
+    let nextCreature: string = ROBOT_PARTNER_CREATURE;
     if (this.connection) {
       for (const row of this.connection.db.player.iter()) {
         const id = row.identity.toHexString();
@@ -449,7 +438,7 @@ export class MultiplayerClient {
         nextName = row.displayName || 'Player';
         nextIdentity = id;
         nextInstrument = row.instrument || 'loom';
-        nextCreature = 'lion';
+        nextCreature = row.creature || 'lion';
         break;
       }
     }
@@ -460,16 +449,12 @@ export class MultiplayerClient {
       for (const listener of this.partnerIdentityListeners) listener(nextIdentity);
     }
 
-    // Only seed instrument from the spacetime row when the partner identity
-    // changes (new partner / partner left). For the same partner, the WebRTC
-    // state channel owns ongoing updates — re-reading the row here would
-    // clobber a fresh peer-pushed value with a stale spacetime snapshot.
-    if (partnerIdentityChanged && nextInstrument !== this.partnerInstrument) {
+    if (nextInstrument !== this.partnerInstrument) {
       this.partnerInstrument = nextInstrument;
       for (const listener of this.partnerInstrumentListeners) listener(nextInstrument);
     }
 
-    if (partnerIdentityChanged && nextCreature !== this.partnerCreature) {
+    if (nextCreature !== this.partnerCreature) {
       this.partnerCreature = nextCreature;
       for (const listener of this.partnerCreatureListeners) listener(nextCreature);
     }

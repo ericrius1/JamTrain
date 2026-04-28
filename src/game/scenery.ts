@@ -31,12 +31,25 @@ const BG_OPTIONS: Record<string, string> = (() => {
 const TERRAIN_LAYER_MIN = 0;
 const TERRAIN_LAYER_MAX = 9;
 const TERRAIN_LAYER_DEFAULT = 0;
-const PAINTED_TERRAIN_TEXTURE = '/scenery/far-terrain-painted-v1.webp';
-const PAINTED_TERRAIN_WIDTH = 18.8;
+const PAINTED_TERRAIN_CHUNKS = [
+  { id: 'alpine-lake', texture: '/scenery/far-terrain-chunk-01-alpine-lake.webp' },
+  { id: 'fog-forest', texture: '/scenery/far-terrain-chunk-02-fog-forest.webp' },
+  { id: 'snow-peaks', texture: '/scenery/far-terrain-chunk-03-snow-peaks.webp' },
+  { id: 'red-mesa', texture: '/scenery/far-terrain-chunk-04-red-mesa.webp' },
+  { id: 'coastal-lake', texture: '/scenery/far-terrain-chunk-05-coastal-lake.webp' },
+  { id: 'meadow-fields', texture: '/scenery/far-terrain-chunk-06-meadow-fields.webp' },
+] as const;
+const PAINTED_TERRAIN_SEQUENCE = [
+  0, 1, 4, 2, 5, 3,
+  1, 0, 4, 5, 2, 3,
+] as const;
+const PAINTED_TERRAIN_CHUNK_WIDTH = 12.6;
+const PAINTED_TERRAIN_BLEND_WIDTH = 2.4;
+const PAINTED_TERRAIN_CHUNK_STRIDE = PAINTED_TERRAIN_CHUNK_WIDTH - PAINTED_TERRAIN_BLEND_WIDTH;
 const PAINTED_TERRAIN_HEIGHT = 3.15;
 const PAINTED_TERRAIN_X_DISTANCE = 4.86;
 const PAINTED_TERRAIN_Y = 1.34;
-const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 120;
+const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 240;
 const PAINTED_TERRAIN_MAX_SPEED = 3;
 
 export const SCENERY_DEFS = {
@@ -111,6 +124,16 @@ interface BackgroundFogPanel {
   mesh: THREE.Mesh;
   band: BackgroundFogBand;
   side: number;
+}
+
+interface PaintedTerrainPanel {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  sequenceIndex: number;
+}
+
+interface PaintedTerrainResource {
+  material: THREE.MeshBasicMaterial;
+  texture: THREE.Texture;
 }
 
 const fullTurn = Math.PI * 2;
@@ -321,11 +344,11 @@ export class ScenerySystem {
   private cloudCanopy!: CloudCanopy;
   private underwater!: UnderwaterRealm;
   private onThunder?: (delay: number) => void;
-  private paintedTerrainTexture?: THREE.Texture;
-  private paintedTerrainMaterial?: THREE.MeshBasicMaterial;
   private paintedTerrainGeometry?: THREE.PlaneGeometry;
-  private paintedTerrainMeshes: THREE.Mesh[] = [];
-  private paintedTerrainOffset = 0;
+  private paintedTerrainAlphaTexture?: THREE.CanvasTexture;
+  private paintedTerrainResources: PaintedTerrainResource[] = [];
+  private paintedTerrainPanels: PaintedTerrainPanel[] = [];
+  private paintedTerrainDistance = 0;
   private readonly paintedTerrainTint = new THREE.Color(0xffffff);
   private readonly paintedTerrainNightTint = new THREE.Color(0x3a2a22);
   private readonly paintedTerrainDuskTint = new THREE.Color(0xffb261);
@@ -355,7 +378,7 @@ export class ScenerySystem {
       () => this.lastCycle,
     );
 
-    this.registered = registerTweaks(paneContainer, 'scenery-v2', SCENERY_DEFS, {
+    this.registered = registerTweaks(paneContainer, 'scenery-v3', SCENERY_DEFS, {
       title: 'Scenery',
       params: this.params,
       onChange: {
@@ -541,42 +564,78 @@ export class ScenerySystem {
   }
 
   private createPaintedTerrain(): void {
-    const texture = new THREE.TextureLoader().load(PAINTED_TERRAIN_TEXTURE, tex => {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.wrapS = THREE.RepeatWrapping;
-      tex.wrapT = THREE.ClampToEdgeWrapping;
-      tex.generateMipmaps = true;
-      tex.needsUpdate = true;
-    });
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.ClampToEdgeWrapping;
-    texture.generateMipmaps = true;
-    this.paintedTerrainTexture = texture;
+    const loader = new THREE.TextureLoader();
+    this.paintedTerrainGeometry = new THREE.PlaneGeometry(PAINTED_TERRAIN_CHUNK_WIDTH, PAINTED_TERRAIN_HEIGHT);
+    this.paintedTerrainAlphaTexture = this.createPaintedTerrainAlphaTexture();
 
-    const material = new THREE.MeshBasicMaterial({
-      map: texture,
-      color: 0xffffff,
-      transparent: true,
-      opacity: this.params.paintedTerrainOpacity,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      toneMapped: false,
-      fog: false,
+    this.paintedTerrainResources = PAINTED_TERRAIN_CHUNKS.map(chunk => {
+      const texture = loader.load(chunk.texture, tex => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.wrapS = THREE.ClampToEdgeWrapping;
+        tex.wrapT = THREE.ClampToEdgeWrapping;
+        tex.generateMipmaps = true;
+        tex.needsUpdate = true;
+      });
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.generateMipmaps = true;
+
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        alphaMap: this.paintedTerrainAlphaTexture,
+        color: 0xffffff,
+        transparent: true,
+        opacity: this.params.paintedTerrainOpacity,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+        fog: false,
+      });
+
+      return { material, texture };
     });
-    this.paintedTerrainMaterial = material;
-    this.paintedTerrainGeometry = new THREE.PlaneGeometry(PAINTED_TERRAIN_WIDTH, PAINTED_TERRAIN_HEIGHT);
 
     for (const side of [-1]) {
-      const mesh = new THREE.Mesh(this.paintedTerrainGeometry, material);
-      mesh.name = 'painted-far-terrain';
-      mesh.rotation.y = Math.PI / 2;
-      mesh.position.set(side * PAINTED_TERRAIN_X_DISTANCE, PAINTED_TERRAIN_Y, 0);
-      mesh.renderOrder = -31;
-      mesh.frustumCulled = false;
-      this.paintedTerrainMeshes.push(mesh);
-      this.root.add(mesh);
+      for (let sequenceIndex = 0; sequenceIndex < PAINTED_TERRAIN_SEQUENCE.length; sequenceIndex += 1) {
+        const chunkIndex = PAINTED_TERRAIN_SEQUENCE[sequenceIndex];
+        const chunk = PAINTED_TERRAIN_CHUNKS[chunkIndex];
+        const resource = this.paintedTerrainResources[chunkIndex];
+        const mesh = new THREE.Mesh(this.paintedTerrainGeometry, resource.material);
+        mesh.name = `painted-far-terrain-${chunk.id}`;
+        mesh.rotation.y = Math.PI / 2;
+        mesh.position.set(side * PAINTED_TERRAIN_X_DISTANCE, PAINTED_TERRAIN_Y, 0);
+        mesh.renderOrder = -31 + sequenceIndex * 0.001;
+        mesh.frustumCulled = false;
+        this.paintedTerrainPanels.push({ mesh, sequenceIndex });
+        this.root.add(mesh);
+      }
     }
+    this.updatePaintedTerrainPanels();
+  }
+
+  private createPaintedTerrainAlphaTexture(): THREE.CanvasTexture {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 4;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('2D canvas unavailable for terrain alpha map');
+
+    const fade = PAINTED_TERRAIN_BLEND_WIDTH / PAINTED_TERRAIN_CHUNK_WIDTH;
+    const gradient = ctx.createLinearGradient(0, 0, canvas.width, 0);
+    gradient.addColorStop(0, 'black');
+    gradient.addColorStop(fade, 'white');
+    gradient.addColorStop(1 - fade, 'white');
+    gradient.addColorStop(1, 'black');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = false;
+    return texture;
   }
 
   private createBackgroundLayerMaterial(layer: BackgroundDepthLayer): THREE.MeshBasicNodeMaterial {
@@ -734,34 +793,57 @@ export class ScenerySystem {
   }
 
   private updatePaintedTerrain(delta: number, speed: number, daylight: number): void {
-    if (this.paintedTerrainTexture) {
+    const loopLength = this.paintedTerrainLoopLength();
+    if (loopLength > 0) {
       const speedFactor = clamp(speed, 0, PAINTED_TERRAIN_MAX_SPEED) / PAINTED_TERRAIN_MAX_SPEED;
-      const deltaOffset = delta * speedFactor / PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED;
-      this.paintedTerrainOffset = (this.paintedTerrainOffset + deltaOffset) % 1;
-      this.paintedTerrainTexture.offset.x = this.paintedTerrainOffset;
+      const deltaDistance = delta * speedFactor * loopLength / PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED;
+      this.paintedTerrainDistance = (this.paintedTerrainDistance + deltaDistance) % loopLength;
+      this.updatePaintedTerrainPanels();
     }
 
-    if (this.paintedTerrainMaterial) {
-      const night = this.skyNight.value;
-      const goldenHour = this.skySunset.value;
-      this.paintedTerrainTint
-        .set(0xffffff)
-        .lerp(this.paintedTerrainNightTint, night * 0.68)
-        .lerp(this.paintedTerrainDuskTint, goldenHour * 0.16);
-      this.paintedTerrainMaterial.color.copy(this.paintedTerrainTint);
-      this.paintedTerrainMaterial.opacity = this.params.paintedTerrainOpacity * (0.78 + daylight * 0.22);
+    const night = this.skyNight.value;
+    const goldenHour = this.skySunset.value;
+    this.paintedTerrainTint
+      .set(0xffffff)
+      .lerp(this.paintedTerrainNightTint, night * 0.68)
+      .lerp(this.paintedTerrainDuskTint, goldenHour * 0.16);
+
+    const opacity = this.params.paintedTerrainOpacity * (0.78 + daylight * 0.22);
+    for (const resource of this.paintedTerrainResources) {
+      resource.material.color.copy(this.paintedTerrainTint);
+      resource.material.opacity = opacity;
     }
   }
 
+  private updatePaintedTerrainPanels(): void {
+    const loopLength = this.paintedTerrainLoopLength();
+    if (loopLength <= 0) return;
+
+    for (const panel of this.paintedTerrainPanels) {
+      const baseZ = panel.sequenceIndex * PAINTED_TERRAIN_CHUNK_STRIDE;
+      const z = wrapCentered(baseZ - this.paintedTerrainDistance, loopLength);
+      panel.mesh.position.z = z;
+    }
+  }
+
+  private paintedTerrainLoopLength(): number {
+    return PAINTED_TERRAIN_CHUNK_STRIDE * PAINTED_TERRAIN_SEQUENCE.length;
+  }
+
   private disposePaintedTerrain(): void {
-    for (const mesh of this.paintedTerrainMeshes) this.root.remove(mesh);
-    this.paintedTerrainMeshes = [];
+    for (const panel of this.paintedTerrainPanels) {
+      this.root.remove(panel.mesh);
+    }
+    this.paintedTerrainPanels = [];
+    for (const resource of this.paintedTerrainResources) {
+      resource.material.dispose();
+      resource.texture.dispose();
+    }
+    this.paintedTerrainResources = [];
     this.paintedTerrainGeometry?.dispose();
-    this.paintedTerrainMaterial?.dispose();
-    this.paintedTerrainTexture?.dispose();
+    this.paintedTerrainAlphaTexture?.dispose();
     this.paintedTerrainGeometry = undefined;
-    this.paintedTerrainMaterial = undefined;
-    this.paintedTerrainTexture = undefined;
+    this.paintedTerrainAlphaTexture = undefined;
   }
 
   private activeTerrainLayerCount(): number {
@@ -1024,4 +1106,8 @@ function getMoonPhase(date: Date): { phase: number; name: string } {
 function smoothstepScalar(edge0: number, edge1: number, value: number): number {
   const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
+}
+
+function wrapCentered(value: number, length: number): number {
+  return ((((value + length * 0.5) % length) + length) % length) - length * 0.5;
 }

@@ -65,9 +65,10 @@ type OrbDrumsOptions = {
 // 7 orbs in a hang-drum-style hex pattern: 1 center "ding" + 6 outer notes.
 const ORB_COUNT = 7;
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
-// the oldest impulse is recycled.
-const MAX_RIPPLES = 10;
-const RIPPLE_MAX_AGE = 4.2;
+// the oldest impulse is recycled. Keep enough history for overlapping strikes
+// to meet instead of making a new hit feel like it erased the previous one.
+const MAX_RIPPLES = 15;
+const RIPPLE_MAX_AGE = 5.2;
 
 type AnyNode = any;
 
@@ -369,7 +370,8 @@ export class OrbDrums implements PlayerVisual {
         const key = this.contactKey(contact.id, orbIndex);
         const currentlyOverlapping = this.currentContactHits.includes(orbIndex);
         const entered = currentlyOverlapping && !this.activeContactKeys.has(key);
-        if (!entered && !fastEnough) continue;
+        const sweptAcross = !currentlyOverlapping && fastEnough;
+        if (!entered && !sweptAcross) continue;
 
         const point = currentlyOverlapping
           ? contact.position
@@ -448,6 +450,7 @@ export class OrbDrums implements PlayerVisual {
 
     const waveField = Fn(([samplePos]: AnyNode[]) => {
       const height = float(0).toVar();
+      const energy = float(0).toVar();
 
       for (let i = 0; i < MAX_RIPPLES; i += 1) {
         const rippleAny = rippleSourceArr.element(i) as unknown as ReturnType<typeof vec4>;
@@ -472,11 +475,13 @@ export class OrbDrums implements PlayerVisual {
         const ripple = sin(wavefront.mul(u.rippleFreq));
         const spread = float(1).div(dist.mul(1.8).sqrt().max(0.35));
         const decay = exp(age.div(u.rippleDecay).negate());
+        const component = ripple.mul(envelope).mul(spread).mul(decay).mul(intensity).mul(aliveMask);
 
-        height.addAssign(ripple.mul(envelope).mul(spread).mul(decay).mul(intensity).mul(aliveMask));
+        height.addAssign(component);
+        energy.addAssign(component.abs());
       }
 
-      return height;
+      return vec4(energy, float(0), float(0), height);
     });
 
     const clusterSurface = Fn(([surfaceDir]: AnyNode[]) => {
@@ -485,7 +490,7 @@ export class OrbDrums implements PlayerVisual {
 
     const positionNode = Fn(() => {
       const surfDir = positionLocal.normalize().toVar('orbPosDir');
-      const h = waveField(clusterSurface(surfDir)).clamp(-1.8, 1.8);
+      const h = waveField(clusterSurface(surfDir)).w.clamp(-1.8, 1.8);
       return surfDir.mul(float(1).add(h.mul(u.rippleDisplace)));
     })();
 
@@ -495,7 +500,9 @@ export class OrbDrums implements PlayerVisual {
       // convention.
       const surfDir = positionLocal.normalize().toVar('orbSurfDir');
       const samplePos = clusterSurface(surfDir).toVar('orbSamplePos');
-      const h = waveField(samplePos).toVar('orbHeight');
+      const centerField = waveField(samplePos).toVar('orbWaveField');
+      const h = centerField.w.toVar('orbHeight');
+      const packetEnergy = centerField.x.clamp(0, 1.8).toVar('orbPacketEnergy');
 
       // Finite differences on the sphere: sample the shared wave field in two
       // tangent directions, then bend the lighting normal by the signed height
@@ -507,8 +514,8 @@ export class OrbDrums implements PlayerVisual {
       const eps = float(0.036);
       const posA = clusterSurface(surfDir.add(tangentA.mul(eps)).normalize());
       const posB = clusterSurface(surfDir.add(tangentB.mul(eps)).normalize());
-      const dhA = waveField(posA).sub(h).div(eps);
-      const dhB = waveField(posB).sub(h).div(eps);
+      const dhA = waveField(posA).w.sub(h).div(eps);
+      const dhB = waveField(posB).w.sub(h).div(eps);
       const waveNormal = surfDir
         .sub(tangentA.mul(dhA).mul(0.115))
         .sub(tangentB.mul(dhB).mul(0.115))
@@ -539,11 +546,12 @@ export class OrbDrums implements PlayerVisual {
       const trough = smoothstep(float(0.08), float(0.54), h.negate());
       const slope = dhA.abs().add(dhB.abs()).mul(0.22).clamp(0, 1.2);
       const halfDir = keyDir.add(view).normalize();
-      const spec = pow(n.dot(halfDir).max(0), float(38)).mul(waveEnergy).mul(float(0.55).add(u.rippleGlow.mul(0.28)));
-      const edgeGlint = smoothstep(float(0.14), float(0.82), slope).mul(waveEnergy).mul(0.22);
+      const visibleWave = packetEnergy.mul(0.62).add(waveEnergy.mul(0.38)).clamp(0, 1.6);
+      const spec = pow(n.dot(halfDir).max(0), float(38)).mul(visibleWave).mul(float(0.55).add(u.rippleGlow.mul(0.28)));
+      const edgeGlint = smoothstep(float(0.14), float(0.82), slope).mul(visibleWave).mul(0.22);
 
       lit.addAssign(u.hotColor.mul(crest.mul(u.rippleGlow).mul(0.52)));
-      lit.addAssign(u.rimColor.mul(waveEnergy.mul(0.16).add(edgeGlint)));
+      lit.addAssign(u.rimColor.mul(visibleWave.mul(0.13).add(edgeGlint)));
       lit.addAssign(u.hotColor.mul(spec));
       lit.assign(lit.mul(float(1).sub(trough.mul(0.30))));
 

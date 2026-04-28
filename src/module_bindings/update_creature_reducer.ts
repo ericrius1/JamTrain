@@ -10,14 +10,6 @@ import {
   type Infer as __Infer,
 } from "spacetimedb";
 
-export default __t.row({
-  identity: __t.identity().primaryKey(),
-  roomId: __t.string().name("room_id"),
-  displayName: __t.string().name("display_name"),
-  seatIndex: __t.i32().name("seat_index"),
-  online: __t.bool(),
-  instrument: __t.string(),
-  connectedAt: __t.timestamp().name("connected_at"),
-  updatedAt: __t.timestamp().name("updated_at"),
+export default {
   creature: __t.string(),
-});
+};

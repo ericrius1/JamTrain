@@ -15,6 +15,7 @@ const player = table(
     instrument: t.string(),
     connectedAt: t.timestamp(),
     updatedAt: t.timestamp(),
+    creature: t.string().default('lion'),
   }
 );
 
@@ -136,6 +137,7 @@ export const request_seat = spacetimedb.reducer(
         seatIndex,
         online: true,
         instrument: existing.instrument || 'loom',
+        creature: existing.creature || 'lion',
         updatedAt: ctx.timestamp,
       });
       return;
@@ -148,13 +150,15 @@ export const request_seat = spacetimedb.reducer(
       seatIndex,
       online: true,
       instrument: 'loom',
+      creature: 'lion',
       connectedAt: ctx.timestamp,
       updatedAt: ctx.timestamp,
     });
   }
 );
 
-const ALLOWED_INSTRUMENTS = new Set(['loom', 'chime']);
+const ALLOWED_INSTRUMENTS = new Set(['loom', 'chime', 'orbs']);
+const ALLOWED_CREATURES = new Set(['lion', 'human', 'elk', 'robot']);
 
 export const update_instrument = spacetimedb.reducer(
   { instrument: t.string() },
@@ -167,6 +171,22 @@ export const update_instrument = spacetimedb.reducer(
     ctx.db.player.identity.update({
       ...row,
       instrument,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
+export const update_creature = spacetimedb.reducer(
+  { creature: t.string() },
+  (ctx, { creature }) => {
+    if (!ALLOWED_CREATURES.has(creature)) {
+      throw new SenderError(`invalid creature: ${creature}`);
+    }
+    const row = ctx.db.player.identity.find(ctx.sender);
+    if (!row) return;
+    ctx.db.player.identity.update({
+      ...row,
+      creature,
       updatedAt: ctx.timestamp,
     });
   }

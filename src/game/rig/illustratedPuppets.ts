@@ -1,0 +1,253 @@
+import type { CreatureId } from '../creatures';
+import type { IllustratedPuppetSpec } from './IllustratedPuppetAvatar';
+
+const LION_ROOT = '/puppets/lion';
+const ELK_ROOT = '/puppets/elk';
+const ROBOT_ROOT = '/puppets/robot';
+
+const LION_BODY_HEIGHT = 1.28;
+const ELK_BODY_HEIGHT = 1.42;
+const ROBOT_BODY_HEIGHT = 1.34;
+
+export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSpec>> = {
+  lion: {
+    name: 'Lion',
+    body: {
+      url: `${LION_ROOT}/body.png`,
+      width: LION_BODY_HEIGHT * (856 / 990),
+      aspect: 990 / 856,
+      position: [0.03, 0.78, -0.02],
+      renderOrder: 10,
+      color: 0xf0d5b6,
+    },
+    contactShadow: {
+      size: [1.12, 0.42],
+      position: [0.024, 0.34, -0.04],
+      opacity: 0.42,
+      renderOrder: 9,
+    },
+    arms: {
+      cameraDepth: 0.03,
+      target: {
+        yScale: 0.72,
+        yOffset: 0.16,
+        yRange: [0.66, 1.06],
+        zScale: 0.72,
+        zOffset: -0.02,
+        zRange: [-0.58, 0.02],
+      },
+      elbowBlend: 0.5,
+      upper: {
+        url: `${LION_ROOT}/upper-arm.png`,
+        width: 0.18,
+        aspect: 460 / 288,
+        from: { x: 0.36, y: 0.16 },
+        to: { x: 0.78, y: 0.84 },
+        minScale: 0.88,
+        maxScale: 1.74,
+        color: 0xf0d5b6,
+      },
+      forearm: {
+        url: `${LION_ROOT}/forearm.png`,
+        width: 0.15,
+        aspect: 368 / 310,
+        from: { x: 0.28, y: 0.16 },
+        to: { x: 0.74, y: 0.82 },
+        minScale: 0.9,
+        maxScale: 1.82,
+        color: 0xf0d5b6,
+      },
+      hand: {
+        url: `${LION_ROOT}/paw-cupped.png`,
+        width: 0.24,
+        aspect: 245 / 283,
+        from: { x: 0.28, y: 0.62 },
+        to: { x: 0.9, y: 0.24 },
+        aimDistance: 0.18,
+        minScale: 0.88,
+        maxScale: 1.34,
+        offset: [0.018, 0, -0.012],
+        color: 0xf0d5b6,
+      },
+      lanes: {
+        left: {
+          shoulder: [0.006, 0.9, -0.03],
+          targetOffset: [-0.028, -0.035, 0.12],
+          elbowOffset: [-0.014, 0.11, 0.08],
+          renderOrder: 7,
+          upper: { scale: 1.08 },
+          forearm: { scale: 1.04 },
+          hand: { scale: 0.94, offset: [0.008, -0.01, -0.004] },
+        },
+        right: {
+          shoulder: [0.05, 0.82, 0.17],
+          targetOffset: [0.018, 0.0, -0.01],
+          elbowOffset: [0.012, 0.06, 0.02],
+          renderOrder: 13,
+        },
+      },
+    },
+  },
+  elk: {
+    name: 'Elk',
+    body: {
+      url: `${ELK_ROOT}/body.png`,
+      width: ELK_BODY_HEIGHT * (802 / 994),
+      aspect: 994 / 802,
+      position: [0.03, 0.84, -0.02],
+      renderOrder: 10,
+      color: 0xf1dfc2,
+    },
+    contactShadow: {
+      size: [1.12, 0.42],
+      position: [0.024, 0.34, -0.04],
+      opacity: 0.38,
+      renderOrder: 9,
+    },
+    arms: {
+      cameraDepth: 0.03,
+      target: {
+        yScale: 0.7,
+        yOffset: 0.16,
+        yRange: [0.64, 1.04],
+        zScale: 0.72,
+        zOffset: -0.02,
+        zRange: [-0.56, 0.03],
+      },
+      elbowBlend: 0.5,
+      upper: {
+        url: `${ELK_ROOT}/upper-arm.png`,
+        width: 0.17,
+        aspect: 460 / 259,
+        from: { x: 0.35, y: 0.15 },
+        to: { x: 0.8, y: 0.85 },
+        minScale: 0.88,
+        maxScale: 1.7,
+        color: 0xf1dfc2,
+      },
+      forearm: {
+        url: `${ELK_ROOT}/forearm.png`,
+        width: 0.15,
+        aspect: 352 / 268,
+        from: { x: 0.28, y: 0.16 },
+        to: { x: 0.74, y: 0.82 },
+        minScale: 0.9,
+        maxScale: 1.72,
+        color: 0xf1dfc2,
+      },
+      hand: {
+        url: `${ELK_ROOT}/hand-cupped.png`,
+        width: 0.22,
+        aspect: 252 / 260,
+        from: { x: 0.26, y: 0.6 },
+        to: { x: 0.9, y: 0.24 },
+        aimDistance: 0.17,
+        aimLift: 0.006,
+        minScale: 0.88,
+        maxScale: 1.28,
+        offset: [0.018, -0.002, -0.012],
+        color: 0xf1dfc2,
+      },
+      lanes: {
+        left: {
+          shoulder: [0.006, 0.92, -0.035],
+          targetOffset: [-0.028, -0.04, 0.12],
+          elbowOffset: [-0.014, 0.1, 0.08],
+          renderOrder: 7,
+          upper: { scale: 1.08 },
+          forearm: { scale: 1.04 },
+          hand: { scale: 0.94, offset: [0.006, -0.008, -0.002] },
+        },
+        right: {
+          shoulder: [0.05, 0.84, 0.17],
+          targetOffset: [0.018, 0, -0.01],
+          elbowOffset: [0.012, 0.06, 0.02],
+          renderOrder: 13,
+        },
+      },
+    },
+  },
+  robot: {
+    name: 'Robot',
+    body: {
+      url: `${ROBOT_ROOT}/body.png`,
+      width: ROBOT_BODY_HEIGHT * (762 / 949),
+      aspect: 949 / 762,
+      position: [0.03, 0.82, -0.02],
+      renderOrder: 10,
+      color: 0xffefd5,
+    },
+    contactShadow: {
+      size: [1.04, 0.4],
+      position: [0.024, 0.34, -0.04],
+      opacity: 0.36,
+      renderOrder: 9,
+    },
+    arms: {
+      cameraDepth: 0.03,
+      target: {
+        yScale: 0.7,
+        yOffset: 0.16,
+        yRange: [0.66, 1.04],
+        zScale: 0.72,
+        zOffset: -0.02,
+        zRange: [-0.56, 0.03],
+      },
+      elbowBlend: 0.5,
+      upper: {
+        url: `${ROBOT_ROOT}/upper-arm.png`,
+        width: 0.15,
+        aspect: 441 / 221,
+        from: { x: 0.54, y: 0.16 },
+        to: { x: 0.55, y: 0.84 },
+        minScale: 0.88,
+        maxScale: 1.72,
+        color: 0xffefd5,
+      },
+      forearm: {
+        url: `${ROBOT_ROOT}/forearm.png`,
+        width: 0.15,
+        aspect: 326 / 285,
+        from: { x: 0.24, y: 0.22 },
+        to: { x: 0.74, y: 0.76 },
+        minScale: 0.9,
+        maxScale: 1.72,
+        color: 0xffefd5,
+      },
+      hand: {
+        url: `${ROBOT_ROOT}/hand-cupped.png`,
+        width: 0.22,
+        aspect: 243 / 256,
+        from: { x: 0.18, y: 0.7 },
+        to: { x: 0.88, y: 0.26 },
+        aimDistance: 0.17,
+        aimLift: 0.006,
+        minScale: 0.9,
+        maxScale: 1.3,
+        offset: [0.014, -0.002, -0.012],
+        color: 0xffefd5,
+      },
+      lanes: {
+        left: {
+          shoulder: [0.006, 0.91, -0.03],
+          targetOffset: [-0.028, -0.035, 0.12],
+          elbowOffset: [-0.014, 0.1, 0.08],
+          renderOrder: 7,
+          upper: { scale: 1.08 },
+          forearm: { scale: 1.04 },
+          hand: { scale: 0.94, offset: [0.004, -0.008, -0.002] },
+        },
+        right: {
+          shoulder: [0.052, 0.82, 0.17],
+          targetOffset: [0.018, 0, -0.01],
+          elbowOffset: [0.012, 0.06, 0.02],
+          renderOrder: 13,
+        },
+      },
+    },
+  },
+};
+
+export function getIllustratedPuppetSpec(id: CreatureId): IllustratedPuppetSpec | null {
+  return ILLUSTRATED_PUPPETS[id] ?? null;
+}

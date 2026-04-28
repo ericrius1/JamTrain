@@ -234,7 +234,7 @@ export class BeginGate {
         <rect x="2" y="6" width="14" height="12" rx="2" />
         <path d="M16 10l6-3v10l-6-3z" />
       </svg>
-      <span>Your browser will ask for camera access — your hands become the instruments.</span>
+      <span>Play with mouse or trackpad now — camera hand play is optional.</span>
     `;
     field.appendChild(webcamNotice);
 

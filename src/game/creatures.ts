@@ -1,6 +1,6 @@
-export type CreatureId = 'lion' | 'human' | 'otter';
+export type CreatureId = 'lion' | 'human' | 'elk' | 'robot';
 
-export const CREATURE_IDS: readonly CreatureId[] = ['lion', 'human', 'otter'];
+export const CREATURE_IDS: readonly CreatureId[] = ['lion', 'human', 'elk', 'robot'];
 
 export const DEFAULT_CREATURE: CreatureId = 'lion';
 
@@ -31,15 +31,22 @@ export const CREATURES: Record<CreatureId, CreatureMeta> = {
     color: '#9ed3ff',
     iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20 C 6.5 14.5 9.5 12 12 12 C 14.5 12 17.5 14.5 18.5 20"/></svg>`,
   },
-  otter: {
-    id: 'otter',
-    label: 'Otter',
-    subtitle: 'rigged · playful',
-    color: '#8dd7c7',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M7.4 11.2 C 7.4 7.6 9.4 5.4 12 5.4 C 14.6 5.4 16.6 7.6 16.6 11.2 C 16.6 15.3 14.6 18.7 12 18.7 C 9.4 18.7 7.4 15.3 7.4 11.2 Z"/><path d="M8.2 7.8 L 6.2 5.8 M15.8 7.8 L 17.8 5.8"/><circle cx="10.5" cy="10.3" r="0.45" fill="currentColor"/><circle cx="13.5" cy="10.3" r="0.45" fill="currentColor"/><path d="M11.1 12.1 C 11.5 12.5 12.5 12.5 12.9 12.1 M9.2 14.1 C 10.7 15.2 13.3 15.2 14.8 14.1"/></svg>`,
+  elk: {
+    id: 'elk',
+    label: 'Elk',
+    subtitle: 'painted · antlered',
+    color: '#7fd0bd',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M8.1 13.1 C 8.1 9.8 9.7 7.7 12 7.7 C 14.3 7.7 15.9 9.8 15.9 13.1 C 15.9 16.6 14.3 19 12 19 C 9.7 19 8.1 16.6 8.1 13.1 Z"/><path d="M9.2 8.5 L 6.2 4.8 M14.8 8.5 L 17.8 4.8 M6.2 4.8 L 4.4 3.5 M6.2 4.8 L 5.5 2.7 M17.8 4.8 L 19.6 3.5 M17.8 4.8 L 18.5 2.7"/><path d="M9.1 10.2 L 6.7 8.7 M14.9 10.2 L 17.3 8.7"/><circle cx="10.6" cy="12.1" r="0.42" fill="currentColor"/><circle cx="13.4" cy="12.1" r="0.42" fill="currentColor"/><path d="M10.7 14.3 C 11.4 14.8 12.6 14.8 13.3 14.3"/></svg>`,
+  },
+  robot: {
+    id: 'robot',
+    label: 'Robot',
+    subtitle: 'painted · brass',
+    color: '#d3a35f',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="8" width="10" height="8.5" rx="2.2"/><path d="M12 8 V5.5 M10.5 5.5 H13.5 M8.4 16.5 L7.1 20 M15.6 16.5 L16.9 20"/><circle cx="10" cy="12" r="0.7" fill="currentColor"/><circle cx="14" cy="12" r="0.7" fill="currentColor"/><path d="M10.2 14.5 H13.8 M5 11.2 H7 M17 11.2 H19"/></svg>`,
   },
 };
 
 export function isCreatureId(value: unknown): value is CreatureId {
-  return value === 'lion' || value === 'human' || value === 'otter';
+  return value === 'lion' || value === 'human' || value === 'elk' || value === 'robot';
 }

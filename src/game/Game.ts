@@ -197,28 +197,6 @@ export class Game {
       for (const listener of this.remoteStreamListeners) listener(stream);
     });
 
-    // Peer-to-peer state sync (instrument, creature). Direct over the
-    // WebRTC data channel so it works without a server roundtrip and stays
-    // in sync even if the deployed spacetime schema lags behind the client.
-    this.webrtc.setLocalStateProvider(() => ({
-      instrument: this.multiplayer.getLocalInstrument(),
-      creature: this.multiplayer.getLocalCreature(),
-    }));
-    this.multiplayer.onLocalInstrumentChange(id => {
-      this.webrtc.sendState({ instrument: id });
-    });
-    this.multiplayer.onLocalCreatureChange(id => {
-      this.webrtc.sendState({ creature: id });
-    });
-    this.webrtc.onRemoteState(state => {
-      if (typeof state.instrument === 'string') {
-        this.multiplayer.setPartnerInstrumentFromPeer(state.instrument);
-      }
-      if (typeof state.creature === 'string') {
-        this.multiplayer.setPartnerCreatureFromPeer(state.creature);
-      }
-    });
-
     this.broadcastTransport = new BroadcastChannelPoseTransport(this.roomId);
     const webrtcTransport = new WebRtcPoseTransport(this.webrtc);
     this.poseSession = new PoseSession(
@@ -237,7 +215,7 @@ export class Game {
     this.multiplayer.onPartnerIdentity(() => this.poseSession.clearRemotePose());
 
     this.localRig = new HumanoidRig(this.scene, { seatIndex: 0, color: 0x2d7f8c, creature: 'lion' });
-    this.remoteRig = new HumanoidRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, creature: 'lion' });
+    this.remoteRig = new HumanoidRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, creature: 'robot' });
     this.localRig.setFingertipNodesVisible(false);
     this.remoteRig.setFingertipNodesVisible(false);
     this.applyPlayerBackOffset();

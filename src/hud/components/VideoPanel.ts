@@ -115,11 +115,10 @@ export class VideoPanel {
 
     this.cameraButton = makeToolbarButton({
       label: 'Camera',
-      title: 'Turn on your camera so the game can track your hands.',
+      title: 'Optional hand tracking mode.',
       icon: CAMERA_SVG,
       onClick: () => { for (const l of this.cameraListeners) l(); },
     });
-    this.cameraButton.classList.add('needs-attention');
     this.shareButton = makeToolbarButton({
       label: 'Share Video',
       title: 'Optional — let your partner see your camera feed.',
@@ -140,7 +139,7 @@ export class VideoPanel {
 
     const hint = document.createElement('div');
     hint.className = 'video-panel-toolbar-hint';
-    hint.textContent = 'Tap Camera to jam with your hands · You can play without it with mouse/trackpad';
+    hint.textContent = 'Mouse/trackpad play is on · Camera adds hand tracking';
     toolbar.appendChild(hint);
     this.hintEl = hint;
 
@@ -153,8 +152,8 @@ export class VideoPanel {
     empty.innerHTML = `
       <div class="icon">${EMPTY_CAMERA_SVG}</div>
       <div class="heading">· Camera Off ·</div>
-      <div class="subhead">Tap <em>Camera</em> above to play with your hands</div>
-      <div class="hint">You can still play without it — pointer-driven hands work too.</div>
+      <div class="subhead">Mouse/trackpad play is active</div>
+      <div class="hint">Tap <em>Camera</em> for optional hand tracking.</div>
     `;
     this.wrapper.appendChild(empty);
     this.emptyOverlay = empty;
@@ -174,13 +173,12 @@ export class VideoPanel {
   setCameraEnabled(enabled: boolean): void {
     this.cameraEnabled = enabled;
     this.cameraButton?.classList.toggle('enabled', enabled);
-    this.cameraButton?.classList.toggle('needs-attention', !enabled);
     this.emptyOverlay?.classList.toggle('hidden', enabled);
     this.toolbar?.classList.toggle('share-revealed', enabled);
     if (this.hintEl) {
       this.hintEl.classList.toggle('hidden', enabled);
       if (!enabled) {
-        this.hintEl.textContent = 'Tap Camera to jam with your hands · You can play without it with mouse/trackpad';
+        this.hintEl.textContent = 'Mouse/trackpad play is on · Camera adds hand tracking';
       }
     }
     this.recomputeShareWarn();
