@@ -22,8 +22,8 @@ import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
 export const DRUM_DEFS = {
-  orbRadius:       { default: 0.285, min: 0.16, max: 0.52, step: 0.001, label: 'orb radius' },
-  ringRadius:      { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'ring radius', hidden: true },
+  orbRadius:       { default: 0.10,  min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
+  ringRadius:      { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'orb spacing' },
   bobAmount:       { default: 0.018, min: 0,    max: 0.06, step: 0.001, label: 'bob amount' },
   bobSpeed:        { default: 0.7,   min: 0,    max: 3,    step: 0.05,  label: 'bob speed' },
   rippleSpeed:     { default: 1.28,  min: 0.2,  max: 4,    step: 0.01,  label: 'wave speed' },
@@ -69,9 +69,13 @@ type DrumOptions = {
   sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
 };
 
-// One playable orb. Pitch/color fields are carved out of the sphere instead of
-// spread across separate drum pads.
-const ORB_COUNT = 1;
+// Five playable orbs arranged in a row in front of the player. Each orb is
+// one pitch from a pentatonic scale. Hand strikes / mouse clicks / keyboard
+// keys (A S D F G) all trigger the same hit path.
+const ORB_COUNT = 5;
+// Per-orb pitches: indices into ORB_HZ. D3, G3, C4, F4, A4 — a five-note
+// pentatonic spread that pairs well with starlace.
+const ORB_NOTE_INDICES = [0, 2, 4, 6, 8];
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
@@ -96,9 +100,15 @@ const ORB_HZ: number[] = [
   587.330,  // D5
 ];
 
-function makeOrbOffsets(ringRadius: number): THREE.Vector3[] {
-  void ringRadius;
-  return [new THREE.Vector3(0, 0, 0)];
+function makeOrbOffsets(spacing: number): THREE.Vector3[] {
+  // Horizontal row of 5 orbs centered on the local origin. Spacing scales the
+  // gap between orb centers so larger orbs don't overlap.
+  const offsets: THREE.Vector3[] = [];
+  for (let i = 0; i < ORB_COUNT; i += 1) {
+    const x = (i - (ORB_COUNT - 1) / 2) * spacing;
+    offsets.push(new THREE.Vector3(x, 0, 0));
+  }
+  return offsets;
 }
 
 function createOrbUniforms(params: DrumParams) {
@@ -425,18 +435,16 @@ export class Drum implements PlayerVisual {
     this.pointerLeaveListener = undefined;
   }
 
-  // Middle-row keyboard binding for the local player. A-S-D-F-G-H-J-K-L map to
-  // 9 strike points around the orb, picking notes from ORB_HZ in pitch order.
-  // Each key press synthesizes a hit at a fixed direction on the orb's surface.
+  // Middle-row keyboard binding for the local player. A S D F G map directly
+  // to the 5 orbs in left-to-right order. Each key fires a synthetic hit on
+  // the corresponding orb.
   private static KEY_MAP: ReadonlyMap<string, number> = new Map([
-    ['a', 0], ['s', 1], ['d', 2], ['f', 3],
-    ['g', 4], ['h', 5], ['j', 6], ['k', 7], ['l', 8],
+    ['a', 0], ['s', 1], ['d', 2], ['f', 3], ['g', 4],
   ]);
 
   private attachKeyboardEvents(): void {
     this.keyDownListener = (e: KeyboardEvent) => {
       if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
-      // Don't fire when typing in an input/textarea or any contenteditable.
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
       const idx = Drum.KEY_MAP.get(e.key.toLowerCase());
@@ -453,24 +461,21 @@ export class Drum implements PlayerVisual {
     }
   }
 
-  private fireKeyboardHit(noteIdx: number): void {
-    const orb = this.orbs[0];
+  private fireKeyboardHit(orbIndex: number): void {
+    const orb = this.orbs[orbIndex];
     if (!orb) return;
-    const noteIndex = Math.min(ORB_HZ.length - 1, Math.max(0, noteIdx));
-    // Strike point: pick a direction around the orb's "equator" varying by key
-    // index so each key visually lands somewhere different on the surface.
-    const angle = (noteIndex / ORB_HZ.length) * Math.PI * 2;
-    _hitDir.set(Math.cos(angle), Math.sin(angle * 0.5) * 0.4, Math.sin(angle));
-    if (_hitDir.lengthSq() < 1e-6) _hitDir.set(0, 1, 0);
+    // Strike from the front of the orb (toward +z in local space).
+    _hitDir.set(0, 0.2, 1);
     _hitDir.normalize();
-    this.collisionBVH.getPoint(0, _orbCenter);
+    this.collisionBVH.getPoint(orbIndex, _orbCenter);
     _strikePoint.copy(_orbCenter).addScaledVector(_hitDir, this.params.orbRadius);
     const velocity = 0.7;
     this.addRippleAt(_strikePoint, velocity);
     orb.lastHitAt = this.elapsed;
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
+    const noteIndex = this.noteIndexForOrb(orbIndex);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex: noteIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
+      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
     }
     this.emitSparks(_strikePoint, velocity);
   }
@@ -571,14 +576,9 @@ export class Drum implements PlayerVisual {
     this.rippleCursor = (this.rippleCursor + 1) % MAX_RIPPLES;
   }
 
-  private noteIndexForPoint(localPoint: THREE.Vector3): number {
-    const radius = Math.max(this.params.orbRadius, 1e-4);
-    const y = clamp(localPoint.y / radius * 0.5 + 0.5, 0, 1);
-    const radial = clamp(localPoint.length() / radius, 0, 1);
-    const depth = 1 - radial;
-    const angle = (Math.atan2(localPoint.z, localPoint.x) + Math.PI) / (Math.PI * 2);
-    const t = clamp(y * 0.46 + angle * 0.34 + depth * 0.20, 0, 1);
-    return clamp(Math.round(t * (ORB_HZ.length - 1)), 0, ORB_HZ.length - 1);
+  private noteIndexForOrb(orbIndex: number): number {
+    const idx = clamp(orbIndex, 0, ORB_NOTE_INDICES.length - 1);
+    return ORB_NOTE_INDICES[idx];
   }
 
   private resolveContacts(
@@ -666,9 +666,9 @@ export class Drum implements PlayerVisual {
     this.addRippleAt(_strikePoint, velocity);
 
     orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
-    const noteIndex = this.noteIndexForPoint(_strikePoint);
+    const noteIndex = this.noteIndexForOrb(orbIndex);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex: noteIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
+      this.onHitCallback({ orbIndex, frequency: ORB_HZ[noteIndex], velocity, worldPosition: _strikePoint.clone() });
     }
     this.emitSparks(_strikePoint, velocity);
   }

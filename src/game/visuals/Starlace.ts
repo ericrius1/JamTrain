@@ -39,6 +39,7 @@ type StarlaceOptions = {
   title?: string;
   onPluck?: (event: StarlacePluck) => void;
   sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
+  anchor?: THREE.Vector3;
 };
 
 type StarNode = {
@@ -153,6 +154,7 @@ export class Starlace implements PlayerVisual {
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   private keyDownListener?: (e: KeyboardEvent) => void;
   private palette: StarlacePalette;
+  private fixedAnchor?: THREE.Vector3;
   private registered?: ReturnType<typeof registerTweaks<typeof STARLACE_DEFS>>;
 
   constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'starlace', opts: StarlaceOptions = {}) {
@@ -161,6 +163,7 @@ export class Starlace implements PlayerVisual {
     this.onPluckCallback = opts.onPluck;
     this.sculptor = opts.sculptor;
     this.palette = opts.palette ?? 'local';
+    this.fixedAnchor = opts.anchor?.clone();
 
     this.mesh = new THREE.Group();
     this.mesh.name = `starlace-harp-${opts.palette ?? 'local'}`;
@@ -263,18 +266,26 @@ export class Starlace implements PlayerVisual {
     if (!this.initialized) {
       this.left.copy(leftPalm);
       this.right.copy(rightPalm);
-      this.anchor.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
-      this.anchor.y += 0.05;
+      if (this.fixedAnchor) {
+        this.anchor.copy(this.fixedAnchor);
+      } else {
+        this.anchor.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
+        this.anchor.y += 0.05;
+      }
       this.initialized = true;
     }
 
     const palmAlpha = 1 - Math.exp(-delta * 16);
     this.left.lerp(leftPalm, palmAlpha);
     this.right.lerp(rightPalm, palmAlpha);
-    _scratch.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
-    _scratch.y += 0.05;
-    const anchorAlpha = 1 - Math.exp(-delta / Math.max(0.05, this.params.anchorSmoothing));
-    this.anchor.lerp(_scratch, anchorAlpha);
+    if (this.fixedAnchor) {
+      this.anchor.copy(this.fixedAnchor);
+    } else {
+      _scratch.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
+      _scratch.y += 0.05;
+      const anchorAlpha = 1 - Math.exp(-delta / Math.max(0.05, this.params.anchorSmoothing));
+      this.anchor.lerp(_scratch, anchorAlpha);
+    }
     this.center.copy(this.anchor);
 
     this.smoothedEnergy += ((voice.active ? voice.energy : 0) - this.smoothedEnergy) * (1 - Math.exp(-delta * 5));

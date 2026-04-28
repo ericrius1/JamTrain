@@ -836,11 +836,14 @@ export class Game {
     this.playerVisuals[player]?.dispose();
     this.playerInstruments[player] = id;
 
+    const seatIndex = player === 'local' ? this.multiplayer.localSeatIndex : this.multiplayer.partnerSeatIndex;
+    const anchor = this.computeInstrumentAnchor(seatIndex);
     if (id === 'starlace') {
       this.playerVisuals[player] = new Starlace(this.scene, this.paneDock, `starlace-${player}`, {
         palette: player,
         title: `Starlace (${player === 'local' ? 'Local' : 'Partner'})`,
         sculptor: this.sculptor,
+        anchor,
         onPluck: pluck => {
           this.handSynth.triggerStarlacePluck(player, pluck.frequency, pluck.velocity, pluck.nodeIndex, pluck.x, pluck.y);
           this.lastStarlacePluckAt = performance.now() / 1000;
@@ -854,6 +857,7 @@ export class Game {
         camera: player === 'local' ? this.camera : undefined,
         canvas: player === 'local' ? this.canvas : undefined,
         sculptor: this.sculptor,
+        anchor,
         onHit: hit => {
           this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
           this.lastDrumHitAt = performance.now() / 1000;
@@ -865,6 +869,17 @@ export class Game {
       });
     }
     this.handSynth.setInstrument(player, id);
+  }
+
+  /**
+   * Where this seat's instrument visual lives. Anchored in front of the
+   * seated player (between them and the cabin center) so the visual stays
+   * with the player instead of drifting toward whatever the hands average.
+   * Seat 0 sits at +Z in cabin space; seat 1 at -Z.
+   */
+  private computeInstrumentAnchor(seatIndex: number): THREE.Vector3 {
+    const dir = seatIndex === 0 ? 1 : -1;
+    return new THREE.Vector3(0, 1.05, dir * 0.55);
   }
 
   private checkSynchrony(): void {
