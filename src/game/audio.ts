@@ -25,20 +25,28 @@ type ChordVoicing = {
   drone: string;
 };
 
-// Cozy mysterious — F major / A minor area, voice-led for smooth glides.
+// All voicings strictly diatonic to D major (D E F# G A B C#) — the same
+// scale the player synths live in. Both palettes share the *same* drone
+// progression (B → G → D → A, vi-IV-I-V in D) so the night/day crossfade
+// can sit at any blend without producing a semitone clash in the bass.
+//
+// Night palette: lower triadic voicings, anchored on a D pedal in the
+// inner voices, leaning toward the relative minor for an inward feel.
 const PALETTE_A_NIGHT: ChordVoicing[] = [
-  { voices: ['A3', 'C4', 'E4'], drone: 'F2' }, // Fmaj7
-  { voices: ['C4', 'E4', 'G4'], drone: 'A2' }, // Am9
-  { voices: ['D4', 'F4', 'A4'], drone: 'D2' }, // Dm11
-  { voices: ['B3', 'E4', 'G4'], drone: 'C2' }, // Cmaj9
+  { voices: ['D4', 'F#4', 'A4'], drone: 'B2' }, // Bm7
+  { voices: ['D4', 'F#4', 'B4'], drone: 'G2' }, // Gmaj7
+  { voices: ['D4', 'F#4', 'A4'], drone: 'D2' }, // Dmaj7
+  { voices: ['D4', 'E4',  'A4'], drone: 'A2' }, // A7sus4
 ];
 
-// Cozy bright — G major / D major area, higher voicings for daylight warmth.
+// Day palette: same chord roots, but extended with 9ths/11ths and
+// brighter upper voicings so the daylight blend reads warmer and more
+// open without leaving the key.
 const PALETTE_B_DAY: ChordVoicing[] = [
-  { voices: ['D4', 'F#4', 'B4'], drone: 'G2' }, // Gmaj7
-  { voices: ['D4', 'G4', 'B4'], drone: 'E2' }, // Em11
-  { voices: ['E4', 'G4', 'B4'], drone: 'C2' }, // Cmaj9
-  { voices: ['D4', 'F#4', 'A4'], drone: 'D2' }, // Dadd9
+  { voices: ['F#4', 'A4', 'C#5'], drone: 'B2' }, // Bm9
+  { voices: ['F#4', 'A4', 'D5'],  drone: 'G2' }, // Gmaj9
+  { voices: ['F#4', 'A4', 'B4'],  drone: 'D2' }, // Dmaj13
+  { voices: ['E4',  'G4', 'B4'],  drone: 'A2' }, // A9sus
 ];
 
 const PARAM_RAMP = 0.12;
@@ -97,6 +105,19 @@ export class AudioEngine {
   private elapsed = 0;
   private kickAt = -Infinity;
   private snareAt = -Infinity;
+
+  // Rhodes-style electric piano on each chord change. Bell-bright FM attack
+  // that decays into the pad — the signature lo-fi "Rhodes hit, pad sustains
+  // under it" texture. Lives on the bed gains so it crossfades day/night with
+  // the rest of the harmonic layer.
+  private epA?: any;
+  private epB?: any;
+
+  // Vinyl crackle: pink noise through a bandpass, sitting under everything
+  // for that "playing on a record" texture. Always on once the engine starts.
+  private vinyl?: any;
+  private vinylFilter?: any;
+  private vinylGain?: any;
 
   // Smoothed input stats — drift slowly so hand-loss does not snap.
   private smoothed = {
@@ -197,6 +218,34 @@ export class AudioEngine {
       this.shimmerBanks[bank] = new Tone.Synth(shimmerOptions).connect(this.shimmerGain);
     }
 
+    // Rhodes/EP layer — FM voice with a quick bell modulation envelope that
+    // decays away, leaving the carrier sine to ring out. Each chord change
+    // re-triggers the chord; we use triggerAttackRelease so old chords decay
+    // on their own envelope without bank bookkeeping.
+    const epOptions = {
+      harmonicity: 1.0,
+      modulationIndex: 11,
+      oscillator: { type: 'sine' } as any,
+      modulation: { type: 'sine' } as any,
+      envelope: { attack: 0.008, decay: 1.6, sustain: 0.05, release: 4.2 },
+      modulationEnvelope: { attack: 0.004, decay: 0.7, sustain: 0, release: 0.4 },
+    };
+    this.epA = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
+    this.epA.volume.value = -15;
+    this.epA.connect(this.bedAGain);
+    this.epB = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
+    this.epB.volume.value = -15;
+    this.epB.connect(this.bedBGain);
+
+    // Vinyl crackle — bandpassed pink noise, sits well below the music. Skips
+    // the lowpass/reverb chain so it stays clearly textural rather than
+    // smeared into the pad.
+    this.vinyl = new Tone.Noise({ type: 'pink', volume: -8 } as any);
+    this.vinylFilter = new Tone.Filter({ frequency: 4800, type: 'bandpass', Q: 0.6 });
+    this.vinylGain = new Tone.Gain(0.045).connect(this.compressor);
+    this.vinyl.chain(this.vinylFilter, this.vinylGain);
+    this.vinyl.start();
+
     const initial = this.currentChord();
     const b = this.bankIndex;
     initial.a.voices.forEach((note, i) => this.bedABanks[b][i].triggerAttack(note));
@@ -206,6 +255,8 @@ export class AudioEngine {
     this.subABanks[b].triggerAttack(transposeOctaveDown(initial.a.voices[0]));
     this.subBBanks[b].triggerAttack(transposeOctaveDown(initial.b.voices[0]));
     this.shimmerBanks[b].triggerAttack(this.shimmerNote());
+    this.epA.triggerAttackRelease(initial.a.voices, '7m', undefined, 0.62);
+    this.epB.triggerAttackRelease(initial.b.voices, '7m', undefined, 0.62);
 
     this.setupDrums(Tone);
 
@@ -437,6 +488,12 @@ export class AudioEngine {
     this.snareFilter?.dispose?.();
     this.hatFilter?.dispose?.();
     this.drumGain?.dispose?.();
+    this.epA?.dispose?.();
+    this.epB?.dispose?.();
+    this.vinyl?.stop?.();
+    this.vinyl?.dispose?.();
+    this.vinylFilter?.dispose?.();
+    this.vinylGain?.dispose?.();
     this.registered?.dispose();
     this.publish();
   }
@@ -462,6 +519,8 @@ export class AudioEngine {
     this.subABanks[newBank]?.triggerAttack(transposeOctaveDown(a.voices[0]));
     this.subBBanks[newBank]?.triggerAttack(transposeOctaveDown(b.voices[0]));
     this.shimmerBanks[newBank]?.triggerAttack(this.shimmerNote());
+    this.epA?.triggerAttackRelease(a.voices, '7m', undefined, 0.62);
+    this.epB?.triggerAttackRelease(b.voices, '7m', undefined, 0.62);
 
     this.bankIndex = newBank;
   }

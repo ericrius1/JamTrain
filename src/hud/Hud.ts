@@ -12,6 +12,7 @@ import { INSTRUMENTS, type InstrumentId } from '../game/instruments';
 import { InstrumentPicker } from './components/InstrumentPicker';
 import { CreaturePicker } from './components/CreaturePicker';
 import { type CreatureId } from '../game/creatures';
+import { ControlsPanel } from './components/ControlsPanel';
 
 // Default mix balance. Synth (Music) sits a few dB above the backing so
 // melody pokes through accompaniment; both have plenty of slider headroom
@@ -43,6 +44,7 @@ export class Hud {
   private partnerInstrument: InstrumentId = 'starlace';
   private localCreaturePicker: CreaturePicker;
   private localCreatureListeners = new Set<(id: CreatureId) => void>();
+  private controlsPanel: ControlsPanel;
   private sharePopover: SharePopover;
   private shareButton: HTMLButtonElement;
   private announcement: AnnouncementToast;
@@ -157,8 +159,12 @@ export class Hud {
     this.localInstrumentPicker.onSelect(id => {
       this.localInstrument = id;
       this.applyPlaques();
+      this.controlsPanel.setInstrument(id);
       for (const l of this.localInstrumentListeners) l(id);
     });
+
+    this.controlsPanel = new ControlsPanel({ initial: this.localInstrument });
+    this.uiEl.appendChild(this.controlsPanel.el);
 
     this.localCreaturePicker = new CreaturePicker({
       side: 'left',
@@ -339,6 +345,7 @@ export class Hud {
   setLocalInstrument(id: InstrumentId): void {
     this.localInstrument = id;
     this.localInstrumentPicker.setSelected(id, false);
+    this.controlsPanel.setInstrument(id);
     this.applyPlaques();
   }
 
