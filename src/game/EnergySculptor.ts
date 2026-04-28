@@ -131,11 +131,15 @@ export class EnergySculptor implements EnergySink {
   // Dissolve mode (1 during round-boundary outburst, else 0).
   private dissolveMode = 0;
 
-  // In-world round timer ring.
+  // Holographic projector rings — a base ring hovering above the table with
+  // smaller rings stacked above it, suggesting the emitter that "casts" the
+  // sculpture. All rings share one unit-circle geometry and one material; each
+  // instance scales to its own radius and sits at its own height.
   private static TIMER_SEGMENTS = 96;
-  private timerRingLine?: THREE.Line;
-  private timerRingMaterial?: THREE.LineBasicMaterial;
-  private timerRingPositions?: Float32Array;
+  private projectorRings: THREE.Line[] = [];
+  private projectorRingMaterial?: THREE.LineBasicMaterial;
+  private projectorRingGeom?: THREE.BufferGeometry;
+  private projectorScene?: THREE.Scene;
 
   constructor(scene: THREE.Scene, center: THREE.Vector3, paneDock?: HTMLElement) {
     this.center = center.clone();
@@ -152,6 +156,8 @@ export class EnergySculptor implements EnergySink {
     this.particleAges = new Float32Array(this.size);
     this.settledAges = new Float32Array(this.size);
     this.sizeScales = new Float32Array(this.size);
+    this.filamentPositions = new Float32Array(this.size * 2 * 3);
+    this.filamentColors = new Float32Array(this.size * 2 * 3);
     this.kinds = new Uint8Array(this.size);
     this.settledAges.fill(-1);
     this.freeList = [];
@@ -175,6 +181,25 @@ export class EnergySculptor implements EnergySink {
     this.mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
     this.instanceColors = this.mesh.instanceColor;
 
+    this.filamentGeometry = new THREE.BufferGeometry();
+    const filamentPositionAttr = new THREE.BufferAttribute(this.filamentPositions, 3);
+    const filamentColorAttr = new THREE.BufferAttribute(this.filamentColors, 3);
+    filamentPositionAttr.setUsage(THREE.DynamicDrawUsage);
+    filamentColorAttr.setUsage(THREE.DynamicDrawUsage);
+    this.filamentGeometry.setAttribute('position', filamentPositionAttr);
+    this.filamentGeometry.setAttribute('color', filamentColorAttr);
+    this.filamentGeometry.setDrawRange(0, 0);
+    this.filamentMaterial = new THREE.LineBasicMaterial({
+      transparent: true,
+      opacity: this.params.filamentOpacity,
+      vertexColors: true,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+    this.filamentLine = new THREE.LineSegments(this.filamentGeometry, this.filamentMaterial);
+    this.filamentLine.frustumCulled = false;
+    this.filamentLine.renderOrder = 31;
+
     // Hide all particles initially (zero scale).
     for (let i = 0; i < this.size; i += 1) {
       TMP_MATRIX.compose(this.center, TMP_QUAT.identity(), ZERO_SCALE);
@@ -182,6 +207,7 @@ export class EnergySculptor implements EnergySink {
     }
     this.mesh.instanceMatrix.needsUpdate = true;
 
+    scene.add(this.filamentLine);
     scene.add(this.mesh);
 
     // Synchrony ring — additive expanding pulse rendered at the sculptor center.
@@ -201,53 +227,73 @@ export class EnergySculptor implements EnergySink {
     this.synchronyRing.renderOrder = 33;
     scene.add(this.synchronyRing);
 
-    // In-world halo ring. It used to be a countdown, but the sculpture now
-    // keeps accruing; this stays as a quiet reference circle at the center.
-    this.timerRingPositions = new Float32Array((EnergySculptor.TIMER_SEGMENTS + 1) * 3);
-    const timerGeom = new THREE.BufferGeometry();
-    timerGeom.setAttribute('position', new THREE.BufferAttribute(this.timerRingPositions, 3));
-    this.refreshTimerRingGeometry();
-    this.timerRingMaterial = new THREE.LineBasicMaterial({
+    // Holographic projector rings — one shared unit-circle geometry, one
+    // shared material; each ring instance is positioned and scaled per layer.
+    this.projectorScene = scene;
+    const segs = EnergySculptor.TIMER_SEGMENTS;
+    const ringPositions = new Float32Array((segs + 1) * 3);
+    for (let i = 0; i <= segs; i += 1) {
+      const theta = (i / segs) * Math.PI * 2 - Math.PI / 2;
+      const o = i * 3;
+      ringPositions[o] = Math.cos(theta);
+      ringPositions[o + 1] = 0;
+      ringPositions[o + 2] = Math.sin(theta);
+    }
+    this.projectorRingGeom = new THREE.BufferGeometry();
+    this.projectorRingGeom.setAttribute('position', new THREE.BufferAttribute(ringPositions, 3));
+    this.projectorRingMaterial = new THREE.LineBasicMaterial({
       color: this.params.timerRingColor,
       transparent: true,
       opacity: 0.55,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    this.timerRingLine = new THREE.Line(timerGeom, this.timerRingMaterial);
-    this.timerRingLine.position.copy(this.center);
-    this.timerRingLine.frustumCulled = false;
-    this.timerRingLine.renderOrder = 34;
-    scene.add(this.timerRingLine);
+    this.rebuildProjectorRings();
 
     this.registered = registerTweaks(paneDock, 'energySculptor', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
         synchronyRingColor: v => this.synchronyRingMaterial?.color.set(v),
-        timerRingColor: v => this.timerRingMaterial?.color.set(v),
-        timerRingRadius: () => this.refreshTimerRingGeometry(),
+        timerRingColor: v => this.projectorRingMaterial?.color.set(v),
+        timerRingRadius: () => this.layoutProjectorRings(),
+        projectorRingCount: () => this.rebuildProjectorRings(),
+        projectorRingSpacing: () => this.layoutProjectorRings(),
+        projectorRingScale: () => this.layoutProjectorRings(),
+        projectorBaseY: () => this.layoutProjectorRings(),
         particleOpacity: v => { this.material.opacity = v; },
+        filamentOpacity: v => { this.filamentMaterial.opacity = v; },
       },
     });
   }
 
-  private refreshTimerRingGeometry(): void {
-    if (!this.timerRingPositions) return;
-    const r = this.params.timerRingRadius;
-    const segs = EnergySculptor.TIMER_SEGMENTS;
-    for (let i = 0; i <= segs; i += 1) {
-      const theta = (i / segs) * Math.PI * 2 - Math.PI / 2; // start at top
-      const x = Math.cos(theta) * r;
-      const z = Math.sin(theta) * r;
-      const o = i * 3;
-      this.timerRingPositions[o] = x;
-      this.timerRingPositions[o + 1] = 0;
-      this.timerRingPositions[o + 2] = z;
+  private rebuildProjectorRings(): void {
+    if (!this.projectorScene || !this.projectorRingGeom || !this.projectorRingMaterial) return;
+    for (const ring of this.projectorRings) {
+      ring.removeFromParent();
     }
-    if (this.timerRingLine) {
-      const attr = this.timerRingLine.geometry.getAttribute('position') as THREE.BufferAttribute;
-      attr.needsUpdate = true;
+    this.projectorRings.length = 0;
+    const count = Math.max(1, Math.round(this.params.projectorRingCount));
+    for (let i = 0; i < count; i += 1) {
+      const ring = new THREE.Line(this.projectorRingGeom, this.projectorRingMaterial);
+      ring.frustumCulled = false;
+      ring.renderOrder = 34;
+      this.projectorRings.push(ring);
+      this.projectorScene.add(ring);
+    }
+    this.layoutProjectorRings();
+  }
+
+  private layoutProjectorRings(): void {
+    const baseRadius = this.params.timerRingRadius;
+    const spacing = this.params.projectorRingSpacing;
+    const radiusScale = this.params.projectorRingScale;
+    const baseY = this.center.y + this.params.projectorBaseY;
+    for (let i = 0; i < this.projectorRings.length; i += 1) {
+      const ring = this.projectorRings[i];
+      const r = baseRadius * Math.pow(radiusScale, i);
+      ring.scale.set(r, 1, r);
+      ring.position.set(this.center.x, baseY + i * spacing, this.center.z);
     }
   }
 
@@ -304,15 +350,14 @@ export class EnergySculptor implements EnergySink {
     this.integrate(delta);
     this.tickSynchrony(delta);
     this.updateTimerRing();
+    this.writeFilaments();
     this.writeMatrices();
   }
 
   private updateTimerRing(): void {
-    if (!this.timerRingLine || !this.timerRingMaterial) return;
-    const segs = EnergySculptor.TIMER_SEGMENTS;
+    if (!this.projectorRingMaterial) return;
     const build = Math.min(1, this.roundProgress);
-    this.timerRingLine.geometry.setDrawRange(0, segs + 1);
-    this.timerRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.12 + build * 0.18;
+    this.projectorRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.12 + build * 0.18;
   }
 
   dispose(): void {
@@ -320,16 +365,20 @@ export class EnergySculptor implements EnergySink {
     this.mesh.geometry.dispose();
     (this.mesh.material as THREE.Material).dispose();
     this.mesh.removeFromParent();
+    this.filamentGeometry.dispose();
+    this.filamentMaterial.dispose();
+    this.filamentLine.removeFromParent();
     if (this.synchronyRing) {
       this.synchronyRing.geometry.dispose();
       this.synchronyRingMaterial?.dispose();
       this.synchronyRing.removeFromParent();
     }
-    if (this.timerRingLine) {
-      this.timerRingLine.geometry.dispose();
-      this.timerRingMaterial?.dispose();
-      this.timerRingLine.removeFromParent();
+    for (const ring of this.projectorRings) {
+      ring.removeFromParent();
     }
+    this.projectorRings.length = 0;
+    this.projectorRingGeom?.dispose();
+    this.projectorRingMaterial?.dispose();
   }
 
   private drainEmits(): void {
@@ -615,7 +664,7 @@ export class EnergySculptor implements EnergySink {
       const s = alpha > 0
         ? baseSize * this.sizeScales[i] * settleScale * musicSize * born * (0.2 + Math.sqrt(alpha) * 0.8)
         : 0;
-      const colorScale = alpha > 0 ? (0.16 + Math.sqrt(alpha) * 0.68) * musicColor : 0;
+      const colorScale = alpha > 0 ? (0.12 + Math.sqrt(alpha) * 0.52) * musicColor : 0;
       this.colors[o3] = this.baseColors[o3] * colorScale;
       this.colors[o3 + 1] = this.baseColors[o3 + 1] * colorScale;
       this.colors[o3 + 2] = this.baseColors[o3 + 2] * colorScale;
@@ -626,6 +675,111 @@ export class EnergySculptor implements EnergySink {
     }
     this.mesh.instanceMatrix.needsUpdate = true;
     this.instanceColors.needsUpdate = true;
+  }
+
+  private writeFilaments(): void {
+    const density = this.params.filamentDensity;
+    const baseLength = this.params.filamentLength;
+    if (density <= 0 || baseLength <= 0) {
+      this.filamentGeometry.setDrawRange(0, 0);
+      return;
+    }
+
+    const musicPulse = this.musicField.pulse;
+    const musicLevel = this.musicField.drumLevel;
+    const musicSustain = this.musicField.sustained;
+    const musicIntensity = this.musicField.intensity;
+    const groovePhase = this.musicField.groovePhase * TAU;
+    const chordPhase = this.musicField.chordProgress * TAU;
+    const progressPhase = this.roundProgress * TAU * 0.37;
+    const musicColor = 0.42 + musicIntensity * 0.16 + musicPulse * 0.12;
+    let lineCount = 0;
+
+    for (let i = 0; i < this.size; i += 1) {
+      const alpha = this.lifeCurrent[i];
+      if (alpha <= 0.02) continue;
+      const gateSeed = Math.sin((i + 1) * 91.731) * 43758.5453123;
+      const gate = gateSeed - Math.floor(gateSeed);
+      if (gate > density) continue;
+
+      const o3 = i * 3;
+      const px = this.positions[o3];
+      const py = this.positions[o3 + 1];
+      const pz = this.positions[o3 + 2];
+      const tx = this.targets[o3];
+      const ty = this.targets[o3 + 1];
+      const tz = this.targets[o3 + 2];
+      const rx = tx - this.center.x;
+      const ry = ty - this.center.y;
+      const rz = tz - this.center.z;
+      const targetRadius = Math.hypot(rx, rz) || 1;
+      const targetAngle = Math.atan2(rz, rx);
+      const settled = this.settledAges[i] >= 0;
+      const seedA = Math.sin((i + 1) * 12.9898) * 43758.5453;
+      const a = seedA - Math.floor(seedA);
+      const phase = progressPhase + groovePhase * (0.7 + a * 0.7) + a * TAU;
+
+      let dx: number;
+      let dy: number;
+      let dz: number;
+      if (settled) {
+        const ripple = Math.sin(targetRadius * 18 - groovePhase * 3 + ry * 7 + chordPhase);
+        dx = -rz * 1.05
+          + Math.sin(ry * 9.4 + phase) * 0.24
+          + Math.cos(targetAngle * 3.0 + chordPhase) * (musicPulse * 0.48 + musicLevel * 0.18);
+        dy = Math.sin((rx - rz) * 7.8 + phase * 1.3) * 0.30
+          + ripple * (musicLevel * 0.46 + musicPulse * 0.22)
+          + Math.cos(targetAngle * 2.0 + chordPhase) * musicSustain * 0.22;
+        dz = rx * 1.05
+          + Math.cos(ry * 8.6 - phase) * 0.24
+          + Math.sin(targetAngle * 2.6 + chordPhase) * (musicSustain * 0.38 + musicPulse * 0.18);
+      } else {
+        const vx = this.velocities[o3];
+        const vy = this.velocities[o3 + 1];
+        const vz = this.velocities[o3 + 2];
+        dx = vx * 0.65 + (tx - px) * 0.72 - rz * 0.20;
+        dy = vy * 0.65 + (ty - py) * 0.72 + Math.sin(phase + targetRadius * 9) * musicPulse * 0.18;
+        dz = vz * 0.65 + (tz - pz) * 0.72 + rx * 0.20;
+      }
+
+      const dlen = Math.hypot(dx, dy, dz) || 1;
+      dx /= dlen; dy /= dlen; dz /= dlen;
+      const speed = Math.hypot(this.velocities[o3], this.velocities[o3 + 1], this.velocities[o3 + 2]);
+      const born = Math.min(1, this.particleAges[i] / 0.35);
+      const length = baseLength
+        * this.sizeScales[i]
+        * (settled ? 1.75 : 0.90)
+        * (0.68 + Math.min(1.4, speed) * 0.22)
+        * (1 + musicPulse * 0.42 + musicLevel * 0.16)
+        * born
+        * (0.25 + Math.sqrt(alpha) * 0.75);
+
+      const po = lineCount * 6;
+      this.filamentPositions[po] = px - dx * length * 0.38;
+      this.filamentPositions[po + 1] = py - dy * length * 0.38;
+      this.filamentPositions[po + 2] = pz - dz * length * 0.38;
+      this.filamentPositions[po + 3] = px + dx * length * 0.72;
+      this.filamentPositions[po + 4] = py + dy * length * 0.72;
+      this.filamentPositions[po + 5] = pz + dz * length * 0.72;
+
+      const colorScale = (0.12 + Math.sqrt(alpha) * 0.58) * musicColor * (settled ? 1 : 0.64);
+      const cr = this.baseColors[o3] * colorScale;
+      const cg = this.baseColors[o3 + 1] * colorScale;
+      const cb = this.baseColors[o3 + 2] * colorScale;
+      this.filamentColors[po] = cr;
+      this.filamentColors[po + 1] = cg;
+      this.filamentColors[po + 2] = cb;
+      this.filamentColors[po + 3] = cr * (1 + musicPulse * 0.18);
+      this.filamentColors[po + 4] = cg * (1 + musicLevel * 0.14);
+      this.filamentColors[po + 5] = cb * (1 + musicSustain * 0.12);
+      lineCount += 1;
+    }
+
+    this.filamentGeometry.setDrawRange(0, lineCount * 2);
+    const posAttr = this.filamentGeometry.getAttribute('position') as THREE.BufferAttribute;
+    const colorAttr = this.filamentGeometry.getAttribute('color') as THREE.BufferAttribute;
+    posAttr.needsUpdate = true;
+    colorAttr.needsUpdate = true;
   }
 }
 

@@ -23,8 +23,13 @@ import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
 export const DRUM_DEFS = {
-  orbRadius:       { default: 0.10,  min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
-  ringRadius:      { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'orb spacing' },
+  // pyramidBaseRow must come first so registerTweaks' initial onChange fires it
+  // before ringRadius / orbRadius — those callbacks iterate the orb list which
+  // is populated by rebuildOrbs() inside the pyramidBaseRow handler.
+  pyramidBaseRow:    { default: 3,     min: 1,    max: 8,    step: 1,     label: 'pyramid base row' },
+  orbRadius:         { default: 0.10,  min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
+  ringRadius:        { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'column spacing' },
+  pyramidRowSpacing: { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'row spacing' },
   bobAmount:       { default: 0.018, min: 0,    max: 0.06, step: 0.001, label: 'bob amount' },
   bobSpeed:        { default: 0.7,   min: 0,    max: 3,    step: 0.05,  label: 'bob speed' },
   rippleSpeed:     { default: 1.28,  min: 0.2,  max: 4,    step: 0.01,  label: 'wave speed' },
@@ -72,10 +77,10 @@ type DrumOptions = {
   sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
 };
 
-// Five playable orbs arranged in a row in front of the player. Each orb is
-// one pitch from the shared Jam Train harmony. Hand strikes / mouse clicks /
-// keyboard keys (A S D F G) all trigger the same hit path.
-const ORB_COUNT = 5;
+// Playable orbs arranged in a triangular pyramid in front of the player. Base
+// row count is tweakable (default 3 → rows of 3,2,1 = 6 orbs). Each orb maps to
+// one pitch from the shared Jam Train harmony, wrapping with modulo when the
+// pyramid has more orbs than harmony notes.
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
@@ -88,13 +93,25 @@ type AnyNode = any;
 // the old F-natural/C-natural hits that fought the backing harmony.
 const ORB_HZ: readonly number[] = JAM_DRUM_HZ;
 
-function makeOrbOffsets(spacing: number): THREE.Vector3[] {
-  // Horizontal row of 5 orbs centered on the local origin. Spacing scales the
-  // gap between orb centers so larger orbs don't overlap.
+function pyramidOrbCount(baseRow: number): number {
+  const n = Math.max(1, Math.floor(baseRow));
+  return (n * (n + 1)) / 2;
+}
+
+function makeOrbOffsets(baseRow: number, columnSpacing: number, rowSpacing: number): THREE.Vector3[] {
+  // Pyramid: bottom row has `baseRow` orbs, each row above has one fewer, until
+  // a single orb at the apex. Vertically centered around y=0 so the cluster
+  // hovers symmetrically above the anchor. Index order is bottom-up, left-to-right.
+  const rows = Math.max(1, Math.floor(baseRow));
   const offsets: THREE.Vector3[] = [];
-  for (let i = 0; i < ORB_COUNT; i += 1) {
-    const x = (i - (ORB_COUNT - 1) / 2) * spacing;
-    offsets.push(new THREE.Vector3(x, 0, 0));
+  const yCenter = (rows - 1) * 0.5 * rowSpacing;
+  for (let row = 0; row < rows; row += 1) {
+    const orbsInRow = rows - row;
+    const y = row * rowSpacing - yCenter;
+    for (let col = 0; col < orbsInRow; col += 1) {
+      const x = (col - (orbsInRow - 1) / 2) * columnSpacing;
+      offsets.push(new THREE.Vector3(x, y, 0));
+    }
   }
   return offsets;
 }
@@ -175,11 +192,12 @@ export class Drum implements PlayerVisual {
   private initialized = false;
   private anchor = new THREE.Vector3();
   private smoothedEnergy = 0;
-  private collisionBVH = new OrbCollisionBVH(ORB_COUNT);
+  private collisionBVH!: OrbCollisionBVH;
+  private sphereGeo!: THREE.SphereGeometry;
   private previousContacts = new Map<string, THREE.Vector3>();
   private contactHits: number[] = [];
   private currentContactHits: number[] = [];
-  private hitCandidates: (OrbHitCandidate | null)[] = Array.from({ length: ORB_COUNT }, () => null);
+  private hitCandidates: (OrbHitCandidate | null)[] = [];
   private activeContactKeys = new Set<string>();
   private currentContactKeys = new Set<string>();
   private fallbackContacts: HandContactPoint[] = [
@@ -198,10 +216,11 @@ export class Drum implements PlayerVisual {
   private pointerGlow = 0;
   private pointerClickQueued = false;
   // Per-orb "ray currently inside this orb" — flips false→true to fire entry hits.
-  private pointerOrbInside: boolean[] = Array.from({ length: ORB_COUNT }, () => false);
-  private pointerSweepSeen: boolean[] = Array.from({ length: ORB_COUNT }, () => false);
-  private pointerSweepWorldPoints: THREE.Vector3[] = Array.from({ length: ORB_COUNT }, () => new THREE.Vector3());
-  private pointerFrameFired: boolean[] = Array.from({ length: ORB_COUNT }, () => false);
+  // Sized in rebuildOrbs() so it tracks pyramidBaseRow.
+  private pointerOrbInside: boolean[] = [];
+  private pointerSweepSeen: boolean[] = [];
+  private pointerSweepWorldPoints: THREE.Vector3[] = [];
+  private pointerFrameFired: boolean[] = [];
   private pointerCurrentHit: PointerRayHit = {
     orbIndex: -1,
     distance: Infinity,
@@ -271,37 +290,10 @@ export class Drum implements PlayerVisual {
       this.rippleStarts.push(-1);
     }
 
-    const sphereGeo = new THREE.SphereGeometry(1, 32, 24);
-    const offsets = makeOrbOffsets(this.params.ringRadius);
-
-    for (let i = 0; i < ORB_COUNT; i += 1) {
-      const orbUniforms = createOrbPerInstanceUniforms();
-      orbUniforms.offset.value.copy(offsets[i]);
-
-      const material = new THREE.MeshBasicNodeMaterial({
-        transparent: true,
-        depthWrite: true,
-      });
-      const nodes = this.makeOrbNodes(orbUniforms);
-      material.positionNode = nodes.positionNode;
-      material.colorNode = nodes.colorNode;
-
-      const sphere = new THREE.Mesh(sphereGeo, material);
-      sphere.scale.setScalar(this.params.orbRadius);
-      sphere.position.copy(offsets[i]);
-      sphere.renderOrder = 16;
-      sphere.frustumCulled = false;
-      this.mesh.add(sphere);
-
-      this.orbs.push({
-        mesh: sphere,
-        material,
-        lastHitAt: -10,
-        hitPulse: 0,
-        offset: offsets[i].clone(),
-        uniforms: orbUniforms,
-      });
-    }
+    this.sphereGeo = new THREE.SphereGeometry(1, 32, 24);
+    // Initial orbs are created via the registerTweaks initial fire of
+    // pyramidBaseRow → rebuildOrbs(); ensure something exists in case
+    // registerTweaks doesn't fire (no callback registered for that key).
 
     this.registered = registerTweaks(paneDock, paneKey, DRUM_DEFS, {
       title: opts.title ?? 'Drum',
@@ -322,12 +314,69 @@ export class Drum implements PlayerVisual {
           this.uniforms.orbRadius.value = v;
           for (const o of this.orbs) o.mesh.scale.setScalar(v);
         },
-        ringRadius:   () => this.layoutOrbs(),
+        ringRadius:        () => this.layoutOrbs(),
+        pyramidRowSpacing: () => this.layoutOrbs(),
+        pyramidBaseRow:    () => this.rebuildOrbs(),
       },
     });
 
+    // Safety net: if registerTweaks didn't fire pyramidBaseRow's onChange (e.g.
+    // future refactor), make sure orbs exist before we start the update loop.
+    if (this.orbs.length === 0) this.rebuildOrbs();
+
     if (this.camera && this.canvas) this.attachPointerEvents(this.canvas);
     if (this.palette === 'local') this.attachKeyboardEvents();
+  }
+
+  private rebuildOrbs(): void {
+    // Tear down any existing orbs and BVH, then rebuild for the current
+    // pyramidBaseRow / spacing values. Per-orb state arrays are resized too.
+    for (const orb of this.orbs) {
+      this.mesh.remove(orb.mesh);
+      orb.material.dispose();
+    }
+    this.orbs.length = 0;
+    this.collisionBVH?.dispose();
+
+    const baseRow = Math.max(1, Math.floor(this.params.pyramidBaseRow));
+    const offsets = makeOrbOffsets(baseRow, this.params.ringRadius, this.params.pyramidRowSpacing);
+    const count = offsets.length;
+
+    this.collisionBVH = new OrbCollisionBVH(count);
+    this.hitCandidates = Array.from({ length: count }, () => null);
+    this.pointerOrbInside = Array.from({ length: count }, () => false);
+    this.pointerSweepSeen = Array.from({ length: count }, () => false);
+    this.pointerSweepWorldPoints = Array.from({ length: count }, () => new THREE.Vector3());
+    this.pointerFrameFired = Array.from({ length: count }, () => false);
+
+    for (let i = 0; i < count; i += 1) {
+      const orbUniforms = createOrbPerInstanceUniforms();
+      orbUniforms.offset.value.copy(offsets[i]);
+
+      const material = new THREE.MeshBasicNodeMaterial({
+        transparent: true,
+        depthWrite: true,
+      });
+      const nodes = this.makeOrbNodes(orbUniforms);
+      material.positionNode = nodes.positionNode;
+      material.colorNode = nodes.colorNode;
+
+      const sphere = new THREE.Mesh(this.sphereGeo, material);
+      sphere.scale.setScalar(this.params.orbRadius);
+      sphere.position.copy(offsets[i]);
+      sphere.renderOrder = 16;
+      sphere.frustumCulled = false;
+      this.mesh.add(sphere);
+
+      this.orbs.push({
+        mesh: sphere,
+        material,
+        lastHitAt: -10,
+        hitPulse: 0,
+        offset: offsets[i].clone(),
+        uniforms: orbUniforms,
+      });
+    }
   }
 
   setVisible(visible: boolean): void {
@@ -386,10 +435,10 @@ export class Drum implements PlayerVisual {
     const isIn = this.revealDirection === 1;
     const total = isIn ? Drum.REVEAL_DURATION_IN : Drum.REVEAL_DURATION_OUT;
     const perOrb = isIn ? Drum.REVEAL_PER_ORB_IN : Drum.REVEAL_PER_ORB_OUT;
-    const stagger = Math.max(0, total - perOrb) / Math.max(1, ORB_COUNT - 1);
+    const stagger = Math.max(0, total - perOrb) / Math.max(1, this.orbs.length - 1);
     // Outro sweeps the opposite way so the cluster collapses center-out
     // instead of repeating the intro pattern in reverse.
-    const stagIndex = isIn ? i : ORB_COUNT - 1 - i;
+    const stagIndex = isIn ? i : this.orbs.length - 1 - i;
     const localT = this.elapsed - this.revealStartedAt - stagIndex * stagger;
     const t = clamp(localT / Math.max(perOrb, 0.0001), 0, 1);
     // Out-cubic on the way in for the satisfying settle, in-cubic on the way
@@ -445,7 +494,7 @@ export class Drum implements PlayerVisual {
     // Per-orb update: bob and BVH sync. Hit detection runs once after all
     // centers are current so palms and finger joints query the same tree.
     const baseRadius = this.params.orbRadius;
-    for (let i = 0; i < ORB_COUNT; i += 1) {
+    for (let i = 0; i < this.orbs.length; i += 1) {
       const orb = this.orbs[i];
       // Subtle bob — each orb has its own phase.
       const bob = Math.sin(this.elapsed * this.params.bobSpeed * 1.3 + i * 1.21) * this.params.bobAmount;
@@ -467,7 +516,7 @@ export class Drum implements PlayerVisual {
       // interactivity returns. Visuals stay quiet during the rise.
       this.clearPointerVisualState(delta);
       this.pointerNdcPrevValid = false;
-      for (let i = 0; i < ORB_COUNT; i += 1) this.pointerOrbInside[i] = false;
+      for (let i = 0; i < this.orbs.length; i += 1) this.pointerOrbInside[i] = false;
     }
 
     for (const orb of this.orbs) {
@@ -517,7 +566,14 @@ export class Drum implements PlayerVisual {
   }
 
   private layoutOrbs(): void {
-    const offsets = makeOrbOffsets(this.params.ringRadius);
+    const baseRow = Math.max(1, Math.floor(this.params.pyramidBaseRow));
+    const offsets = makeOrbOffsets(baseRow, this.params.ringRadius, this.params.pyramidRowSpacing);
+    if (offsets.length !== this.orbs.length) {
+      // Spacing changed at the same time the row count did — defer to a full
+      // rebuild so per-orb state arrays stay sized to the orb list.
+      this.rebuildOrbs();
+      return;
+    }
     for (let i = 0; i < this.orbs.length; i += 1) {
       this.orbs[i].offset.copy(offsets[i]);
       this.orbs[i].uniforms.offset.value.copy(offsets[i]);
@@ -531,7 +587,7 @@ export class Drum implements PlayerVisual {
       this.pointerClickQueued = false;
       this.pointerNdcPrevValid = false;
       this.pointerLastAtMs = -Infinity;
-      for (let i = 0; i < ORB_COUNT; i += 1) this.pointerOrbInside[i] = false;
+      for (let i = 0; i < this.orbs.length; i += 1) this.pointerOrbInside[i] = false;
     };
 
     const updatePointer = (event: PointerEvent): boolean => {
@@ -641,7 +697,7 @@ export class Drum implements PlayerVisual {
     const recent = (performance.now() - this.pointerLastAtMs) / 1000 < 0.42 || this.pointerDown;
     if (!recent) {
       this.clearPointerVisualState(delta);
-      for (let i = 0; i < ORB_COUNT; i += 1) this.pointerOrbInside[i] = false;
+      for (let i = 0; i < this.orbs.length; i += 1) this.pointerOrbInside[i] = false;
       this.pointerNdcPrevValid = false;
       this.pointerClickQueued = false;
       this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
@@ -684,7 +740,7 @@ export class Drum implements PlayerVisual {
 
     // A swipe can skip over a small orb between animation frames. Sample the
     // pointer path in NDC and fire for every orb the swept ray crossed.
-    for (let i = 0; i < ORB_COUNT; i += 1) {
+    for (let i = 0; i < this.orbs.length; i += 1) {
       if (!this.pointerSweepSeen[i] || this.pointerOrbInside[i]) continue;
       this.pointerFrameFired[i] = this.firePointerHit(i, velocity, this.pointerSweepWorldPoints[i]);
     }
@@ -694,7 +750,7 @@ export class Drum implements PlayerVisual {
       this.pointerFrameFired[activeOrb] = this.firePointerHit(activeOrb, velocity, this.pointerCurrentHit.worldPoint);
     }
 
-    for (let i = 0; i < ORB_COUNT; i += 1) {
+    for (let i = 0; i < this.orbs.length; i += 1) {
       this.pointerOrbInside[i] = i === activeOrb;
     }
 
@@ -735,7 +791,7 @@ export class Drum implements PlayerVisual {
     let bestOrb = -1;
     let bestDistance = Infinity;
 
-    for (let i = 0; i < ORB_COUNT; i += 1) {
+    for (let i = 0; i < this.orbs.length; i += 1) {
       _pointerIntersections.length = 0;
       _raycaster.intersectObject(this.orbs[i].mesh, false, _pointerIntersections);
       const hit = _pointerIntersections[0];
@@ -833,7 +889,12 @@ export class Drum implements PlayerVisual {
   }
 
   private noteIndexForOrb(orbIndex: number): number {
-    return clamp(orbIndex, 0, ORB_HZ.length - 1);
+    // Wrap so pyramid sizes larger than the harmony array still get a note
+    // assigned (otherwise every extra orb would clamp to the last pitch).
+    const len = ORB_HZ.length;
+    if (len <= 0) return 0;
+    const idx = ((orbIndex % len) + len) % len;
+    return idx;
   }
 
   private resolveContacts(
@@ -889,7 +950,7 @@ export class Drum implements PlayerVisual {
       previous.copy(contact.position);
     }
 
-    for (let i = 0; i < ORB_COUNT; i += 1) {
+    for (let i = 0; i < this.orbs.length; i += 1) {
       const candidate = this.hitCandidates[i];
       if (!candidate) continue;
       const orb = this.orbs[i];
