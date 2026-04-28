@@ -22,10 +22,15 @@ type RuntimeApi = {
   setConductorName: (name: string) => void;
 };
 
-const stageWrap = document.getElementById('stage-wrap');
-if (!stageWrap) {
+const stageWrapEl = document.getElementById('stage-wrap');
+if (!stageWrapEl) {
   throw new Error('Jam Train: #stage-wrap mount missing');
 }
+const stageWrap = stageWrapEl;
+
+const runtimeCanvas = document.querySelector<HTMLCanvasElement>('#scene');
+runtimeCanvas?.style.setProperty('visibility', 'hidden');
+stageWrap.classList.add('intro-active');
 
 let activeRuntime: RuntimeApi | undefined;
 let runtimePromise: Promise<RuntimeApi> | undefined;
@@ -35,6 +40,7 @@ const beginGate = new BeginGate({
     const runtime = await loadRuntime();
     runtime.setConductorName(conductorName);
     await runtime.begin(conductorName);
+    revealRuntimeSurface();
   },
 });
 stageWrap.appendChild(beginGate.el);
@@ -74,6 +80,11 @@ function loadRuntime(): Promise<RuntimeApi> {
       });
   }
   return runtimePromise;
+}
+
+function revealRuntimeSurface(): void {
+  stageWrap.classList.remove('intro-active');
+  runtimeCanvas?.style.removeProperty('visibility');
 }
 
 const clampUnit = (n: unknown, fallback: number): number => {

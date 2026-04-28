@@ -42,6 +42,7 @@ export class MultiplayerClient {
   private signalListeners = new Set<SignalListener>();
   private partnerIdentityListeners = new Set<PartnerIdentityListener>();
   private localInstrument: string = 'loom';
+  private localInstrumentDirty = false;
   private partnerInstrument: string = 'loom';
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
@@ -131,12 +132,26 @@ export class MultiplayerClient {
   }
 
   async setLocalInstrument(instrumentId: string): Promise<void> {
-    if (this.localInstrument === instrumentId) return;
+    this.localInstrumentDirty = true;
+    this.acceptLocalInstrument(instrumentId);
+    await this.pushLocalInstrument();
+  }
+
+  private acceptLocalInstrument(instrumentId: string): void {
+    if (!instrumentId || this.localInstrument === instrumentId) return;
     this.localInstrument = instrumentId;
     for (const listener of this.localInstrumentListeners) listener(instrumentId);
+  }
+
+  private acceptServerLocalInstrument(instrumentId: string): void {
+    if (this.localInstrumentDirty && instrumentId !== this.localInstrument) return;
+    this.acceptLocalInstrument(instrumentId);
+  }
+
+  private async pushLocalInstrument(): Promise<void> {
     if (!this.connection?.isActive) return;
     try {
-      await this.connection.reducers.updateInstrument({ instrument: instrumentId });
+      await this.connection.reducers.updateInstrument({ instrument: this.localInstrument });
     } catch (err) {
       console.warn('[jam-train] update_instrument failed', err);
     }
@@ -359,11 +374,9 @@ export class MultiplayerClient {
         this.subscriptionApplied = true;
         // Now sync the partner plaque with whoever's actually online here.
         this.updatePartner();
-        // Push our current local loadout so the server row matches what we
-        // already chose locally (handles pre-connect picks and reconnects).
-        void conn.reducers
-          .updateInstrument({ instrument: this.localInstrument })
-          .catch(err => console.warn('[jam-train] update_instrument failed', err));
+        // Push the local loadout only when it was deliberately chosen before
+        // the subscription came up; otherwise let an existing server row win.
+        if (this.localInstrumentDirty) void this.pushLocalInstrument();
         void conn.reducers
           .updateCreature({ creature: this.localCreature })
           .catch(err => console.warn('[jam-train] update_creature failed', err));
@@ -485,6 +498,7 @@ export class MultiplayerClient {
     if (row.identity.toHexString() !== this.localId) return;
     this.setRoomId(row.roomId);
     this.setLocalSeat(row.seatIndex);
+    this.acceptServerLocalInstrument(row.instrument || 'loom');
   }
 
   private setLocalSeat(seatIndex: number): void {

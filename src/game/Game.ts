@@ -455,7 +455,6 @@ export class Game {
   }
 
   private setupRenderer(): void {
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.setClearColor(0x050403, 1);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -830,9 +829,8 @@ export class Game {
       const orbs = new OrbDrums(this.scene, this.paneDock, `orbs-${player}`, {
         palette: player,
         title: `Ripple Orb (${player === 'local' ? 'Local' : 'Partner'})`,
-        camera: this.camera,
-        canvas: this.canvas,
-        anchor: player === 'local' ? this.sculptureTarget : undefined,
+        camera: player === 'local' ? this.camera : undefined,
+        canvas: player === 'local' ? this.canvas : undefined,
         onHit: hit => {
           this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
         },

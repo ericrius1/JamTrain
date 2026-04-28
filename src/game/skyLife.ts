@@ -1,12 +1,10 @@
 import * as THREE from 'three/webgpu';
 import { SpriteAtlas, type AtlasId } from './spriteAtlas';
-import type { BiomeScheduler, MagicEvent, TimeOfDay } from './biomes';
-import { mulberry32 } from './seedRandom';
+import type { BiomeScheduler, TimeOfDay } from './biomes';
 import { appendSpriteShape, type ShapeBuffers, type SpriteTransformOptions } from './spriteShapes';
 
 const SKY_WIDTH = 16.8;
 const HALF_WIDTH = SKY_WIDTH * 0.5;
-const FIREFLIES_PER_SIDE = 48;
 
 const BIRD_LAYER_CAPACITY = 56;
 const MAX_FLOCKS = 4;
@@ -72,8 +70,6 @@ interface Flock {
 export class SkyLife {
   private root = new THREE.Group();
   private birdLayer!: SpriteLayer;
-  private magicLayer!: SpriteLayer;
-  private fireflyPoints!: { points: THREE.Points; geometry: THREE.BufferGeometry; material: THREE.PointsMaterial; positions: Float32Array; velocities: Float32Array };
   private flocks: Flock[] = [];
   private nextFlockAt = FLOCK_FIRST_SPAWN_S;
   private elapsedSeconds = 0;
@@ -83,15 +79,12 @@ export class SkyLife {
     _atlas: SpriteAtlas,
     private scheduler: BiomeScheduler,
     private seed: number,
-    private getEpochSeconds: () => number,
   ) {}
 
   build(): void {
     this.root.name = 'sky-life';
     for (const side of [-1]) {
       this.birdLayer = this.createSpriteLayer(side, BIRD_LAYER_CAPACITY, side * 3.36, -24);
-      this.magicLayer = this.createSpriteLayer(side, 4, side * 3.72, -23);
-      this.fireflyPoints = this.createFireflies(side);
     }
     this.scene.add(this.root);
   }
@@ -115,8 +108,6 @@ export class SkyLife {
   ): void {
     this.elapsedSeconds += delta;
     this.updateBirds(ctx);
-    this.updateFireflies(delta, ctx);
-    this.updateMagic(ctx);
   }
 
   private createSpriteLayer(side: number, capacity: number, x: number, renderOrder: number): SpriteLayer {
@@ -343,111 +334,6 @@ export class SkyLife {
       return { dx, dy, rotation: peel * 0.30 * m.side * dir, kind: 'peel' };
     }
     return { dx: 0, dy: 0, rotation: 0, kind: null };
-  }
-
-  private createFireflies(side: number) {
-    const cap = FIREFLIES_PER_SIDE;
-    const positions = new Float32Array(cap * 3);
-    const velocities = new Float32Array(cap * 3);
-    const rand = mulberry32(this.seed ^ 0xf1ef1e);
-    for (let i = 0; i < cap; i += 1) {
-      positions[i * 3] = (rand() - 0.5) * SKY_WIDTH * 0.8;
-      positions[i * 3 + 1] = 0.95 + rand() * 0.40;
-    }
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    const material = new THREE.PointsMaterial({
-      color: 0xffd58a,
-      size: 0.025,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
-    const points = new THREE.Points(geometry, material);
-    points.frustumCulled = false;
-    points.rotation.y = Math.PI / 2;
-    points.position.set(side * 2.58, 0, 0);
-    points.renderOrder = -8;
-    this.root.add(points);
-    return { points, geometry, material, positions, velocities };
-  }
-
-  private updateFireflies(delta: number, ctx: { currentForegroundId: string; daylight: number }): void {
-    const enabled = ctx.currentForegroundId === 'meadow' && ctx.daylight < 0.45;
-    const desired = enabled ? 0.85 : 0;
-    const fp = this.fireflyPoints;
-    fp.material.opacity = fp.material.opacity + (desired - fp.material.opacity) * 0.04;
-    if (fp.material.opacity < 0.01) return;
-    const positions = fp.geometry.getAttribute('position') as THREE.BufferAttribute;
-    for (let i = 0; i < FIREFLIES_PER_SIDE; i += 1) {
-      fp.velocities[i * 3] += (Math.random() - 0.5) * delta * 0.4;
-      fp.velocities[i * 3 + 1] += (Math.random() - 0.5) * delta * 0.3;
-      fp.velocities[i * 3] *= 0.94;
-      fp.velocities[i * 3 + 1] *= 0.94;
-      fp.positions[i * 3] += fp.velocities[i * 3] * delta;
-      fp.positions[i * 3 + 1] += fp.velocities[i * 3 + 1] * delta;
-      if (fp.positions[i * 3] > SKY_WIDTH * 0.4) fp.positions[i * 3] = SKY_WIDTH * 0.4;
-      if (fp.positions[i * 3] < -SKY_WIDTH * 0.4) fp.positions[i * 3] = -SKY_WIDTH * 0.4;
-      if (fp.positions[i * 3 + 1] < 0.85) fp.positions[i * 3 + 1] = 0.85;
-      if (fp.positions[i * 3 + 1] > 1.5) fp.positions[i * 3 + 1] = 1.5;
-      positions.setXYZ(i, fp.positions[i * 3], fp.positions[i * 3 + 1], 0);
-    }
-    positions.needsUpdate = true;
-  }
-
-  private updateMagic(ctx: { goldenHour: number }): void {
-    const now = this.getEpochSeconds();
-    const events = this.scheduler.magicAt(now);
-    let slot = 0;
-
-    this.beginLayer(this.magicLayer);
-    for (const ev of events) {
-      if (slot >= this.magicLayer.capacity) break;
-      const localT = ev.duration > 0 ? Math.max(0, Math.min(1, (now - ev.startTime) / ev.duration)) : 0;
-      this.renderMagic(ev, localT, ctx);
-      slot += 1;
-    }
-    this.endLayer(this.magicLayer);
-  }
-
-  private renderMagic(ev: MagicEvent, t: number, ctx: { goldenHour: number }): void {
-    const rand = mulberry32(ev.seed);
-    if (ev.kind === 'shootingStar') {
-      const startX = (rand() - 0.5) * SKY_WIDTH * 0.6 + SKY_WIDTH * 0.25;
-      const startY = 2.2 + rand() * 0.4;
-      const x = startX + (-1.4) * t;
-      const y = startY + (-0.5) * t;
-      const fade = t < 0.15 ? t / 0.15 : 1 - (t - 0.15) / 0.85;
-      const tint = new THREE.Color(0xfff4d6).multiplyScalar(Math.max(0, fade));
-      this.writeSprite(this.magicLayer, x, y, 0.6, 'shootingStarTrail', tint, 'center');
-    } else if (ev.kind === 'balloon') {
-      const baseY = 1.6 + rand() * 0.4;
-      const x = (rand() - 0.5) * SKY_WIDTH * 0.4 + Math.sin(t * 0.6) * 0.2;
-      const fade = t < 0.05 ? t / 0.05 : t > 0.95 ? (1 - t) / 0.05 : 1;
-      const tint = new THREE.Color(0xfff0d8).lerp(new THREE.Color(0xff9b78), ctx.goldenHour * 0.7).multiplyScalar(fade);
-      this.writeSprite(this.magicLayer, x, baseY + Math.sin(t * 1.1) * 0.05, 0.4, 'hotAirBalloon', tint, 'center');
-    } else if (ev.kind === 'whale') {
-      const x = (rand() - 0.5) * SKY_WIDTH * 0.4;
-      const y = 0.55;
-      if (t < 0.6) {
-        const localT = t / 0.6;
-        const fade = localT < 0.2 ? localT / 0.2 : 1 - (localT - 0.2) / 0.8;
-        const tint = new THREE.Color(0xddeef5).multiplyScalar(Math.max(0, fade));
-        this.writeSprite(this.magicLayer, x, y, 0.36, 'whaleSpout', tint, 'bottom');
-      } else {
-        const localT = (t - 0.6) / 0.4;
-        const fade = 1 - localT;
-        const tint = new THREE.Color(0x202830).multiplyScalar(Math.max(0, fade));
-        this.writeSprite(this.magicLayer, x + 0.4, y, 0.32, 'whaleTail', tint, 'bottom');
-      }
-    } else if (ev.kind === 'plane') {
-      const x = -SKY_WIDTH * 0.45 + t * SKY_WIDTH * 0.9;
-      const y = 2.0 + Math.sin(t * 6) * 0.05;
-      const blink = Math.sin(this.elapsedSeconds * 6) * 0.5 + 0.5;
-      const tint = new THREE.Color(0xff8a8a).multiplyScalar(blink);
-      this.writeSprite(this.magicLayer, x, y, 0.05, 'cloudSmall', tint, 'center');
-    }
   }
 
   private beginLayer(layer: SpriteLayer): void {

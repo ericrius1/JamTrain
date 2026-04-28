@@ -3,6 +3,21 @@
 :root {
   font-synthesis: none;
   text-rendering: optimizeLegibility;
+  --sun:          #f6b333;
+  --sun-2:        #e6892a;
+  --brass:        #c89a4b;
+  --brass-2:      #8c6a2e;
+  --brass-3:      #4a3617;
+  --copper:       #b06b3a;
+  --patina:       #6fbfa8;
+  --patina-deep:  #2f7d6a;
+  --leather:      #2a1d10;
+  --leather-2:    #1a120a;
+  --parchment:    #efe0bf;
+  --rivet:        #d9b070;
+  --danger:       #cc4a2c;
+  --text:         #efe0bf;
+  --text-dim:     rgba(239, 224, 191, 0.55);
 }
 
 * {
@@ -22,4 +37,11 @@ body {
 button,
 input {
   font: inherit;
+}
+
+#stage-wrap.intro-active #scene,
+#stage-wrap.intro-active #stage,
+#stage-wrap.intro-active #ui,
+#stage-wrap.intro-active #vignette {
+  visibility: hidden;
 }

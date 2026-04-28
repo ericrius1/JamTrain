@@ -1,36 +1,17 @@
 import * as THREE from 'three/webgpu';
-import { Fn, color, float, floor, fract, mix, smoothstep, time, uniform, uv } from 'three/tsl';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 import { clamp } from './math';
-import {
-  BiomeScheduler,
-  silhouetteParams,
-  type SilhouetteParams,
-} from './biomes';
-import { BiomeLayers } from './biomeLayers';
-import { FOREGROUND_BIOMES, BACKGROUND_BIOMES, type ForegroundBiomeId, type BackgroundBiomeId, type MagicEvent } from './biomes';
+import { BiomeScheduler } from './biomes';
+import { FOREGROUND_BIOMES, type ForegroundBiomeId } from './biomes';
 import { SpriteAtlas } from './spriteAtlas';
-import { WaterStrip } from './waterStrip';
 import { SkyLife } from './skyLife';
 import { timeOfDayPhase } from './biomes';
-import { Weather } from './weather';
-import { CloudCanopy } from './cloudCanopy';
-import { UnderwaterRealm } from './underwaterRealm';
 
 const FG_OPTIONS: Record<string, string> = (() => {
   const o: Record<string, string> = { auto: 'auto' };
   for (const id of Object.keys(FOREGROUND_BIOMES)) o[id] = id;
   return o;
 })();
-const BG_OPTIONS: Record<string, string> = (() => {
-  const o: Record<string, string> = { auto: 'auto' };
-  for (const id of Object.keys(BACKGROUND_BIOMES)) o[id] = id;
-  return o;
-})();
-
-const TERRAIN_LAYER_MIN = 0;
-const TERRAIN_LAYER_MAX = 9;
-const TERRAIN_LAYER_DEFAULT = 0;
 const PAINTED_TERRAIN_CHUNKS = [
   { id: 'alpine-lake', texture: '/scenery/far-terrain-chunk-01-alpine-lake.webp' },
   { id: 'fog-forest', texture: '/scenery/far-terrain-chunk-02-fog-forest.webp' },
@@ -56,21 +37,14 @@ const PAINTED_TERRAIN_X_DISTANCE = 4.86;
 const PAINTED_TERRAIN_Y = 1.34;
 const PAINTED_TERRAIN_LOOP_SECONDS_AT_MAX_SPEED = 360;
 const PAINTED_TERRAIN_MAX_SPEED = 3;
+const PAINTED_TERRAIN_VISIBLE_PANELS = 2;
 
 export const SCENERY_DEFS = {
   cycleLengthSeconds: { default: 240,  min: 30,  max: 600,  step: 1,     label: 'day/night sec' },
   cycleOffset:        { default: 0.50, min: 0,   max: 1,    step: 0.001, label: 'cycle offset' },
   trainSpeed:         { default: 1.1,  min: 0,   max: 3,    step: 0.01,  label: 'train speed' },
-  hillAmplitude:      { default: 1.18, min: 0.1, max: 2.0,  step: 0.01,  label: 'hill shape', folder: 'Terrain' },
-  terrainLayers:      { default: TERRAIN_LAYER_DEFAULT, min: TERRAIN_LAYER_MIN, max: TERRAIN_LAYER_MAX, step: 1, label: 'proc layers', folder: 'Terrain' },
   paintedTerrainOpacity: { default: 0.92, min: 0, max: 1, step: 0.01, label: 'painted layer', folder: 'Terrain' },
-  auroraIntensity:    { default: 0.42, min: 0,   max: 1.8,  step: 0.01,  label: 'aurora' },
-  starIntensity:      { default: 0.9,  min: 0,   max: 1,    step: 0.01,  label: 'stars' },
-  moonSize:           { default: 0.34, min: 0.12, max: 0.58, step: 0.01, label: 'moon size' },
-  moonPhase:          { type: 'string', default: '', readonly: true, label: 'moon phase' },
-
   foreground:      { type: 'select', default: 'lake', options: FG_OPTIONS, folder: 'Biomes' },
-  background:      { type: 'select', default: 'alpinePeaks', options: BG_OPTIONS, folder: 'Biomes' },
   transitionSpeed: { default: 1, min: 0.1, max: 10, step: 0.1,  folder: 'Biomes' },
   recencyPenalty:  { default: 1, min: 0,   max: 2,  step: 0.05, folder: 'Biomes' },
 } as const;
@@ -86,59 +60,12 @@ export type SceneryOptions = {
   roomSeed: number;
 };
 
-interface BackgroundPanel {
-  mesh: THREE.Mesh;
-  geometry: THREE.BufferGeometry;
-  layer: BackgroundDepthLayer;
-  layerIndex: number;
-  side: number;
-  scrollOffset: number;
-  segments: number;
-  width: number;
-  panelHeight: number;
-}
-
-interface BackgroundDepthLayer {
-  id: string;
-  xDistance: number;
-  widthScale: number;
-  heightScale: number;
-  yOffset: number;
-  frequencyScale: number;
-  phaseOffset: number;
-  scrollSpeed: number;
-  mist: number;
-  fogScale: number;
-  brightness: number;
-  alpha: number;
-  snowBias: number;
-  ridgeGlow: number;
-  renderOrder: number;
-}
-
-interface BackgroundFogBand {
-  y: number;
-  height: number;
-  intensity: number;
-  drift: number;
-  minLayers: number;
-  renderOrder: number;
-}
-
-interface BackgroundFogPanel {
-  mesh: THREE.Mesh;
-  band: BackgroundFogBand;
-  side: number;
-}
-
 interface PaintedTerrainPanel {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
-  sequenceIndex: number;
-}
-
-interface PaintedTerrainResource {
   material: THREE.MeshBasicMaterial;
-  texture: THREE.Texture;
+  sequenceOffset: number;
+  sequenceIndex: number;
+  texture?: THREE.Texture;
 }
 
 const fullTurn = Math.PI * 2;
@@ -342,18 +269,13 @@ export class ScenerySystem {
   private bgFogMeshes: BackgroundFogPanel[] = [];
   private scheduler!: BiomeScheduler;
   private atlas!: SpriteAtlas;
-  private layers!: BiomeLayers;
-  private water!: WaterStrip;
   private skyLife!: SkyLife;
-  private weather!: Weather;
-  private cloudCanopy!: CloudCanopy;
-  private underwater!: UnderwaterRealm;
   private onThunder?: (delay: number) => void;
   private paintedTerrainGeometry?: THREE.PlaneGeometry;
   private paintedTerrainAlphaTexture?: THREE.CanvasTexture;
-  private paintedTerrainResources: PaintedTerrainResource[] = [];
   private paintedTerrainPanels: PaintedTerrainPanel[] = [];
   private paintedTerrainDistance = 0;
+  private paintedTerrainLoader?: THREE.TextureLoader;
   private readonly paintedTerrainTint = new THREE.Color(0xffffff);
   private readonly paintedTerrainNightTint = new THREE.Color(0x3a2a22);
   private readonly paintedTerrainDuskTint = new THREE.Color(0xffb261);
@@ -414,39 +336,15 @@ export class ScenerySystem {
 
   build(): void {
     this.root.name = 'procedural-scenery';
-    this.createSky();
     this.createPaintedTerrain();
-    this.createBackground();
     this.atlas = new SpriteAtlas();
-    this.layers = new BiomeLayers(this.scene, this.atlas, this.scheduler, this.roomSeed);
-    this.layers.build();
-    this.water = new WaterStrip(this.scene);
-    this.water.build();
-    this.underwater = new UnderwaterRealm(this.scene, this.roomSeed);
-    this.underwater.build();
     this.skyLife = new SkyLife(
       this.scene,
       this.atlas,
       this.scheduler,
       this.roomSeed,
-      () => Date.now() / 1000,
     );
     this.skyLife.build();
-    this.weather = new Weather(
-      this.scene,
-      this.scheduler,
-      () => Date.now() / 1000,
-      delay => this.onThunder?.(delay),
-    );
-    this.weather.build();
-    this.cloudCanopy = new CloudCanopy(this.scene, {
-      cloudCover: this.weather.cloudCover,
-      rainAmount: this.weather.rainAmount,
-      skyTravel: this.skyTravel,
-      goldenHour: this.skySunset,
-      skyNight: this.skyNight,
-    });
-    this.cloudCanopy.build();
     this.scene.add(this.root);
   }
 
@@ -457,9 +355,7 @@ export class ScenerySystem {
   setRoomSeed(seed: number): void {
     this.roomSeed = seed;
     this.scheduler.setSeed(seed);
-    this.layers?.setSeed(seed);
     this.skyLife?.setSeed(seed);
-    this.underwater?.setSeed(seed);
   }
 
   getRoomSeed(): number {
@@ -503,28 +399,19 @@ export class ScenerySystem {
     this.skyTravel.value += delta * speed;
 
     const fg = this.scheduler.foreground();
-    const underwater = biomeWindowWeight(fg, 'undersea');
+    const underwater = 0;
 
     this.updateBackground(delta, speed, daylight);
-    this.layers?.update(delta, speed, { daylight, nightAmount: night });
-    if (this.water) {
-      this.water.update(fg.t < 0.5 ? fg.from : fg.to, delta);
-    }
-    this.underwater?.update(delta, { presence: underwater, daylight, trainSpeed: speed });
     if (this.skyLife) {
-      const bg = this.scheduler.background();
       const currentFg = fg.t < 0.5 ? fg.from : fg.to;
-      const currentBg = bg.t < 0.5 ? bg.from : bg.to;
-      const weatherNow = this.scheduler.weatherAt(Date.now() / 1000);
       this.skyLife.update(delta, {
         daylight,
         goldenHour,
-        cloudCover: weatherNow.cloudCover,
-        rainAmount: weatherNow.rain,
+        cloudCover: 0,
+        rainAmount: 0,
         phase: timeOfDayPhase(cycle),
         currentForegroundId: currentFg.id,
       });
-      this.weather?.update(delta, { fgBiome: currentFg, bgBiome: currentBg });
     }
 
     this.atmosphere.background
@@ -540,7 +427,6 @@ export class ScenerySystem {
 
   dispose(): void {
     this.registered?.dispose();
-    this.underwater?.dispose();
     this.disposePaintedTerrain();
   }
 
@@ -573,25 +459,12 @@ export class ScenerySystem {
   }
 
   private createPaintedTerrain(): void {
-    const loader = new THREE.TextureLoader();
+    this.paintedTerrainLoader = new THREE.TextureLoader();
     this.paintedTerrainGeometry = new THREE.PlaneGeometry(PAINTED_TERRAIN_CHUNK_WIDTH, PAINTED_TERRAIN_HEIGHT);
     this.paintedTerrainAlphaTexture = this.createPaintedTerrainAlphaTexture();
 
-    this.paintedTerrainResources = PAINTED_TERRAIN_CHUNKS.map(chunk => {
-      const texture = loader.load(chunk.texture, tex => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        tex.wrapS = THREE.ClampToEdgeWrapping;
-        tex.wrapT = THREE.ClampToEdgeWrapping;
-        tex.generateMipmaps = true;
-        tex.needsUpdate = true;
-      });
-      texture.colorSpace = THREE.SRGBColorSpace;
-      texture.wrapS = THREE.ClampToEdgeWrapping;
-      texture.wrapT = THREE.ClampToEdgeWrapping;
-      texture.generateMipmaps = true;
-
+    for (let sequenceOffset = 0; sequenceOffset < PAINTED_TERRAIN_VISIBLE_PANELS; sequenceOffset += 1) {
       const material = new THREE.MeshBasicMaterial({
-        map: texture,
         alphaMap: this.paintedTerrainAlphaTexture,
         color: 0xffffff,
         transparent: true,
@@ -601,23 +474,13 @@ export class ScenerySystem {
         toneMapped: false,
         fog: false,
       });
-
-      return { material, texture };
-    });
-
-    for (const side of [-1]) {
-      for (let sequenceIndex = 0; sequenceIndex < PAINTED_TERRAIN_SEQUENCE.length; sequenceIndex += 1) {
-        const chunkIndex = PAINTED_TERRAIN_SEQUENCE[sequenceIndex];
-        const chunk = PAINTED_TERRAIN_CHUNKS[chunkIndex];
-        const resource = this.paintedTerrainResources[chunkIndex];
-        const mesh = new THREE.Mesh(this.paintedTerrainGeometry, resource.material);
-        mesh.name = `painted-far-terrain-${chunk.id}`;
-        mesh.rotation.y = Math.PI / 2;
-        mesh.position.set(side * PAINTED_TERRAIN_X_DISTANCE, PAINTED_TERRAIN_Y, 0);
-        mesh.renderOrder = -31 + sequenceIndex * 0.001;
-        this.paintedTerrainPanels.push({ mesh, sequenceIndex });
-        this.root.add(mesh);
-      }
+      const mesh = new THREE.Mesh(this.paintedTerrainGeometry, material);
+      mesh.rotation.y = Math.PI / 2;
+      mesh.position.set(-PAINTED_TERRAIN_X_DISTANCE, PAINTED_TERRAIN_Y, 0);
+      mesh.renderOrder = -31 + sequenceOffset * 0.001;
+      mesh.frustumCulled = false;
+      this.paintedTerrainPanels.push({ mesh, material, sequenceOffset, sequenceIndex: -1 });
+      this.root.add(mesh);
     }
     this.updatePaintedTerrainPanels();
   }
@@ -817,9 +680,9 @@ export class ScenerySystem {
       .lerp(this.paintedTerrainDuskTint, goldenHour * 0.16);
 
     const opacity = this.params.paintedTerrainOpacity * (0.78 + daylight * 0.22);
-    for (const resource of this.paintedTerrainResources) {
-      resource.material.color.copy(this.paintedTerrainTint);
-      resource.material.opacity = opacity;
+    for (const panel of this.paintedTerrainPanels) {
+      panel.material.color.copy(this.paintedTerrainTint);
+      panel.material.opacity = opacity;
     }
   }
 
@@ -827,11 +690,44 @@ export class ScenerySystem {
     const loopLength = this.paintedTerrainLoopLength();
     if (loopLength <= 0) return;
 
+    const sequenceLength = PAINTED_TERRAIN_SEQUENCE.length;
+    const currentIndex = Math.floor(this.paintedTerrainDistance / PAINTED_TERRAIN_CHUNK_STRIDE) % sequenceLength;
+    const localDistance = this.paintedTerrainDistance % PAINTED_TERRAIN_CHUNK_STRIDE;
+
     for (const panel of this.paintedTerrainPanels) {
-      const baseZ = panel.sequenceIndex * PAINTED_TERRAIN_CHUNK_STRIDE;
-      const z = wrapCentered(baseZ - this.paintedTerrainDistance, loopLength);
-      panel.mesh.position.z = z;
+      const sequenceIndex = (currentIndex + panel.sequenceOffset) % sequenceLength;
+      if (panel.sequenceIndex !== sequenceIndex) {
+        this.assignPaintedTerrainTexture(panel, sequenceIndex);
+      }
+      panel.mesh.position.z = panel.sequenceOffset * PAINTED_TERRAIN_CHUNK_STRIDE - localDistance;
     }
+  }
+
+  private assignPaintedTerrainTexture(panel: PaintedTerrainPanel, sequenceIndex: number): void {
+    const chunkIndex = PAINTED_TERRAIN_SEQUENCE[sequenceIndex];
+    const chunk = PAINTED_TERRAIN_CHUNKS[chunkIndex];
+    const loader = this.paintedTerrainLoader;
+    if (!loader) return;
+
+    panel.texture?.dispose();
+    const texture = loader.load(chunk.texture, tex => {
+      this.configurePaintedTerrainTexture(tex);
+      tex.needsUpdate = true;
+    });
+    this.configurePaintedTerrainTexture(texture);
+
+    panel.sequenceIndex = sequenceIndex;
+    panel.texture = texture;
+    panel.material.map = texture;
+    panel.material.needsUpdate = true;
+    panel.mesh.name = `painted-far-terrain-${chunk.id}`;
+  }
+
+  private configurePaintedTerrainTexture(texture: THREE.Texture): void {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.ClampToEdgeWrapping;
+    texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = true;
   }
 
   private paintedTerrainLoopLength(): number {
@@ -841,17 +737,15 @@ export class ScenerySystem {
   private disposePaintedTerrain(): void {
     for (const panel of this.paintedTerrainPanels) {
       this.root.remove(panel.mesh);
+      panel.texture?.dispose();
+      panel.material.dispose();
     }
     this.paintedTerrainPanels = [];
-    for (const resource of this.paintedTerrainResources) {
-      resource.material.dispose();
-      resource.texture.dispose();
-    }
-    this.paintedTerrainResources = [];
     this.paintedTerrainGeometry?.dispose();
     this.paintedTerrainAlphaTexture?.dispose();
     this.paintedTerrainGeometry = undefined;
     this.paintedTerrainAlphaTexture = undefined;
+    this.paintedTerrainLoader = undefined;
   }
 
   private activeTerrainLayerCount(): number {
@@ -1114,8 +1008,4 @@ function getMoonPhase(date: Date): { phase: number; name: string } {
 function smoothstepScalar(edge0: number, edge1: number, value: number): number {
   const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
   return t * t * (3 - 2 * t);
-}
-
-function wrapCentered(value: number, length: number): number {
-  return ((((value + length * 0.5) % length) + length) % length) - length * 0.5;
 }
