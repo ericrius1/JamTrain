@@ -35,15 +35,15 @@ export const SCULPTOR_DEFS = {
   particleCount:        { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
   particleSize:         { default: 0.005, min: 0.001, max: 0.03, step: 0.001, label: 'particle size' },
   particleOpacity:      { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
-  flowSpeed:            { default: 0.72,  min: 0.1,   max: 3,    step: 0.05, label: 'flow speed' },
+  flowSpeed:            { default: 0.58,  min: 0.1,   max: 3,    step: 0.05, label: 'flow speed' },
   velocityBlend:        { default: 0.92,  min: 0.4,   max: 1,    step: 0.005, label: 'velocity damping' },
   speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
   stretchScale:         { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
-  containmentStrength:  { default: 2.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
+  containmentStrength:  { default: 6.5,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
   lifeSeconds:          { default: 100,   min: 8,    max: 240,  step: 0.5, label: 'life seconds' },
   fadeFraction:         { default: 0.18,  min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
-  fieldMemorySeconds:   { default: 12,    min: 1,    max: 90,   step: 0.5, label: 'field memory' },
-  residualField:        { default: 0.04,  min: 0,    max: 0.25, step: 0.005, label: 'residual field' },
+  fieldMemorySeconds:   { default: 16,    min: 1,    max: 90,   step: 0.5, label: 'field memory' },
+  residualField:        { default: 0.025, min: 0,    max: 0.25, step: 0.005, label: 'residual field' },
   settleAmount:         { default: 1.0,   min: 0,    max: 1,    step: 0.01, label: 'settle amount' },
   settleStart:          { default: 0.05,  min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
   fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
@@ -273,7 +273,7 @@ export class EnergySculptor implements EnergySink {
     this.fieldRotationRate = this.params.fieldRotationRate;
     this.fieldBreathAmount = this.params.fieldBreathAmount;
 
-    this.registered = registerTweaks(paneDock, 'energySculptorFlowDamping', SCULPTOR_DEFS, {
+    this.registered = registerTweaks(paneDock, 'energySculptorBoundedLayers', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
@@ -504,7 +504,13 @@ export class EnergySculptor implements EnergySink {
       const flowA = sampleFlow(this.attractorSelectUniform, samplePos);
       const flowB = sampleFlow(this.attractorTargetUniform, samplePos);
       const sampledFlow = mix(flowA, flowB, this.crossfadeWeightUniform);
-      const flow = this.sampleRotUniform.mul(sampledFlow);
+      const rawFlow = this.sampleRotUniform.mul(sampledFlow);
+      const r = pos.length();
+      const radial = pos.div(r.max(0.0001));
+      const radialFlow = radial.mul(rawFlow.dot(radial));
+      const tangentialFlow = rawFlow.sub(radialFlow.mul(0.82));
+      const flowLen = tangentialFlow.length();
+      const flow = tangentialFlow.div(flowLen.max(0.0001)).mul(flowLen.clamp(0, 3.25));
 
       // Music modulation: pulse boosts flow speed; sustained adds gentle swirl.
       const musicGain = float(1)
@@ -529,19 +535,35 @@ export class EnergySculptor implements EnergySink {
       const fieldInfluence = fieldInfluenceBase.mul(fieldInfluenceBase);
       const flowInfluence = mix(this.residualFieldUniform, float(1), fieldInfluence);
 
-      // Smoothly blend velocity toward flow so trajectories feel inertial
-      // rather than instantaneously snapping to dp/dt.
-      const targetVel = flow.mul(speedGain).mul(flowInfluence);
-      const newVel = mix(targetVel, vel, this.velocityBlendUniform).toVar();
+      // Treat the field as acceleration, not as a velocity target. Targeting
+      // velocity makes every particle conform to the strange attractor. Force
+      // integration lets particles draw a path, then slow where that path was.
+      const activeDrag = float(0.55).add(float(1).sub(this.velocityBlendUniform).mul(3.0));
+      const settledDrag = activeDrag.add(3.2);
+      const drag = mix(activeDrag, settledDrag, settledT);
 
       // Soft containment: when a particle drifts past the safe radius for
       // this attractor, push it back so we don't accumulate runaways. This is
       // intentionally not part of residual field motion; old particles should
       // not get a slow inward pull after their active field window ends.
-      const r = pos.length();
-      const overshoot = smoothstep(this.containmentRadiusUniform.mul(0.85), this.containmentRadiusUniform, r);
-      const inward = pos.normalize().negate().mul(overshoot).mul(this.containmentStrengthUniform);
-      newVel.addAssign(inward.mul(fieldInfluence));
+      const overshoot = smoothstep(this.containmentRadiusUniform.mul(0.72), this.containmentRadiusUniform.mul(0.94), r);
+      const containInfluence = fieldInfluence.add(settledT.mul(0.42)).clamp(0, 1);
+      const inward = radial.negate().mul(overshoot).mul(this.containmentStrengthUniform);
+      const innerCore = float(1).sub(smoothstep(
+        this.containmentRadiusUniform.mul(0.06),
+        this.containmentRadiusUniform.mul(0.18),
+        r,
+      ));
+      const coreRepel = radial.mul(innerCore).mul(this.containmentStrengthUniform).mul(0.28);
+      const accel = flow.mul(speedGain).mul(flowInfluence)
+        .add(inward.mul(containInfluence))
+        .add(coreRepel.mul(flowInfluence.add(this.residualFieldUniform)));
+      const dragFactor = float(1).div(float(1).add(drag.mul(this.dtUniform)));
+      const newVel = vel.add(accel.mul(this.dtUniform)).mul(dragFactor).toVar();
+      const maxWorldSpeed = mix(0.035, 0.42, fieldInfluence);
+      const maxSpeed = maxWorldSpeed.div(this.worldScaleUniform.max(0.001));
+      const speedNow = newVel.length();
+      newVel.assign(newVel.mul(maxSpeed.div(speedNow.max(maxSpeed))));
 
       // Dissolve burst: blow particles outward away from origin and shorten life.
       const dm = this.dissolveModeUniform;

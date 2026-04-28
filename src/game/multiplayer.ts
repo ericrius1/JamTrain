@@ -48,11 +48,10 @@ export class MultiplayerClient {
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
   private localCreature: string = 'lion';
-  // True once the user explicitly picks a creature (via the HUD picker). The
-  // localStorage-restored value on boot is a soft *preference* — we hand it
-  // to the server as a hint but let the server override it when the partner
-  // already has that creature, so the second player never auto-spawns as a
-  // twin of the first.
+  // True once the user explicitly picks a creature (via the HUD picker). On
+  // boot we no longer restore a saved preference — the server always
+  // randomly assigns on cabin entry, so the localStorage value is just a
+  // preload-asset hint, never a request to override the server.
   private localCreatureDirty = false;
   private partnerCreature: string = ROBOT_PARTNER_CREATURE;
   private localCreatureListeners = new Set<CreatureListener>();
