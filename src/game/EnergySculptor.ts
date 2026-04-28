@@ -40,10 +40,10 @@ export const SCULPTOR_DEFS = {
   speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
   stretchScale:         { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
   containmentStrength:  { default: 6.0,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
-  lifeSeconds:          { default: 60,    min: 4,    max: 240,  step: 0.5, label: 'life seconds' },
-  fadeFraction:         { default: 0.25,  min: 0.05, max: 0.6,  step: 0.01, label: 'fade fraction' },
+  lifeSeconds:          { default: 22,    min: 4,    max: 240,  step: 0.5, label: 'life seconds' },
+  fadeFraction:         { default: 0.5,   min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
   settleAmount:         { default: 1.0,   min: 0,    max: 1,    step: 0.01, label: 'settle amount' },
-  settleStart:          { default: 0.5,   min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
+  settleStart:          { default: 0.0,   min: 0,    max: 0.95, step: 0.01, label: 'settle start' },
   fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
   fieldBreathAmount:    { default: 0.15,  min: 0,    max: 0.5,  step: 0.01, label: 'field breath' },
   duetBoost:            { default: 0.45,  min: 0,    max: 1.5,  step: 0.01, label: 'duet boost' },
@@ -814,9 +814,11 @@ export class EnergySculptor implements EnergySink {
         const jz = (Math.random() - 0.5) * 0.6;
         this.spawnPosArray[slot].set(oxLocal + jx, oyLocal + jy, ozLocal + jz);
 
-        // Initial velocity: emit direction, attenuated and rotated toward
-        // attractor space. Magnitude small so attractor flow dominates fast.
-        const seedSpeed = (0.4 + Math.random() * 0.6) * (req.speed * 0.4);
+        // Initial velocity: emit direction, in attractor space. Magnitude is
+        // intentionally hefty — particles coast along their emit trajectory
+        // for a beat before flow captures them, leaving a visible streak from
+        // the emit point that becomes part of the frozen echo trail.
+        const seedSpeed = (0.4 + Math.random() * 0.6) * (req.speed * 1.0);
         this.spawnVelArray[slot].set(
           dirX * seedSpeed,
           dirY * seedSpeed,

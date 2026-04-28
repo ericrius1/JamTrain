@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import type { CreatureLighting } from '../creatureShading';
 import { makeEyeMaterial, makeFurMaterial } from '../creatureShading';
 
 export type LionHeadHandles = {
@@ -8,10 +7,10 @@ export type LionHeadHandles = {
   geometries: THREE.BufferGeometry[];
 };
 
-export function buildLionHead(lighting: CreatureLighting): LionHeadHandles {
+export function buildLionHead(): LionHeadHandles {
   const group = new THREE.Group();
-  const fur = makeFurMaterial(lighting);
-  const eye = makeEyeMaterial(lighting);
+  const fur = makeFurMaterial();
+  const eye = makeEyeMaterial();
   // Cheap dark material for nose pad + ear inner — solid color, no lighting model.
   const darkPadMat = new THREE.MeshBasicNodeMaterial({ color: new THREE.Color('#1f1612') });
 

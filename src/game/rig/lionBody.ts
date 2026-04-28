@@ -1,5 +1,4 @@
 import * as THREE from 'three/webgpu';
-import type { CreatureLighting } from '../creatureShading';
 import { makeFurMaterial } from '../creatureShading';
 
 export type LionBodyHandles = {
@@ -12,9 +11,9 @@ export type LionBodyHandles = {
   geometries: THREE.BufferGeometry[];
 };
 
-export function buildLionBody(lighting: CreatureLighting): LionBodyHandles {
+export function buildLionBody(): LionBodyHandles {
   const group = new THREE.Group();
-  const fur = makeFurMaterial(lighting);
+  const fur = makeFurMaterial();
 
   // Stockier than human torso — wider chest, less waist taper.
   const torsoProfile = [

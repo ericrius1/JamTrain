@@ -221,8 +221,8 @@ export class Game {
     });
     this.multiplayer.onPartnerIdentity(() => this.poseSession.clearRemotePose());
 
-    this.localRig = new HumanoidRig(this.scene, { seatIndex: 0, color: 0x2d7f8c, creature: 'lion' });
-    this.remoteRig = new HumanoidRig(this.scene, { seatIndex: 1, color: 0x8c4a7b, creature: 'robot' });
+    this.localRig = new HumanoidRig(this.scene, { seatIndex: 0, creature: 'lion' });
+    this.remoteRig = new HumanoidRig(this.scene, { seatIndex: 1, creature: 'robot' });
     this.localRig.setFingertipNodesVisible(false);
     this.remoteRig.setFingertipNodesVisible(false);
     this.applyPlayerBackOffset();

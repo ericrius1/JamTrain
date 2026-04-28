@@ -1,10 +1,8 @@
 import * as THREE from 'three/webgpu';
 import type { FingerJointName, FingerName, Handedness, PlayerPose } from '../types';
 import type { CreatureId } from '../creatures';
-import { createCreatureLighting, makeAccentMaterial, type CreatureLighting } from '../creatureShading';
+import { makeAccentMaterial } from '../creatureShading';
 import { Skeleton } from './skeleton';
-import { buildHumanHead, type HumanHeadHandles } from './humanHead';
-import { buildHumanBody, type HumanBodyHandles } from './humanBody';
 import { buildLionHead, type LionHeadHandles } from './lionHead';
 import { buildLionBody, type LionBodyHandles } from './lionBody';
 import { IllustratedPuppetAvatar } from './IllustratedPuppetAvatar';
@@ -12,22 +10,16 @@ import { getIllustratedPuppetSpec } from './illustratedPuppets';
 
 export type HumanoidRigOptions = {
   seatIndex: number;
-  color: number;
   creature: CreatureId;
 };
-
-type HeadHandles = HumanHeadHandles | LionHeadHandles;
-type BodyHandles = HumanBodyHandles | LionBodyHandles;
 
 export class HumanoidRig {
   readonly root = new THREE.Group();
   private creature: CreatureId;
   private seatIndex: number;
-  private seatColor: number;
-  private lighting: CreatureLighting;
   private skeleton!: Skeleton;
-  private head!: HeadHandles;
-  private body!: BodyHandles;
+  private head!: LionHeadHandles;
+  private body!: LionBodyHandles;
   private illustratedPuppet: IllustratedPuppetAvatar | null = null;
   private accentMaterial!: THREE.MeshBasicNodeMaterial;
   private fingertipNodesVisible = true;
@@ -35,9 +27,7 @@ export class HumanoidRig {
 
   constructor(private scene: THREE.Scene, opts: HumanoidRigOptions) {
     this.seatIndex = opts.seatIndex;
-    this.seatColor = opts.color;
     this.creature = opts.creature;
-    this.lighting = createCreatureLighting();
 
     this.buildForCreature();
     this.scene.add(this.root);
@@ -108,16 +98,13 @@ export class HumanoidRig {
   private buildForCreature(): void {
     this.accentMaterial = makeAccentMaterial();
     const puppetSpec = getIllustratedPuppetSpec(this.creature);
-
-    if (puppetSpec) {
-      this.body = buildLionBody(this.lighting);
-      this.head = buildLionHead(this.lighting);
-      this.illustratedPuppet = new IllustratedPuppetAvatar(puppetSpec);
-    } else {
-      this.body = buildHumanBody(this.lighting, this.seatColor);
-      this.head = buildHumanHead(this.lighting);
-      this.illustratedPuppet = null;
+    if (!puppetSpec) {
+      throw new Error(`No illustrated puppet spec for creature '${this.creature}'`);
     }
+
+    this.body = buildLionBody();
+    this.head = buildLionHead();
+    this.illustratedPuppet = new IllustratedPuppetAvatar(puppetSpec);
 
     this.skeleton = new Skeleton(
       {
@@ -131,14 +118,10 @@ export class HumanoidRig {
 
     this.skeleton.setFingertipNodesVisible(this.fingertipNodesVisible);
 
-    if (this.illustratedPuppet) {
-      this.skeleton.root.visible = false;
-      this.root.add(this.illustratedPuppet.group);
-    } else {
-      this.skeleton.bodyAnchor.add(this.body.group);
-      this.skeleton.headAnchor.add(this.head.group);
-    }
-
+    // Skeleton segments stay in the scene graph for hand-tracking transforms,
+    // but they're hidden — only the illustrated puppet renders.
+    this.skeleton.root.visible = false;
+    this.root.add(this.illustratedPuppet.group);
     this.root.add(this.skeleton.root);
   }
 

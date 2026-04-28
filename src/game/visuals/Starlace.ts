@@ -106,15 +106,15 @@ const _colorB = new THREE.Color();
 const _colorC = new THREE.Color();
 
 const STARLACE_NOTE_PALETTE = [
-  '#efb457',
-  '#da7a50',
-  '#d45f78',
-  '#bf5aa4',
-  '#8c73d2',
-  '#5f87c9',
-  '#3fa6b9',
-  '#78b59c',
-  '#dfa24a',
+  '#d99a43',
+  '#c76b42',
+  '#c94f72',
+  '#ad4692',
+  '#7d63c7',
+  '#4d78bb',
+  '#3299b0',
+  '#55a889',
+  '#c58336',
 ] as const;
 
 const STARLACE_DUSK_COOL = new THREE.Color('#376f8e');
@@ -799,14 +799,16 @@ export class Starlace implements PlayerVisual {
       _dummy.updateMatrix();
       this.nodeMesh.setMatrixAt(i, _dummy.matrix);
 
-      _colorA.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
-      this.noteColorForNode(node, _colorB);
-      _colorA.lerp(_colorB, clamp(0.36 + pulse * 0.44 + node.pulse * 0.12, 0.30, 0.88));
-      _colorA.lerp(this.gold, hash(node.seed * 29.1 + node.noteIndex) > 0.72 ? 0.10 : 0.02);
-      _colorA.lerp(this.hot, Math.pow(pulse, 3) * 0.08);
-      const boost = 0.78 + pulse * 0.48;
-      _colorB.copy(_colorA);
-      _colorB.multiplyScalar(boost);
+      this.noteColorForNode(node, _colorA);
+      _colorB.copy(this.cool).lerp(this.warm, clamp(node.u + 0.5, 0, 1));
+      _colorA.lerp(_colorB, 0.12 + twinkle * 0.06);
+      _colorA.lerp(this.gold, hash(node.seed * 29.1 + node.noteIndex) > 0.80 ? 0.08 : 0.015);
+      _colorA.lerp(this.hot, Math.pow(pulse, 2.4) * 0.045);
+      const boost = 0.86 + pulse * 0.24 + twinkle * 0.04;
+      _colorB.copy(_colorA).multiplyScalar(boost);
+      _colorB.r = Math.min(_colorB.r, 0.96);
+      _colorB.g = Math.min(_colorB.g, 0.92);
+      _colorB.b = Math.min(_colorB.b, 0.98);
       this.nodeMesh.setColorAt(i, _colorB);
     }
     this.nodeMesh.instanceMatrix.needsUpdate = true;
@@ -1335,7 +1337,7 @@ export class Starlace implements PlayerVisual {
     this.warm.set(this.params.warmColor).lerp(STARLACE_DUSK_WARM, 0.18).multiplyScalar(0.98);
     this.gold.set(this.params.goldColor).lerp(STARLACE_DUSK_GOLD, 0.24).multiplyScalar(0.96);
     this.hot.set(this.params.hotColor).lerp(STARLACE_DUSK_HOT, 0.30).multiplyScalar(0.98);
-    this.noteColors = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex).multiplyScalar(0.96));
+    this.noteColors = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex).multiplyScalar(1.00));
     this.lineMaterial.color.setRGB(0.98, 0.97, 0.94);
     this.pulseLineMaterial.color.setRGB(1.00, 0.96, 0.92);
     this.nodeMaterial.color.setRGB(1.00, 0.98, 0.94);
