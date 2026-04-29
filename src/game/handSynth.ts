@@ -68,6 +68,7 @@ const STARLACE_MAX_ACTIVE_VOICES = 40;
 const STARLACE_GLINT_MAX_ACTIVE_VOICES = 10;
 const MAX_PENDING_ORB_HITS = 12;
 const ORB_OCTAVE_MULTIPLIER = 2;
+const VOICE_RELEASE_MARGIN = 0.08;
 
 type PlayerKey = 'local' | 'remote';
 const PLAYER_KEYS: PlayerKey[] = ['local', 'remote'];
@@ -91,6 +92,17 @@ type PendingOrbHit = {
   frequency: number;
   velocity: number;
   orbIndex: number;
+};
+
+type OrbNoteLedgerEntry = {
+  frequency: number;
+  octaveHz: number;
+  releaseAt: number;
+};
+
+type NoteLedgerEntry = {
+  note: string;
+  releaseAt: number;
 };
 
 type Voice = {
@@ -194,6 +206,18 @@ export class HandSynthEngine {
   private orbHeldNotes: Record<PlayerKey, Map<string, { frequency: number; octaveHz: number; orbIndex: number }>> = {
     local: new Map(),
     remote: new Map(),
+  };
+  private orbTransientNotes: Record<PlayerKey, OrbNoteLedgerEntry[]> = {
+    local: [],
+    remote: [],
+  };
+  private starlaceTransientNotes: Record<PlayerKey, NoteLedgerEntry[]> = {
+    local: [],
+    remote: [],
+  };
+  private starlaceGlintNotes: Record<PlayerKey, NoteLedgerEntry[]> = {
+    local: [],
+    remote: [],
   };
   private pendingOrbHits: PendingOrbHit[] = [];
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'drum', remote: 'drum' };
@@ -367,6 +391,7 @@ export class HandSynthEngine {
   update(local: PlayerPose, remote: PlayerPose, delta: number): void {
     if (!this.running || !this.tone) return;
     this.elapsed += delta;
+    this.pruneVoiceLedgers();
 
     if (!this.params.enabled) {
       for (const key of PLAYER_KEYS) {
@@ -509,13 +534,13 @@ export class HandSynthEngine {
     return this.starlaceVoices[player];
   }
 
-  private allowHit(budget: HitBudget, maxHits: number, activeVoices: number, maxActiveVoices: number): boolean {
+  private allowHit(budget: HitBudget, maxHits: number): boolean {
     const now = this.elapsed;
     if (now - budget.windowStart >= HIT_BUDGET_WINDOW) {
       budget.windowStart = now;
       budget.used = 0;
     }
-    if (budget.used >= maxHits || activeVoices >= maxActiveVoices) {
+    if (budget.used >= maxHits) {
       budget.dropped += 1;
       return false;
     }
@@ -535,6 +560,88 @@ export class HandSynthEngine {
       }
     }
     this.hitBudgetLogAt = this.elapsed;
+  }
+
+  private pruneVoiceLedgers(): void {
+    for (const key of PLAYER_KEYS) {
+      this.orbTransientNotes[key] = this.orbTransientNotes[key].filter(entry => entry.releaseAt > this.elapsed);
+      this.starlaceTransientNotes[key] = this.starlaceTransientNotes[key].filter(entry => entry.releaseAt > this.elapsed);
+      this.starlaceGlintNotes[key] = this.starlaceGlintNotes[key].filter(entry => entry.releaseAt > this.elapsed);
+    }
+  }
+
+  private reserveOrbVoiceRoom(player: PlayerKey, orb: OrbVoice, needed: number): void {
+    if (needed <= 0) return;
+    let active = Math.max(orb.fund?.activeVoices ?? 0, orb.fifth?.activeVoices ?? 0);
+    while (active + needed > ORB_MAX_ACTIVE_VOICES) {
+      if (this.releaseOldestOrbTransient(player, orb) || this.releaseOldestOrbHeld(player, orb)) {
+        active = Math.max(0, active - 1);
+        continue;
+      }
+      break;
+    }
+  }
+
+  private releaseOldestOrbTransient(player: PlayerKey, orb: OrbVoice): boolean {
+    const entry = this.orbTransientNotes[player].shift();
+    if (!entry) return false;
+    const now = this.tone?.now?.();
+    try { orb.fund.triggerRelease(entry.frequency, now); } catch { /* best-effort voice steal */ }
+    try { orb.fifth.triggerRelease(entry.octaveHz, now); } catch { /* best-effort voice steal */ }
+    return true;
+  }
+
+  private releaseOldestOrbHeld(player: PlayerKey, orb: OrbVoice): boolean {
+    const first = this.orbHeldNotes[player].entries().next();
+    if (first.done) return false;
+    const [sourceId, held] = first.value;
+    this.orbHeldNotes[player].delete(sourceId);
+    const now = this.tone?.now?.();
+    try { orb.fund.triggerRelease(held.frequency, now); } catch { /* best-effort voice steal */ }
+    try { orb.fifth.triggerRelease(held.octaveHz, now); } catch { /* best-effort voice steal */ }
+    return true;
+  }
+
+  private rememberOrbTransient(player: PlayerKey, frequency: number, octaveHz: number, releaseAt: number): void {
+    this.orbTransientNotes[player].push({ frequency, octaveHz, releaseAt });
+  }
+
+  private reserveStarlaceVoiceRoom(player: PlayerKey, starlace: StarlaceVoice, neededPluck: number, neededGlint: number): void {
+    const cap = this.starlaceVoiceCap();
+    let activePlucks = starlace.pluck?.activeVoices ?? 0;
+    while (activePlucks + neededPluck > cap) {
+      if (!this.releaseOldestStarlaceNote(player, starlace)) break;
+      activePlucks = Math.max(0, activePlucks - 1);
+    }
+
+    const glintCap = Math.min(STARLACE_GLINT_MAX_ACTIVE_VOICES, Math.max(4, Math.ceil(cap * 0.35)));
+    let activeGlints = starlace.glint?.activeVoices ?? 0;
+    while (activeGlints + neededGlint > glintCap) {
+      if (!this.releaseOldestStarlaceGlint(player, starlace)) break;
+      activeGlints = Math.max(0, activeGlints - 1);
+    }
+  }
+
+  private releaseOldestStarlaceNote(player: PlayerKey, starlace: StarlaceVoice): boolean {
+    const entry = this.starlaceTransientNotes[player].shift();
+    if (!entry) return false;
+    try { starlace.pluck.triggerRelease(entry.note, this.tone?.now?.()); } catch { /* best-effort voice steal */ }
+    return true;
+  }
+
+  private releaseOldestStarlaceGlint(player: PlayerKey, starlace: StarlaceVoice): boolean {
+    const entry = this.starlaceGlintNotes[player].shift();
+    if (!entry) return false;
+    try { starlace.glint.triggerRelease(entry.note, this.tone?.now?.()); } catch { /* best-effort voice steal */ }
+    return true;
+  }
+
+  private rememberStarlaceTransient(player: PlayerKey, notes: readonly string[], releaseAt: number): void {
+    for (const note of notes) this.starlaceTransientNotes[player].push({ note, releaseAt });
+  }
+
+  private rememberStarlaceGlint(player: PlayerKey, note: string, releaseAt: number): void {
+    this.starlaceGlintNotes[player].push({ note, releaseAt });
   }
 
   setOrbGesture(player: PlayerKey, gesture: OrbGestureState): void {
@@ -572,12 +679,13 @@ export class HandSynthEngine {
     if (this.pendingInstruments[player] !== 'drum') return;
     const orb = this.ensureOrbVoice(player);
     if (!orb) return;
-    const activeVoices = Math.max(orb.fund?.activeVoices ?? 0, orb.fifth?.activeVoices ?? 0);
-    if (!this.allowHit(this.orbBudgets[player], ORB_MAX_HITS_PER_WINDOW, activeVoices, ORB_MAX_ACTIVE_VOICES)) {
+    if (!this.allowHit(this.orbBudgets[player], ORB_MAX_HITS_PER_WINDOW)) {
       return;
     }
     const v = clamp(velocity, 0, 1);
-    this.fireOrbHit(orb, frequency, v, envelope);
+    this.reserveOrbVoiceRoom(player, orb, 1);
+    const duration = this.fireOrbHit(orb, frequency, v, envelope);
+    this.rememberOrbTransient(player, frequency, frequency * ORB_OCTAVE_MULTIPLIER, this.elapsed + duration + Math.max(0.002, envelope.release) + VOICE_RELEASE_MARGIN);
     if (!this._loggedOrbFirstHit) {
       console.debug('[handSynth] first orb hit', { player, frequency, velocity: v });
       this._loggedOrbFirstHit = true;
@@ -602,12 +710,12 @@ export class HandSynthEngine {
     if (this.orbHeldNotes[player].has(sourceId)) return;
     const orb = this.ensureOrbVoice(player);
     if (!orb) return;
-    const activeVoices = Math.max(orb.fund?.activeVoices ?? 0, orb.fifth?.activeVoices ?? 0);
-    if (!this.allowHit(this.orbBudgets[player], ORB_MAX_HITS_PER_WINDOW, activeVoices, ORB_MAX_ACTIVE_VOICES)) {
+    if (!this.allowHit(this.orbBudgets[player], ORB_MAX_HITS_PER_WINDOW)) {
       return;
     }
     const v = clamp(velocity, 0, 1);
     this.applyOrbEnvelope(orb, envelope);
+    this.reserveOrbVoiceRoom(player, orb, 1);
     this.fireOrbNoteAttack(orb, frequency, v);
     this.orbHeldNotes[player].set(sourceId, {
       frequency,
@@ -688,15 +796,28 @@ export class HandSynthEngine {
     const noteGap = Math.max(0.04, this.params.starlaceNoteGap * (robotFill ? 1.65 : 1));
     if (this.elapsed - starlace.lastAudioAt < noteGap) return;
 
-    const activeVoices = starlace.pluck?.activeVoices ?? 0;
-    const playableChord = this.starlacePlayableChord(chord, v, activeVoices);
+    const playableChord = this.starlacePlayableChord(chord, v);
     if (playableChord.length === 0) return;
     const maxHits = robotFill ? 3 : STARLACE_MAX_HITS_PER_WINDOW;
-    if (!this.allowHit(this.starlaceBudgets[player], maxHits, activeVoices + playableChord.length, this.starlaceVoiceCap())) {
+    if (!this.allowHit(this.starlaceBudgets[player], maxHits)) {
       return;
     }
 
+    const glintActive = clamp(this.params.starlaceGlint, 0, 1) > 0.01;
+    this.reserveStarlaceVoiceRoom(player, starlace, playableChord.length, glintActive ? 1 : 0);
     this.fireStarlaceChord(starlace, playableChord, v);
+    this.rememberStarlaceTransient(
+      player,
+      playableChord,
+      this.elapsed + Math.max(0.10, this.params.starlaceHold) + Math.max(0.35, this.params.starlaceDecay) + VOICE_RELEASE_MARGIN,
+    );
+    if (glintActive) {
+      this.rememberStarlaceGlint(
+        player,
+        this.starlaceGlintNote(playableChord),
+        this.elapsed + Math.max(0.28, this.params.starlaceHold * 0.65) + Math.max(0.3, this.params.starlaceDecay * 0.25) + VOICE_RELEASE_MARGIN,
+      );
+    }
     starlace.lastAudioAt = this.elapsed;
     starlace.lastNoteIdx = chordIndex % this.starlaceNotes.length;
     starlace.lastChordIndex = chordIndex;
@@ -1066,6 +1187,7 @@ export class HandSynthEngine {
     try { orb.fund.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     try { orb.fifth.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     this.orbHeldNotes[player].clear();
+    this.orbTransientNotes[player].length = 0;
     this.setGainNow(orb.dryGain, 0);
     this.setGainNow(orb.wetSend, 0);
     orb.pulse = 0;
@@ -1125,7 +1247,7 @@ export class HandSynthEngine {
     frequency: number,
     velocity: number,
     envelope: OrbEnvelopeSettings = DEFAULT_ORB_ENVELOPE,
-  ): void {
+  ): number {
     // Velocity floor at 0.35 so a soft tap still rings audibly.
     const synthVel = 0.30 + velocity * 0.58;
     const octaveHz = frequency * ORB_OCTAVE_MULTIPLIER;
@@ -1137,9 +1259,11 @@ export class HandSynthEngine {
       if (harmonics > 0.02) {
         orb.fifth.triggerAttackRelease(octaveHz, duration * 0.92, undefined, synthVel * harmonics * 0.34);
       }
+      return duration;
     } catch (err) {
       console.warn('[handSynth] orb trigger failed', err);
     }
+    return Math.max(0.08, envelope.attack + envelope.decay + 0.035);
   }
 
   private fireOrbNoteAttack(orb: OrbVoice, frequency: number, velocity: number): void {
@@ -1350,6 +1474,8 @@ export class HandSynthEngine {
     this.releaseStarlaceAura(starlace, true);
     try { starlace.pluck.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     try { starlace.glint.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    this.starlaceTransientNotes[player].length = 0;
+    this.starlaceGlintNotes[player].length = 0;
     this.setGainNow(starlace.dryGain, 0);
     this.setGainNow(starlace.wetSend, 0);
     starlace.pulse = 0;
@@ -1407,14 +1533,11 @@ export class HandSynthEngine {
     }
   }
 
-  private starlacePlayableChord(chord: readonly string[], velocity: number, activeVoices: number): readonly string[] {
-    const voiceRoom = this.starlaceVoiceCap() - activeVoices;
-    if (voiceRoom < 2) return [];
-
+  private starlacePlayableChord(chord: readonly string[], velocity: number): readonly string[] {
     const richness = clamp(this.params.starlaceRichness, 0, 1);
     const wantsTriad = chord.length >= 3 && richness + velocity * 0.55 > 0.84;
     const desiredCount = wantsTriad ? 3 : 2;
-    const noteCount = Math.min(desiredCount, chord.length, voiceRoom >= 5 ? 3 : 2);
+    const noteCount = Math.min(desiredCount, chord.length);
     return chord.slice(0, Math.max(2, noteCount));
   }
 

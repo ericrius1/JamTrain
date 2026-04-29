@@ -636,10 +636,9 @@ export class EnergySculptor implements EnergySink {
     const meta = this.metaBuffer;
     const spawnSearchSteps = Math.ceil(this.count / MAX_SPAWNS_PER_FRAME);
 
-    // Emit pass: write spawn-queue entries into dead slots only. Each spawn
-    // worker searches a disjoint stride through the pool, so live particles
-    // are not overwritten before their lifetime completes. If the pool is
-    // full, the new spawn is dropped instead of shortening existing particles.
+    // Emit pass: prefer dead slots, but fall back to the ring cursor when the
+    // pool is full. Fresh instrument hits should always show up; older
+    // particles are the right thing to sacrifice under pressure.
     const emitFn = Fn(() => {
       const i = instanceIndex;
       const spawnCountU = this.spawnCountUniform.toUint();
@@ -651,6 +650,15 @@ export class EnergySculptor implements EnergySink {
       const spawnVel = this.spawnVelUniform.element(i);
       const spawnColor = this.spawnColorUniform.element(i);
       const spawnMeta = this.spawnMetaUniform.element(i);
+      const wrote = uint(0).toVar();
+      const writeSpawn = (slot: any) => {
+        positions.element(slot).assign(spawnPos);
+        velocities.element(slot).assign(spawnVel);
+        colors.element(slot).assign(spawnColor);
+        // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
+        meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
+        wrote.assign(uint(1));
+      };
       Loop(spawnSearchSteps, ({ i: scan }) => {
         const slot = spawnCursorU
           .add(i)
@@ -659,13 +667,13 @@ export class EnergySculptor implements EnergySink {
         const slotMeta = meta.element(slot);
         const isDead = slotMeta.y.lessThanEqual(0).or(slotMeta.x.greaterThanEqual(slotMeta.y));
         If(isDead, () => {
-          positions.element(slot).assign(spawnPos);
-          velocities.element(slot).assign(spawnVel);
-          colors.element(slot).assign(spawnColor);
-          // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
-          meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
+          writeSpawn(slot);
           Break();
         });
+      });
+      If(wrote.equal(uint(0)), () => {
+        const fallbackSlot = spawnCursorU.add(i).mod(uint(this.count));
+        writeSpawn(fallbackSlot);
       });
     });
     this.emitCompute = emitFn().compute(MAX_SPAWNS_PER_FRAME);
@@ -1259,7 +1267,8 @@ export class EnergySculptor implements EnergySink {
     const sphereCenterY = this.fieldSphereCenterYUniform.value;
     const sphereCenterWorldY = this.center.y + sphereCenterY;
 
-    for (const req of this.pendingEmits) {
+    for (let reqIndex = this.pendingEmits.length - 1; reqIndex >= 0; reqIndex -= 1) {
+      const req = this.pendingEmits[reqIndex];
       if (cursor >= MAX_SPAWNS_PER_FRAME) break;
       const allowed = Math.min(req.count, MAX_SPAWNS_PER_FRAME - cursor);
       let dirX = this.center.x - req.origin.x;

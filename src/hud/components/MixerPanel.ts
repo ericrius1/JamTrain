@@ -44,7 +44,7 @@ export class MixerPanel {
     this.el.appendChild(title);
 
     const musicRow = this.buildRow({
-      label: 'Music',
+      label: 'Instruments',
       icon: MUSIC_SVG,
       value: opts.music,
     });
@@ -58,7 +58,7 @@ export class MixerPanel {
     this.el.appendChild(musicRow.row);
 
     const backingRow = this.buildRow({
-      label: 'Track',
+      label: 'Backing Track',
       ariaLabel: 'Backing track volume',
       icon: TRACK_SVG,
       value: opts.backing,

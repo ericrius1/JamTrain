@@ -6,7 +6,7 @@ import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
 import { MidiInputController, type MidiNoteEvent } from './midiInput';
-import { clamp } from './math';
+import { clamp, hash } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { Drum } from './visuals/Drum';
 import { Starlace } from './visuals/Starlace';
@@ -42,11 +42,16 @@ const INSTRUMENTS_DEFS = {
 } as const;
 
 const INSTRUMENT_ANCHOR_Y = 0.98;
+const ROBOT_JAM_MIN_DELAY = 1.85;
+const ROBOT_JAM_MAX_DELAY = 4.6;
+const ROBOT_STARLACE_JAM_MIN_DELAY = 2.35;
+const ROBOT_STARLACE_JAM_MAX_DELAY = 5.8;
+const ROBOT_JAM_NOTE_HOLD = 0.18;
 
 const INTRO_SCENE_DEFS = {
-  opacity:    { default: 0.28, min: 0.08, max: 0.60, step: 0.01, label: 'opacity' },
-  brightness: { default: 0.30, min: 0.08, max: 0.70, step: 0.01, label: 'brightness' },
-  saturation: { default: 0.72, min: 0.20, max: 1.20, step: 0.01, label: 'saturation' },
+  opacity:    { default: 0.7, min: 0.08, max: 0.80, step: 0.01, label: 'opacity' },
+  brightness: { default: 0.7, min: 0.08, max: 0.90, step: 0.01, label: 'brightness' },
+  saturation: { default: 0.22, min: 0.20, max: 1.20, step: 0.01, label: 'saturation' },
 } as const;
 
 const CABIN_DEFS = {
@@ -80,11 +85,21 @@ type GameUi = {
 
 export type CameraMode = 'game' | 'orbit';
 type PlayerSlot = 'local' | 'remote';
+type RobotJamNote = {
+  instrument: InstrumentId;
+  noteNumber: number;
+  sourceId: string;
+  releaseAt: number;
+};
 type CabinPlateLayer = {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
   material: THREE.MeshBasicMaterial;
   texture: THREE.Texture;
 };
+
+function positiveModulo(value: number, modulus: number): number {
+  return ((value % modulus) + modulus) % modulus;
+}
 
 function makeHandContactPoints(): HandContactPoint[] {
   const contacts: HandContactPoint[] = [];
@@ -185,11 +200,15 @@ export class Game {
   private remotePose?: PlayerPose;
   private partnerPresent = false;
   private robotJamMuted = false;
+  private robotJamNextAt = 0;
+  private robotJamStep = 0;
+  private robotJamActive: RobotJamNote | null = null;
   private readonly localLeftPalm = new THREE.Vector3();
   private readonly localRightPalm = new THREE.Vector3();
   private readonly remoteLeftPalm = new THREE.Vector3();
   private readonly remoteRightPalm = new THREE.Vector3();
   private readonly robotInstrumentTargets: Record<Handedness, Vec3Data[]> = { left: [], right: [] };
+  private readonly robotJamStrikeTarget: Vec3Data = { x: 0, y: 0, z: 0 };
   private hiddenStartedAt: number | null = null;
   constructor(
     private canvas: HTMLCanvasElement,
@@ -1053,6 +1072,8 @@ export class Game {
     if (!isInstrumentId(id)) return;
     if (player === 'remote') {
       if (this.playerInstruments.remote === id) return;
+      this.releaseRobotJamNote();
+      this.robotJamNextAt = 0;
       if (this.introActive) {
         this.installPlayerVisualImmediate(player, id);
         this.refreshArchetype();
@@ -1160,7 +1181,7 @@ export class Game {
     this.localRig.update(localPose, delta, 0);
     this.remoteRig.update(remotePose, delta, robotTarget);
 
-    this.updatePlayerVisuals(delta);
+    this.updatePlayerVisuals(delta, elapsed);
     this.sculptor.setRoundProgress(this.roundDirector.snapshot().progress);
     this.sculptor.update(delta);
     const atmosphere = this.scenery.update(delta, elapsed);
@@ -1172,7 +1193,7 @@ export class Game {
     this.renderer.render(this.scene, this.camera);
   }
 
-  private updatePlayerVisuals(delta: number): void {
+  private updatePlayerVisuals(delta: number, elapsed: number): void {
     const localLeft = this.localRig.getPalmWorld('left', this.localLeftPalm);
     const localRight = this.localRig.getPalmWorld('right', this.localRightPalm);
     const remoteLeft = this.remoteRig.getPalmWorld('left', this.remoteLeftPalm);
@@ -1184,12 +1205,89 @@ export class Game {
     const localContacts = this.handTracker.hasTrackedHands()
       ? this.updateVisualContacts('local', this.localRig)
       : undefined;
-    const remoteContacts = this.updateVisualContacts('remote', this.remoteRig);
+    // A real partner plays through hand contacts. The procedural robot keeps
+    // moving its hands, but note events come from tickRobotJam() so the robot
+    // stays sparse and cannot flood the instrument collision system.
+    const remoteContacts = this.partnerPresent
+      ? this.updateVisualContacts('remote', this.remoteRig)
+      : undefined;
     const localVoice = this.handSynth.getVoiceState('local');
     const remoteVoice = this.handSynth.getVoiceState('remote');
 
     this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta, localContacts);
     this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta, remoteContacts);
+    this.tickRobotJam(elapsed);
+  }
+
+  private tickRobotJam(elapsed: number): void {
+    if (this.partnerPresent || this.introActive || this.robotJamMuted) {
+      this.releaseRobotJamNote();
+      this.robotJamNextAt = 0;
+      return;
+    }
+
+    if (this.robotJamActive && elapsed >= this.robotJamActive.releaseAt) {
+      this.releaseRobotJamNote();
+    }
+
+    const visual = this.playerVisuals.remote;
+    if (!visual?.triggerMidiNoteOn) return;
+    if (this.robotJamNextAt <= 0) {
+      this.scheduleNextRobotJam(elapsed, 1.0);
+      return;
+    }
+    if (this.robotJamActive || elapsed < this.robotJamNextAt) return;
+
+    const instrument = this.playerInstruments.remote;
+    const sourceId = `robot:${this.robotJamStep}`;
+    const noteNumber = this.pickRobotJamNoteNumber(instrument);
+    const velocity = 0.34 + hash(this.robotJamStep * 19.19 + this.roomSeed * 0.017) * 0.30;
+    visual.triggerMidiNoteOn(noteNumber, velocity, sourceId);
+    this.cueRobotJamStrike(noteNumber, velocity, elapsed);
+    this.robotJamActive = {
+      instrument,
+      noteNumber,
+      sourceId,
+      releaseAt: elapsed + ROBOT_JAM_NOTE_HOLD,
+    };
+    this.robotJamStep += 1;
+    this.scheduleNextRobotJam(elapsed);
+  }
+
+  private scheduleNextRobotJam(elapsed: number, extraDelay = 0): void {
+    const starlace = this.playerInstruments.remote === 'starlace';
+    const min = starlace ? ROBOT_STARLACE_JAM_MIN_DELAY : ROBOT_JAM_MIN_DELAY;
+    const max = starlace ? ROBOT_STARLACE_JAM_MAX_DELAY : ROBOT_JAM_MAX_DELAY;
+    const breath = this.robotJamStep % 5 === 4 ? 1.25 : 0;
+    const swing = hash(this.robotJamStep * 13.73 + this.roomSeed * 0.031);
+    this.robotJamNextAt = elapsed + extraDelay + min + swing * (max - min) + breath;
+  }
+
+  private pickRobotJamNoteNumber(instrument: InstrumentId): number {
+    const targets = this.playerVisuals.remote?.getPerformanceTargets?.();
+    const targetCount = targets?.length ?? 0;
+    const span = instrument === 'drum'
+      ? Math.max(1, Math.min(targetCount || 12, 24))
+      : 9;
+    const pick = Math.floor(hash(this.robotJamStep * 7.91 + this.roomSeed * 0.023 + 0.44) * span);
+    return 36 + pick;
+  }
+
+  private cueRobotJamStrike(noteNumber: number, velocity: number, elapsed: number): void {
+    const targets = this.playerVisuals.remote?.getPerformanceTargets?.();
+    if (!targets?.length) return;
+    const hand: Handedness = hash(this.robotJamStep * 5.37 + this.roomSeed * 0.011) < 0.5 ? 'left' : 'right';
+    const index = positiveModulo(Math.round(noteNumber) - 36, targets.length);
+    this.remoteRig.worldToPosePoint(hand, targets[index], this.robotJamStrikeTarget);
+    this.robotMotion.cueStrike(hand, this.robotJamStrikeTarget, clamp(velocity, 0, 1), elapsed);
+  }
+
+  private releaseRobotJamNote(): void {
+    const active = this.robotJamActive;
+    if (!active) return;
+    const visual = this.playerVisualCache.remote[active.instrument] ?? this.playerVisuals.remote;
+    visual?.triggerMidiNoteOff?.(active.noteNumber, active.sourceId);
+    this.robotJamActive = null;
   }
 
   private updateRobotInstrumentTargets(): RobotPerformanceContext | undefined {
