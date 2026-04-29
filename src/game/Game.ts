@@ -166,7 +166,7 @@ export class Game {
   private cabinPlateMaskTexture?: THREE.Texture;
   private readonly cabinParams = makeParams(CABIN_DEFS);
   private readonly cabinLightingParams = makeParams(CABIN_LIGHTING_DEFS);
-  private cabinLightingBlend = CABIN_LIGHTING_DEFS.nightBlend.default;
+  private cabinLightingBlend: number = CABIN_LIGHTING_DEFS.nightBlend.default;
   private introSceneTweaks?: ReturnType<typeof registerTweaks<typeof INTRO_SCENE_DEFS>>;
   private readonly introSceneParams = makeParams(INTRO_SCENE_DEFS);
   private playersTweaks?: ReturnType<typeof registerTweaks<typeof PLAYERS_DEFS>>;

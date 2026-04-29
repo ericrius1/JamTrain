@@ -103,7 +103,6 @@ export class ScenerySystem {
   private scheduler!: BiomeScheduler;
   private atlas!: SpriteAtlas;
   private skyLife!: SkyLife;
-  private onThunder?: (delay: number) => void;
   private paintedTerrainGeometry?: THREE.PlaneGeometry;
   private paintedTerrainAlphaTexture?: THREE.CanvasTexture;
   private paintedTerrainPanels: PaintedTerrainPanel[] = [];
