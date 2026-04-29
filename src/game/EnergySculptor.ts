@@ -42,16 +42,14 @@ export const SCULPTOR_DEFS = {
   particleLifetime:   { default: 30,    min: 0,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   fadeFraction:       { default: 0.04,  min: 0.01,  max: 0.35, step: 0.01,  folder: 'Particles', label: 'end fade fraction' },
 
-  fieldStrength:      { default: 1.0,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Settling', label: 'field strength' },
+  fieldStrength:      { default: 0.5,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Settling', label: 'field strength' },
   fieldFalloffStart:  { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade starts at life' },
   fieldFalloffEnd:    { default: 0.2,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade reaches final at life' },
   finalFieldEffect:   { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'final field effect' },
 
-  fieldVolumeScale:   { default: 0.55,   min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
-  fieldBoundsWidth:   { default: 1.02,  min: 0.35,  max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'half width' },
-  fieldBoundsDepth:   { default: 0.46,  min: 0.18,  max: 1.4,  step: 0.01,  folder: 'Field Bounds', label: 'half depth' },
-  fieldBoundsBottom:  { default: -0.34, min: -0.8,  max: 0.3,  step: 0.01,  folder: 'Field Bounds', label: 'bottom from center' },
-  fieldBoundsTop:     { default: 0.72,  min: 0.15,  max: 1.5,  step: 0.01,  folder: 'Field Bounds', label: 'top from center' },
+  fieldVolumeScale:   { default: 0.55,  min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
+  fieldSphereRadius:  { default: 1.0,   min: 0.2,   max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'sphere radius' },
+  fieldSphereCenterY: { default: 0.12,  min: -0.5,  max: 1.1,  step: 0.01,  folder: 'Field Bounds', label: 'center height' },
 
   fieldRotationRate:  { default: 0.3,   min: 0,     max: 10,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
   fieldDebugDensity:  { default: 11,    min: 3,     max: 15,   step: 1,     folder: 'Field Shape', label: 'debug density' },
@@ -179,12 +177,10 @@ export class EnergySculptor implements EnergySink {
   private finalFieldEffectUniform = uniform(0.0);
   // Master force multiplier — 0 means no acceleration is applied to particles.
   private fieldStrengthUniform = uniform(1.0);
-  // World-space sculptor bounds relative to center. These keep the field over
-  // the table even as attractor presets change their local-space scale.
-  private fieldBoundsWidthUniform = uniform(1.02);
-  private fieldBoundsDepthUniform = uniform(0.46);
-  private fieldBoundsBottomUniform = uniform(-0.34);
-  private fieldBoundsTopUniform = uniform(0.72);
+  // World-space spherical sculptor volume relative to center. This keeps the
+  // field over the table even as attractor presets change local-space scale.
+  private fieldSphereRadiusUniform = uniform(0.55);
+  private fieldSphereCenterYUniform = uniform(0.12);
 
   // Sample-space rotation — slowly tumbles the attractor through world space
   // so the orbit isn't static. Shader does R^-1 * p before sampling, R * flow
@@ -274,10 +270,10 @@ export class EnergySculptor implements EnergySink {
     this.fieldFalloffEndUniform.value = this.params.fieldFalloffEnd;
     this.finalFieldEffectUniform.value = this.params.finalFieldEffect;
     this.fieldStrengthUniform.value = this.params.fieldStrength;
-    this.applyFieldBoundsParams();
+    this.applyFieldVolumeParams();
     this.fieldRotationRate = this.params.fieldRotationRate;
 
-    this.registered = registerTweaks(paneDock, 'energySculptorBoundedLayersV2', SCULPTOR_DEFS, {
+    this.registered = registerTweaks(paneDock, 'energySculptorSphereVolumeV1', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
@@ -298,11 +294,9 @@ export class EnergySculptor implements EnergySink {
         fieldFalloffEnd: v => { this.fieldFalloffEndUniform.value = v; },
         finalFieldEffect: v => { this.finalFieldEffectUniform.value = v; },
         fieldStrength: v => { this.fieldStrengthUniform.value = v; },
-        fieldVolumeScale: () => this.applyFieldBoundsParams(),
-        fieldBoundsWidth: () => this.applyFieldBoundsParams(),
-        fieldBoundsDepth: () => this.applyFieldBoundsParams(),
-        fieldBoundsBottom: () => this.applyFieldBoundsParams(),
-        fieldBoundsTop: () => this.applyFieldBoundsParams(),
+        fieldVolumeScale: () => this.applyFieldVolumeParams(),
+        fieldSphereRadius: () => this.applyFieldVolumeParams(),
+        fieldSphereCenterY: () => this.applyFieldVolumeParams(),
         fieldRotationRate: v => { this.fieldRotationRate = v; },
         fieldDebugDensity: v => {
           const next = Math.max(2, Math.round(v));
@@ -587,36 +581,16 @@ export class EnergySculptor implements EnergySink {
 
       const newPos = pos.add(newVel.mul(this.dtUniform));
       const containedWorld = newPos.mul(this.worldScaleUniform).toVar();
-      const minX = this.fieldBoundsWidthUniform.negate();
-      const maxX = this.fieldBoundsWidthUniform;
-      const minZ = this.fieldBoundsDepthUniform.negate();
-      const maxZ = this.fieldBoundsDepthUniform;
-      const minY = this.fieldBoundsBottomUniform.min(this.fieldBoundsTopUniform);
-      const maxY = this.fieldBoundsBottomUniform.max(this.fieldBoundsTopUniform);
+      const sphereCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
+      const fromSphereCenter = containedWorld.sub(sphereCenter);
+      const sphereDist = fromSphereCenter.length();
+      const sphereRadius = this.fieldSphereRadiusUniform.max(0.01);
+      const sphereNormal = fromSphereCenter.div(sphereDist.max(0.0001));
+      const radialSpeed = newVel.dot(sphereNormal);
 
-      If(containedWorld.x.lessThan(minX).and(newVel.x.lessThanEqual(0)), () => {
-        containedWorld.x.assign(minX);
-        newVel.x.assign(0);
-      });
-      If(containedWorld.x.greaterThan(maxX).and(newVel.x.greaterThanEqual(0)), () => {
-        containedWorld.x.assign(maxX);
-        newVel.x.assign(0);
-      });
-      If(containedWorld.y.lessThan(minY).and(newVel.y.lessThanEqual(0)), () => {
-        containedWorld.y.assign(minY);
-        newVel.y.assign(0);
-      });
-      If(containedWorld.y.greaterThan(maxY).and(newVel.y.greaterThanEqual(0)), () => {
-        containedWorld.y.assign(maxY);
-        newVel.y.assign(0);
-      });
-      If(containedWorld.z.lessThan(minZ).and(newVel.z.lessThanEqual(0)), () => {
-        containedWorld.z.assign(minZ);
-        newVel.z.assign(0);
-      });
-      If(containedWorld.z.greaterThan(maxZ).and(newVel.z.greaterThanEqual(0)), () => {
-        containedWorld.z.assign(maxZ);
-        newVel.z.assign(0);
+      If(sphereDist.greaterThan(sphereRadius).and(radialSpeed.greaterThanEqual(0)), () => {
+        containedWorld.assign(sphereCenter.add(sphereNormal.mul(sphereRadius)));
+        newVel.assign(newVel.sub(sphereNormal.mul(radialSpeed)));
       });
       const containedPos = containedWorld.div(this.worldScaleUniform.max(0.001));
 
@@ -867,14 +841,10 @@ export class EnergySculptor implements EnergySink {
     const N = this.fieldDebugGrid;
     const worldScale = this.worldScaleUniform.value;
     const invWorldScale = 1 / Math.max(worldScale, 0.001);
-    const halfW = this.fieldBoundsWidthUniform.value;
-    const halfD = this.fieldBoundsDepthUniform.value;
-    const bottom = Math.min(this.fieldBoundsBottomUniform.value, this.fieldBoundsTopUniform.value);
-    const top = Math.max(this.fieldBoundsBottomUniform.value, this.fieldBoundsTopUniform.value);
-    const stepX = (N > 1) ? (halfW * 2) / (N - 1) : 0;
-    const stepY = (N > 1) ? (top - bottom) / (N - 1) : 0;
-    const stepZ = (N > 1) ? (halfD * 2) / (N - 1) : 0;
-    const lineLenWorld = Math.max(0.02, Math.min(stepX || 1, stepY || 1, stepZ || 1) * 0.55);
+    const radius = this.fieldSphereRadiusUniform.value;
+    const centerY = this.fieldSphereCenterYUniform.value;
+    const step = (N > 1) ? (radius * 2) / (N - 1) : 0;
+    const lineLenWorld = Math.max(0.02, step * 0.55);
 
     const rot = this.sampleRotUniform.value;
     const invRot = this.sampleRotInvUniform.value;
@@ -887,11 +857,22 @@ export class EnergySculptor implements EnergySink {
 
     let idx = 0;
     for (let i = 0; i < N; i += 1) {
-      const xw = -halfW + i * stepX;
+      const xw = -radius + i * step;
       for (let j = 0; j < N; j += 1) {
-        const yw = bottom + j * stepY;
+        const ywLocal = -radius + j * step;
+        const yw = centerY + ywLocal;
         for (let k = 0; k < N; k += 1) {
-          const zw = -halfD + k * stepZ;
+          const zw = -radius + k * step;
+          if (xw * xw + ywLocal * ywLocal + zw * zw > radius * radius) {
+            positions[idx + 0] = cx;
+            positions[idx + 1] = cy + centerY;
+            positions[idx + 2] = cz;
+            positions[idx + 3] = cx;
+            positions[idx + 4] = cy + centerY;
+            positions[idx + 5] = cz;
+            idx += 6;
+            continue;
+          }
           const x = xw * invWorldScale;
           const y = yw * invWorldScale;
           const z = zw * invWorldScale;
@@ -1027,12 +1008,10 @@ export class EnergySculptor implements EnergySink {
     this.synchronyRingMaterial.opacity = (1 - t) * 0.9;
   }
 
-  private applyFieldBoundsParams(): void {
+  private applyFieldVolumeParams(): void {
     const scale = Math.max(0.01, this.params.fieldVolumeScale);
-    this.fieldBoundsWidthUniform.value = this.params.fieldBoundsWidth * scale;
-    this.fieldBoundsDepthUniform.value = this.params.fieldBoundsDepth * scale;
-    this.fieldBoundsBottomUniform.value = this.params.fieldBoundsBottom * scale;
-    this.fieldBoundsTopUniform.value = this.params.fieldBoundsTop * scale;
+    this.fieldSphereRadiusUniform.value = this.params.fieldSphereRadius * scale;
+    this.fieldSphereCenterYUniform.value = this.params.fieldSphereCenterY;
   }
 
   private fillSpawnQueue(): void {
@@ -1040,20 +1019,15 @@ export class EnergySculptor implements EnergySink {
     const lifeBase = this.lifeMaxUniform.value;
     const worldScale = this.worldScaleUniform.value || 1;
     const invWorldScale = 1 / worldScale;
-    const boundsHalfW = this.fieldBoundsWidthUniform.value;
-    const boundsHalfD = this.fieldBoundsDepthUniform.value;
-    const boundsBottom = Math.min(this.fieldBoundsBottomUniform.value, this.fieldBoundsTopUniform.value);
-    const boundsTop = Math.max(this.fieldBoundsBottomUniform.value, this.fieldBoundsTopUniform.value);
-    const boundsHeight = Math.max(0.01, boundsTop - boundsBottom);
-    const targetYMin = this.center.y + boundsBottom + boundsHeight * 0.18;
-    const targetYRange = boundsHeight * 0.64;
+    const sphereRadius = this.fieldSphereRadiusUniform.value;
+    const sphereCenterY = this.fieldSphereCenterYUniform.value;
+    const sphereCenterWorldY = this.center.y + sphereCenterY;
 
     for (const req of this.pendingEmits) {
       if (cursor >= MAX_SPAWNS_PER_FRAME) break;
       const allowed = Math.min(req.count, MAX_SPAWNS_PER_FRAME - cursor);
-      const targetCenterY = this.center.y + (boundsBottom + boundsTop) * 0.5;
       let dirX = this.center.x - req.origin.x;
-      let dirY = targetCenterY - req.origin.y;
+      let dirY = sphereCenterWorldY - req.origin.y;
       let dirZ = this.center.z - req.origin.z;
       let dirLen = Math.hypot(dirX, dirY, dirZ);
       if (dirLen < 1e-4) {
@@ -1104,12 +1078,16 @@ export class EnergySculptor implements EnergySink {
           (spawnZ - this.center.z) * invWorldScale,
         );
 
-        // Initial velocity aims at a random point inside the bounded field
+        // Initial velocity aims at a random point inside the spherical field
         // volume. The small cone spread keeps bursts organic while preserving
         // the main instrument → sculpture trajectory.
-        const targetX = this.center.x + (Math.random() * 2 - 1) * boundsHalfW * 0.45;
-        const targetY = targetYMin + Math.random() * targetYRange;
-        const targetZ = this.center.z + (Math.random() * 2 - 1) * boundsHalfD * 0.45;
+        const targetTheta = Math.random() * TAU;
+        const targetCos = Math.random() * 2 - 1;
+        const targetSin = Math.sqrt(Math.max(0, 1 - targetCos * targetCos));
+        const targetRadius = sphereRadius * Math.cbrt(Math.random()) * 0.68;
+        const targetX = this.center.x + Math.cos(targetTheta) * targetSin * targetRadius;
+        const targetY = sphereCenterWorldY + targetCos * targetRadius;
+        const targetZ = this.center.z + Math.sin(targetTheta) * targetSin * targetRadius;
         let aimX = targetX - spawnX;
         let aimY = targetY - spawnY;
         let aimZ = targetZ - spawnZ;
