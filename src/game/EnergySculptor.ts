@@ -39,10 +39,10 @@ export const SCULPTOR_DEFS = {
   particleCount:      { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
   particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
-  particleLifetime:   { default: 30,    min: 0,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
+  particleLifetime:   { default: 30,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   fadeFraction:       { default: 0.04,  min: 0.01,  max: 0.35, step: 0.01,  folder: 'Particles', label: 'end fade fraction' },
 
-  fieldStrength:      { default: 0.5,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Settling', label: 'field strength' },
+  fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Settling', label: 'field strength' },
   fieldFalloffStart:  { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade starts at life' },
   fieldFalloffEnd:    { default: 0.2,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade reaches final at life' },
   finalFieldEffect:   { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'final field effect' },
@@ -53,7 +53,7 @@ export const SCULPTOR_DEFS = {
 
   fieldRotationRate:  { default: 0.3,   min: 0,     max: 10,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
   fieldDebugDensity:  { default: 11,    min: 3,     max: 15,   step: 1,     folder: 'Field Shape', label: 'debug density' },
-  attractorOverride:  { type: 'select' as const, default: 'auto' as const, options: { auto: 'auto', thomas: 'thomas', lorenz: 'lorenz', aizawa: 'aizawa', halvorsen: 'halvorsen', rossler: 'rossler', dadras: 'dadras' }, folder: 'Field Shape', label: 'attractor' },
+  attractorOverride:  { type: 'select' as const, default: 'thomas' as const, options: { auto: 'auto', thomas: 'thomas', lorenz: 'lorenz', aizawa: 'aizawa', halvorsen: 'halvorsen', rossler: 'rossler', dadras: 'dadras' }, folder: 'Field Shape', label: 'attractor' },
 
   speedGlow:          { default: 0.7,   min: 0,     max: 2,    step: 0.01,  folder: 'Appearance', label: 'speed glow' },
   stretchScale:       { default: 0.06,  min: 0,     max: 0.4,  step: 0.005, folder: 'Appearance', label: 'accel stretch' },
@@ -71,6 +71,9 @@ export const SCULPTOR_DEFS = {
 export type SculptorParams = ParamsOf<typeof SCULPTOR_DEFS>;
 
 const TAU = Math.PI * 2;
+const MIN_PARTICLE_LIFETIME = 1;
+const THOMAS_SEED_A = 0.19;
+const THOMAS_TARGET_COUNT = 4096;
 
 const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
   drumDrum: 'lorenz',
@@ -166,7 +169,7 @@ export class EnergySculptor implements EnergySink {
 
   private fieldRotationRate = 1.0;
   // 'auto' = follow archetype-driven attractor; otherwise pin to the chosen kind.
-  private attractorOverride: 'auto' | AttractorKind = 'auto';
+  private attractorOverride: 'auto' | AttractorKind = 'thomas';
 
   // Lifetime-keyed field falloff. fieldEffect = mix(1, finalFieldEffect,
   // smoothstep(start, end, normalizedAge)). If finalFieldEffect is exactly 0
@@ -234,6 +237,9 @@ export class EnergySculptor implements EnergySink {
   private fieldDebugVisible = false;
   private fieldDebugScratchSample = new THREE.Vector3();
   private fieldDebugScratchFlow = new THREE.Vector3();
+  private thomasSeedTargets: THREE.Vector3[] = [];
+  private thomasTargetScratch = new THREE.Vector3();
+  private thomasTargetCursor = 0;
 
   private registered?: ReturnType<typeof registerTweaks<typeof SCULPTOR_DEFS>>;
 
@@ -256,12 +262,13 @@ export class EnergySculptor implements EnergySink {
     this.buildSynchronyRing();
     this.buildProjectorRings();
     this.buildFieldDebugLines();
+    this.buildThomasSeedTargets();
 
     this.applyAttractorPreset(this.currentAttractor);
     this.centerUniform.value.copy(this.center);
     this.particleSizeUniform.value = this.params.particleSize;
     this.particleOpacityUniform.value = this.params.particleOpacity;
-    this.lifeMaxUniform.value = this.params.particleLifetime;
+    this.applyParticleLifetime();
     this.fadeFractionUniform.value = this.params.fadeFraction;
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
     this.speedGlowUniform.value = this.params.speedGlow;
@@ -273,7 +280,7 @@ export class EnergySculptor implements EnergySink {
     this.applyFieldVolumeParams();
     this.fieldRotationRate = this.params.fieldRotationRate;
 
-    this.registered = registerTweaks(paneDock, 'energySculptorSphereVolumeV1', SCULPTOR_DEFS, {
+    this.registered = registerTweaks(paneDock, 'energySculptorThomasFlowV1', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
@@ -288,7 +295,7 @@ export class EnergySculptor implements EnergySink {
         particleOpacity: v => { this.particleOpacityUniform.value = v; },
         speedGlow: v => { this.speedGlowUniform.value = v; },
         stretchScale: v => { this.stretchScaleUniform.value = v; },
-        particleLifetime: v => { this.lifeMaxUniform.value = v; },
+        particleLifetime: v => { this.applyParticleLifetime(v); },
         fadeFraction: v => { this.fadeFractionUniform.value = v; },
         fieldFalloffStart: v => { this.fieldFalloffStartUniform.value = v; },
         fieldFalloffEnd: v => { this.fieldFalloffEndUniform.value = v; },
@@ -471,7 +478,7 @@ export class EnergySculptor implements EnergySink {
           .add(scan.toUint().mul(uint(MAX_SPAWNS_PER_FRAME)))
           .mod(uint(this.count));
         const slotMeta = meta.element(slot);
-        const isDead = slotMeta.w.lessThanEqual(0).or(slotMeta.x.greaterThanEqual(slotMeta.y));
+        const isDead = slotMeta.y.lessThanEqual(0).or(slotMeta.x.greaterThanEqual(slotMeta.y));
         If(isDead, () => {
           positions.element(slot).assign(spawnPos);
           velocities.element(slot).assign(spawnVel);
@@ -529,8 +536,10 @@ export class EnergySculptor implements EnergySink {
     const integrateFn = Fn(() => {
       const i = instanceIndex;
       const m = meta.element(i).toVar();
-      // Skip dead particles.
-      If(m.w.lessThanEqual(0), () => {
+      // Skip dead particles. Lifetime is the authoritative alive flag; render
+      // alpha is visual-only so fade behavior cannot shorten the configured
+      // particle lifetime or make faded particles reusable early.
+      If(m.y.lessThanEqual(0).or(m.x.greaterThanEqual(m.y)), () => {
         Return();
       });
       const pos = positions.element(i).toVar();
@@ -544,7 +553,12 @@ export class EnergySculptor implements EnergySink {
       // (R^-1 * p), evaluate the flow there, then rotate the flow back into
       // particle space (R * f). The orbits stay structurally intact but tumble
       // through world space, giving a "moving through a meta-realm" feel.
-      const samplePos = this.sampleRotInvUniform.mul(pos);
+      const fieldCenterLocal = vec3(
+        0,
+        this.fieldSphereCenterYUniform.div(this.worldScaleUniform.max(0.001)),
+        0,
+      );
+      const samplePos = this.sampleRotInvUniform.mul(pos.sub(fieldCenterLocal));
       const flowA = sampleFlow(this.attractorSelectUniform, samplePos);
       const flowB = sampleFlow(this.attractorTargetUniform, samplePos);
       const sampledFlow = mix(flowA, flowB, this.crossfadeWeightUniform);
@@ -564,11 +578,13 @@ export class EnergySculptor implements EnergySink {
       const falloffT = smoothstep(falloffLo, falloffHi, lifeT).clamp(0, 1);
       const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
 
-      // The field is the only sculpting force. The adjustable final field
-      // effect is used directly, so finalFieldEffect=0.2 means the field keeps
-      // affecting old particles at exactly 20% of its full strength.
-      const accel = flow.mul(this.flowSpeedUniform).mul(this.fieldStrengthUniform).mul(fieldEffect);
-      const newVel = vel.add(accel.mul(this.dtUniform)).toVar();
+      // The field is the only sculpting force. Treat it as a velocity field
+      // with light inertia instead of a raw acceleration so Thomas particles
+      // trace the attractor lobes rather than ballistically filling the bounds.
+      const desiredVel = flow.mul(this.flowSpeedUniform);
+      const fieldFollow = this.fieldStrengthUniform.mul(fieldEffect).mul(this.dtUniform).mul(5.5).clamp(0, 1);
+      const velocityDrag = float(1).sub(this.dtUniform.mul(0.75).clamp(0, 0.2));
+      const newVel = mix(vel.mul(velocityDrag), desiredVel, fieldFollow).toVar();
       const freezeWhenSettled = this.finalFieldEffectUniform.lessThanEqual(0.0001).and(falloffT.greaterThanEqual(0.999));
       If(freezeWhenSettled, () => {
         newVel.assign(vec3(0));
@@ -579,20 +595,37 @@ export class EnergySculptor implements EnergySink {
       const outward = pos.normalize().mul(this.dissolveBurstUniform);
       newVel.assign(mix(newVel, outward, dm));
 
-      const newPos = pos.add(newVel.mul(this.dtUniform));
-      const containedWorld = newPos.mul(this.worldScaleUniform).toVar();
+      const containedPos = pos.add(newVel.mul(this.dtUniform)).toVar();
+      const containedWorld = containedPos.mul(this.worldScaleUniform);
       const sphereCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
       const fromSphereCenter = containedWorld.sub(sphereCenter);
       const sphereDist = fromSphereCenter.length();
       const sphereRadius = this.fieldSphereRadiusUniform.max(0.01);
       const sphereNormal = fromSphereCenter.div(sphereDist.max(0.0001));
       const radialSpeed = newVel.dot(sphereNormal);
+      const softRadius = sphereRadius.mul(1.02);
+      const outsideT = sphereDist.sub(softRadius).div(sphereRadius.mul(0.22).max(0.001)).clamp(0, 1);
 
-      If(sphereDist.greaterThan(sphereRadius).and(radialSpeed.greaterThanEqual(0)), () => {
-        containedWorld.assign(sphereCenter.add(sphereNormal.mul(sphereRadius)));
-        newVel.assign(newVel.sub(sphereNormal.mul(radialSpeed)));
+      // The sphere is a guardrail, not the sculpture. Outside the radius we
+      // softly remove outward radial velocity and add a small inward drift;
+      // only well beyond the guardrail do we clamp as an escape hatch.
+      const containActive = dm.lessThan(0.5);
+      If(containActive.and(outsideT.greaterThan(0)), () => {
+        const outwardSpeed = radialSpeed.max(0);
+        const inwardSpeed = outsideT.mul(0.38).div(this.worldScaleUniform.max(0.001));
+        newVel.assign(newVel.sub(sphereNormal.mul(outwardSpeed.mul(outsideT))).sub(sphereNormal.mul(inwardSpeed)));
+        containedPos.assign(pos.add(newVel.mul(this.dtUniform)));
       });
-      const containedPos = containedWorld.div(this.worldScaleUniform.max(0.001));
+      const finalWorld = containedPos.mul(this.worldScaleUniform);
+      const hardFromSphereCenter = finalWorld.sub(sphereCenter);
+      const hardDist = hardFromSphereCenter.length();
+      const hardRadius = sphereRadius.mul(1.18);
+      const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
+      If(containActive.and(hardDist.greaterThan(hardRadius)), () => {
+        const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
+        containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)).div(this.worldScaleUniform.max(0.001)));
+        newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
+      });
 
       // Age + alpha.
       const ageStep = this.dtUniform.mul(float(1).add(dm.mul(2.0)));
@@ -874,7 +907,7 @@ export class EnergySculptor implements EnergySink {
             continue;
           }
           const x = xw * invWorldScale;
-          const y = yw * invWorldScale;
+          const y = ywLocal * invWorldScale;
           const z = zw * invWorldScale;
           // Mirror compute: sample the flow at invRot * p, then rotate flow back.
           sample.set(x, y, z).applyMatrix3(invRot);
@@ -1014,9 +1047,65 @@ export class EnergySculptor implements EnergySink {
     this.fieldSphereCenterYUniform.value = this.params.fieldSphereCenterY;
   }
 
+  private buildThomasSeedTargets(): void {
+    this.thomasSeedTargets.length = 0;
+    let x = 0.1;
+    let y = 0;
+    let z = 0;
+    const dt = 0.035;
+    const warmup = 4000;
+    const sampleStride = 12;
+    const totalSteps = warmup + THOMAS_TARGET_COUNT * sampleStride;
+
+    const deriv = (px: number, py: number, pz: number): [number, number, number] => [
+      -THOMAS_SEED_A * px + Math.sin(py),
+      -THOMAS_SEED_A * py + Math.sin(pz),
+      -THOMAS_SEED_A * pz + Math.sin(px),
+    ];
+
+    for (let i = 0; i < totalSteps; i += 1) {
+      const k1 = deriv(x, y, z);
+      const k2 = deriv(x + k1[0] * dt * 0.5, y + k1[1] * dt * 0.5, z + k1[2] * dt * 0.5);
+      const k3 = deriv(x + k2[0] * dt * 0.5, y + k2[1] * dt * 0.5, z + k2[2] * dt * 0.5);
+      const k4 = deriv(x + k3[0] * dt, y + k3[1] * dt, z + k3[2] * dt);
+      x += (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) * dt / 6;
+      y += (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) * dt / 6;
+      z += (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]) * dt / 6;
+
+      if (i >= warmup && (i - warmup) % sampleStride === 0) {
+        this.thomasSeedTargets.push(new THREE.Vector3(x, y, z));
+      }
+    }
+  }
+
+  private nextThomasTargetWorld(out: THREE.Vector3): THREE.Vector3 {
+    if (this.thomasSeedTargets.length === 0) return out.set(0, this.fieldSphereCenterYUniform.value, 0);
+    // Prime stride walks the precomputed orbit without visibly marching along
+    // the array while still giving streams coherent Thomas-attractor targets.
+    this.thomasTargetCursor = (this.thomasTargetCursor + 127) % this.thomasSeedTargets.length;
+    const source = this.thomasSeedTargets[this.thomasTargetCursor];
+    out.copy(source);
+    out.x += (Math.random() - 0.5) * 0.08;
+    out.y += (Math.random() - 0.5) * 0.08;
+    out.z += (Math.random() - 0.5) * 0.08;
+    out.applyMatrix3(this.sampleRotUniform.value);
+    out.multiplyScalar(this.worldScaleUniform.value || 1);
+    const targetLimit = this.fieldSphereRadiusUniform.value * 0.96;
+    const len = out.length();
+    if (len > targetLimit && len > 1e-5) out.multiplyScalar(targetLimit / len);
+    out.y += this.fieldSphereCenterYUniform.value;
+    return out;
+  }
+
+  private applyParticleLifetime(value = this.params.particleLifetime): void {
+    const lifetime = Math.max(MIN_PARTICLE_LIFETIME, value);
+    this.params.particleLifetime = lifetime;
+    this.lifeMaxUniform.value = lifetime;
+  }
+
   private fillSpawnQueue(): void {
     let cursor = 0;
-    const lifeBase = this.lifeMaxUniform.value;
+    const lifeBase = Math.max(MIN_PARTICLE_LIFETIME, this.lifeMaxUniform.value);
     const worldScale = this.worldScaleUniform.value || 1;
     const invWorldScale = 1 / worldScale;
     const sphereRadius = this.fieldSphereRadiusUniform.value;
@@ -1078,16 +1167,27 @@ export class EnergySculptor implements EnergySink {
           (spawnZ - this.center.z) * invWorldScale,
         );
 
-        // Initial velocity aims at a random point inside the spherical field
-        // volume. The small cone spread keeps bursts organic while preserving
-        // the main instrument → sculpture trajectory.
-        const targetTheta = Math.random() * TAU;
-        const targetCos = Math.random() * 2 - 1;
-        const targetSin = Math.sqrt(Math.max(0, 1 - targetCos * targetCos));
-        const targetRadius = sphereRadius * Math.cbrt(Math.random()) * 0.68;
-        const targetX = this.center.x + Math.cos(targetTheta) * targetSin * targetRadius;
-        const targetY = sphereCenterWorldY + targetCos * targetRadius;
-        const targetZ = this.center.z + Math.sin(targetTheta) * targetSin * targetRadius;
+        // Initial velocity aims at the active attractor, not at a random point
+        // in the bounding sphere. For Thomas, precomputed orbit targets let
+        // instrument streams enter the lobes quickly while the sphere remains
+        // only an escape guardrail.
+        let targetX: number;
+        let targetY: number;
+        let targetZ: number;
+        if (this.currentAttractor === 'thomas') {
+          const target = this.nextThomasTargetWorld(this.thomasTargetScratch);
+          targetX = this.center.x + target.x;
+          targetY = this.center.y + target.y;
+          targetZ = this.center.z + target.z;
+        } else {
+          const targetTheta = Math.random() * TAU;
+          const targetCos = Math.random() * 2 - 1;
+          const targetSin = Math.sqrt(Math.max(0, 1 - targetCos * targetCos));
+          const targetRadius = sphereRadius * Math.cbrt(Math.random()) * 0.56;
+          targetX = this.center.x + Math.cos(targetTheta) * targetSin * targetRadius;
+          targetY = sphereCenterWorldY + targetCos * targetRadius;
+          targetZ = this.center.z + Math.sin(targetTheta) * targetSin * targetRadius;
+        }
         let aimX = targetX - spawnX;
         let aimY = targetY - spawnY;
         let aimZ = targetZ - spawnZ;

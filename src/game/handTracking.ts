@@ -94,9 +94,10 @@ const POINTER_LAG_SECONDS = 0.075;
 const POINTER_ACTIVE_SECONDS = 1.4;
 const POINTER_IDLE_CONFIDENCE = 0.35;
 const MIC_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
-  echoCancellation: false,
-  noiseSuppression: false,
-  autoGainControl: false,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: { ideal: 1 },
 };
 
 export class HandTracker {
@@ -150,8 +151,8 @@ export class HandTracker {
 
     let stream: MediaStream | undefined;
     try {
-      // Video-only on purpose. Mic capture is acquired separately with plain
-      // audio constraints when the user explicitly clicks the Mic button.
+      // Video-only on purpose. Mic capture is acquired separately with
+      // voice-chat processing when the user explicitly clicks the Mic button.
       stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 960 }, height: { ideal: 540 }, facingMode: 'user' },
       });
@@ -343,6 +344,9 @@ export class HandTracker {
       this.micStream = await navigator.mediaDevices.getUserMedia({
         audio: MIC_AUDIO_CONSTRAINTS,
       });
+      for (const track of this.micStream.getAudioTracks()) {
+        track.contentHint = 'speech';
+      }
       return true;
     } catch (err) {
       console.warn('[webrtc] mic unavailable', err);

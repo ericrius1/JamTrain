@@ -19,7 +19,7 @@ import { ControlsPanel } from './components/ControlsPanel';
 // to push higher or back off entirely.
 export const DEFAULT_BACKING_VOLUME = 0.55;
 export const DEFAULT_MUSIC_VOLUME = 0.55;
-export const DEFAULT_VOICE_VOLUME = 1.0;
+export const DEFAULT_VOICE_VOLUME = 0.7;
 
 export type HudCallbacks = {
   onRoomChange: (room: string) => void;
