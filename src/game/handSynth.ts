@@ -12,8 +12,8 @@ import {
 import { keyDirector } from './keyDirector';
 import { clamp } from './math';
 import type { HandPose, PlayerPose } from './types';
-import type { InstrumentId, OrbGestureState, VoiceState } from './instruments';
-import { voiceStateZero } from './instruments';
+import type { InstrumentId, OrbEnvelopeSettings, OrbGestureState, VoiceState } from './instruments';
+import { DEFAULT_ORB_ENVELOPE, voiceStateZero } from './instruments';
 
 export const HAND_SYNTH_DEFS = {
   enabled:       { type: 'boolean', default: true,  label: 'enabled' },
@@ -32,7 +32,6 @@ export const HAND_SYNTH_DEFS = {
   duetDb:        { default: -19,   min: -36, max: 0,    step: 0.5,  label: 'duet dB' },
   mouseEnabled:  { type: 'boolean', default: true,  label: 'mouse plays' },
   orbDb:         { default: -5,    min: -30, max: 12,   step: 0.5,  label: 'pad dB' },
-  orbDecay:      { default: 2.9,   min: 0.4, max: 6,    step: 0.05, label: 'pad release s' },
   orbHarmonics:  { default: 0.24,  min: 0,   max: 1,    step: 0.01, label: 'tine color' },
   starlaceDb:         { default: -3,    min: -30,  max: 12,   step: 0.5,   folder: 'Starlace', label: 'level dB' },
   starlaceAttack:     { default: 0.018, min: 0.002, max: 0.20, step: 0.001, folder: 'Starlace', label: 'attack s' },
@@ -191,6 +190,10 @@ export class HandSynthEngine {
     local: inactiveOrbGesture(),
     remote: inactiveOrbGesture(),
   };
+  private orbHeldNotes: Record<PlayerKey, Map<string, { frequency: number; octaveHz: number; orbIndex: number }>> = {
+    local: new Map(),
+    remote: new Map(),
+  };
   private pendingOrbHits: PendingOrbHit[] = [];
   private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'drum', remote: 'drum' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
@@ -223,7 +226,6 @@ export class HandSynthEngine {
     duetDb: HAND_SYNTH_DEFS.duetDb.default,
     mouseEnabled: HAND_SYNTH_DEFS.mouseEnabled.default,
     orbDb: HAND_SYNTH_DEFS.orbDb.default,
-    orbDecay: HAND_SYNTH_DEFS.orbDecay.default,
     orbHarmonics: HAND_SYNTH_DEFS.orbHarmonics.default,
     starlaceDb: HAND_SYNTH_DEFS.starlaceDb.default,
     starlaceAttack: HAND_SYNTH_DEFS.starlaceAttack.default,
@@ -548,7 +550,13 @@ export class HandSynthEngine {
 
   /** Called by the Piano Pads visual when an orb is struck. Rings the
    *  analog-piano-pad voice for the given player. */
-  triggerOrbHit(player: PlayerKey, frequency: number, velocity: number, orbIndex: number): void {
+  triggerOrbHit(
+    player: PlayerKey,
+    frequency: number,
+    velocity: number,
+    orbIndex: number,
+    envelope: OrbEnvelopeSettings = DEFAULT_ORB_ENVELOPE,
+  ): void {
     if (!this.running || !this.tone) {
       this.queuePendingOrbHit(player, frequency, velocity, orbIndex);
       if (!this._loggedOrbBlock) {
@@ -566,7 +574,7 @@ export class HandSynthEngine {
       return;
     }
     const v = clamp(velocity, 0, 1);
-    this.fireOrbHit(orb, frequency, v);
+    this.fireOrbHit(orb, frequency, v, envelope);
     if (!this._loggedOrbFirstHit) {
       console.debug('[handSynth] first orb hit', { player, frequency, velocity: v });
       this._loggedOrbFirstHit = true;
@@ -575,6 +583,57 @@ export class HandSynthEngine {
     orb.energy = Math.min(1, orb.energy + 0.18 + v * 0.22);
     orb.lastNoteIdx = orbIndex;
     orb.lastHitCount += 1;
+  }
+
+  triggerOrbNoteOn(
+    player: PlayerKey,
+    sourceId: string,
+    frequency: number,
+    velocity: number,
+    orbIndex: number,
+    envelope: OrbEnvelopeSettings = DEFAULT_ORB_ENVELOPE,
+  ): void {
+    if (!this.running || !this.tone) return;
+    if (this.muted[player]) return;
+    if (this.pendingInstruments[player] !== 'drum') return;
+    if (this.orbHeldNotes[player].has(sourceId)) return;
+    const orb = this.ensureOrbVoice(player);
+    if (!orb) return;
+    const activeVoices = Math.max(orb.fund?.activeVoices ?? 0, orb.fifth?.activeVoices ?? 0);
+    if (!this.allowHit(this.orbBudgets[player], ORB_MAX_HITS_PER_WINDOW, activeVoices, ORB_MAX_ACTIVE_VOICES)) {
+      return;
+    }
+    const v = clamp(velocity, 0, 1);
+    this.applyOrbEnvelope(orb, envelope);
+    this.fireOrbNoteAttack(orb, frequency, v);
+    this.orbHeldNotes[player].set(sourceId, {
+      frequency,
+      octaveHz: frequency * 2.01,
+      orbIndex,
+    });
+    orb.pulse = Math.min(1, orb.pulse + 0.55 + v * 0.45);
+    orb.energy = Math.min(1, orb.energy + 0.20 + v * 0.25);
+    orb.lastNoteIdx = orbIndex;
+    orb.lastHitCount += 1;
+  }
+
+  triggerOrbNoteOff(
+    player: PlayerKey,
+    sourceId: string,
+    envelope: OrbEnvelopeSettings = DEFAULT_ORB_ENVELOPE,
+  ): void {
+    const held = this.orbHeldNotes[player].get(sourceId);
+    if (!held) return;
+    this.orbHeldNotes[player].delete(sourceId);
+    const orb = this.orbVoices[player];
+    if (!orb || !this.tone) return;
+    this.applyOrbEnvelope(orb, envelope);
+    try {
+      orb.fund.triggerRelease(held.frequency, this.tone.now());
+      orb.fifth.triggerRelease(held.octaveHz, this.tone.now());
+    } catch (err) {
+      console.warn('[handSynth] orb release failed', err);
+    }
   }
   private _loggedOrbFirstHit = false;
   private _loggedOrbBlock = false;
@@ -824,10 +883,10 @@ export class HandSynthEngine {
       modulationIndex: 1.12,
       oscillator: { type: 'triangle' },
       envelope: {
-        attack: 0.010,
-        decay: 1.15,
-        sustain: 0.08,
-        release: this.params.orbDecay,
+        attack: DEFAULT_ORB_ENVELOPE.attack,
+        decay: DEFAULT_ORB_ENVELOPE.decay,
+        sustain: DEFAULT_ORB_ENVELOPE.sustain,
+        release: DEFAULT_ORB_ENVELOPE.release,
       },
       modulation: { type: 'sine' },
       modulationEnvelope: { attack: 0.002, decay: 0.32, sustain: 0, release: 0.18 },
@@ -839,7 +898,12 @@ export class HandSynthEngine {
     // color rather than a metallic fifth.
     const fifth = new Tone.PolySynth(Tone.Synth, {
       oscillator: { type: 'fatsine4', count: 2, spread: 11 } as any,
-      envelope: { attack: 0.018, decay: 1.35, sustain: 0.04, release: this.params.orbDecay * 0.9 },
+      envelope: {
+        attack: DEFAULT_ORB_ENVELOPE.attack * 1.25,
+        decay: DEFAULT_ORB_ENVELOPE.decay * 1.1,
+        sustain: Math.max(0.50, DEFAULT_ORB_ENVELOPE.sustain * 0.78),
+        release: DEFAULT_ORB_ENVELOPE.release * 0.9,
+      },
       volume: this.params.orbDb - 17,
     }).connect(filter);
     fifth.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
@@ -998,6 +1062,7 @@ export class HandSynthEngine {
     this.releaseOrbGesture(orb, true);
     try { orb.fund.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     try { orb.fifth.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    this.orbHeldNotes[player].clear();
     this.setGainNow(orb.dryGain, 0);
     this.setGainNow(orb.wetSend, 0);
     orb.pulse = 0;
@@ -1052,19 +1117,73 @@ export class HandSynthEngine {
     orb.reverbReturn?.dispose?.();
   }
 
-  private fireOrbHit(orb: OrbVoice, frequency: number, velocity: number): void {
+  private fireOrbHit(
+    orb: OrbVoice,
+    frequency: number,
+    velocity: number,
+    envelope: OrbEnvelopeSettings = DEFAULT_ORB_ENVELOPE,
+  ): void {
     // Velocity floor at 0.35 so a soft tap still rings audibly.
     const synthVel = 0.30 + velocity * 0.58;
     const octaveHz = frequency * 2.01;
     const harmonics = clamp(this.params.orbHarmonics, 0, 1);
     try {
-      const duration = Math.max(0.75, this.params.orbDecay * 0.62);
+      this.applyOrbEnvelope(orb, envelope);
+      const duration = Math.max(0.08, envelope.attack + envelope.decay + 0.035);
       orb.fund.triggerAttackRelease(frequency, duration, undefined, synthVel);
       if (harmonics > 0.02) {
         orb.fifth.triggerAttackRelease(octaveHz, duration * 0.92, undefined, synthVel * harmonics * 0.34);
       }
     } catch (err) {
       console.warn('[handSynth] orb trigger failed', err);
+    }
+  }
+
+  private fireOrbNoteAttack(orb: OrbVoice, frequency: number, velocity: number): void {
+    const synthVel = 0.30 + velocity * 0.58;
+    const octaveHz = frequency * 2.01;
+    const harmonics = clamp(this.params.orbHarmonics, 0, 1);
+    try {
+      orb.fund.triggerAttack(frequency, undefined, synthVel);
+      if (harmonics > 0.02) {
+        orb.fifth.triggerAttack(octaveHz, undefined, synthVel * harmonics * 0.34);
+      }
+    } catch (err) {
+      console.warn('[handSynth] orb note attack failed', err);
+    }
+  }
+
+  private applyOrbEnvelope(
+    orb: OrbVoice,
+    envelope: OrbEnvelopeSettings = DEFAULT_ORB_ENVELOPE,
+  ): void {
+    const attack = Math.max(0.002, envelope.attack);
+    const decay = Math.max(0.002, envelope.decay);
+    const sustain = clamp(envelope.sustain, 0, 1);
+    const release = Math.max(0.002, envelope.release);
+    const fifthEnvelope = {
+      attack: attack * 1.25,
+      decay: decay * 1.1,
+      sustain: Math.max(0.50, sustain * 0.78),
+      release: release * 0.9,
+    };
+
+    orb.fund.set?.({ envelope: { attack, decay, sustain, release } });
+    orb.fifth.set?.({ envelope: fifthEnvelope });
+
+    for (const voice of Object.values(orb.fund.voices ?? {}) as any[]) {
+      if (!voice?.envelope) continue;
+      voice.envelope.attack = attack;
+      voice.envelope.decay = decay;
+      voice.envelope.sustain = sustain;
+      voice.envelope.release = release;
+    }
+    for (const voice of Object.values(orb.fifth.voices ?? {}) as any[]) {
+      if (!voice?.envelope) continue;
+      voice.envelope.attack = fifthEnvelope.attack;
+      voice.envelope.decay = fifthEnvelope.decay;
+      voice.envelope.sustain = fifthEnvelope.sustain;
+      voice.envelope.release = fifthEnvelope.release;
     }
   }
 

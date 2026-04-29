@@ -24,7 +24,14 @@ import {
 } from '../drumControls';
 import { getDrumHz } from '../harmony';
 import { keyDirector } from '../keyDirector';
-import type { HandContactPoint, OrbGestureState, PlayerVisual, VoiceState } from '../instruments';
+import {
+  DEFAULT_ORB_ENVELOPE,
+  type HandContactPoint,
+  type OrbEnvelopeSettings,
+  type OrbGestureState,
+  type PlayerVisual,
+  type VoiceState,
+} from '../instruments';
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
@@ -33,10 +40,10 @@ export const DRUM_DEFS = {
   // before ringRadius / orbRadius — those callbacks iterate the orb list which
   // is populated by rebuildOrbs() inside the pyramidBaseRow handler.
   pyramidBaseRow:    { default: DRUM_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'pyramid base row' },
-  orbRadius:         { default: 0.10,  min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
-  ringRadius:        { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'column spacing' },
-  pyramidRowSpacing: { default: 0.24,  min: 0.10, max: 0.50, step: 0.005, label: 'row spacing' },
-  bobAmount:       { default: 0.018, min: 0,    max: 0.06, step: 0.001, label: 'bob amount' },
+  orbRadius:         { default: 0.078, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
+  ringRadius:        { default: 0.20,  min: 0.10, max: 0.50, step: 0.005, label: 'plane spacing' },
+  pyramidRowSpacing: { default: 0.155, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
+  bobAmount:       { default: 0.003, min: 0,    max: 0.01, step: 0.001, label: 'bob amount' },
   bobSpeed:        { default: 0.7,   min: 0,    max: 3,    step: 0.05,  label: 'bob speed' },
   rippleSpeed:     { default: 1.28,  min: 0.2,  max: 4,    step: 0.01,  label: 'wave speed' },
   rippleFreq:      { default: 27,    min: 4,    max: 80,   step: 0.5,   label: 'wave number' },
@@ -55,6 +62,10 @@ export const DRUM_DEFS = {
   hotColor:        { type: 'color', default: '#fff8d6', label: 'hot' },
   hitTint:         { type: 'color', default: '#52ffaa', label: 'hit tint' },
   hitTintAmount:   { default: 0.85, min: 0, max: 1, step: 0.01, label: 'hit tint amount' },
+  envAttack:       { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 0.45, step: 0.001, folder: 'Envelope', label: 'attack s' },
+  envDecay:        { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.02,  max: 1.50, step: 0.005, folder: 'Envelope', label: 'decay s' },
+  envSustain:      { default: DEFAULT_ORB_ENVELOPE.sustain, min: 0.05,  max: 1.00, step: 0.01,  folder: 'Envelope', label: 'sustain' },
+  envRelease:      { default: DEFAULT_ORB_ENVELOPE.release, min: 0.02,  max: 1.60, step: 0.005, folder: 'Envelope', label: 'release s' },
 } as const;
 
 export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
@@ -68,8 +79,24 @@ export type OrbHit = {
   velocity: number;
   /** Hand that caused a contact hit. Pointer / keyboard hits leave this empty. */
   hand?: HandContactPoint['hand'];
+  /** Held-key/MIDI hits sustain until the matching release event arrives. */
+  held?: boolean;
+  /** Stable source for matching note-on/note-off. */
+  sourceId?: string;
+  /** Raw MIDI note number when the hit came from a MIDI controller. */
+  noteNumber?: number;
+  /** ADSR values used by both the sound engine and the orb light. */
+  envelope: OrbEnvelopeSettings;
   /** World-space position of the strike (used by the sound-sculpture emitter). */
   worldPosition: THREE.Vector3;
+};
+
+export type OrbRelease = {
+  orbIndex: number;
+  frequency: number;
+  sourceId: string;
+  noteNumber?: number;
+  envelope: OrbEnvelopeSettings;
 };
 
 type DrumPalette = 'local' | 'remote';
@@ -78,6 +105,7 @@ type DrumOptions = {
   palette?: DrumPalette;
   title?: string;
   onHit?: (event: OrbHit) => void;
+  onRelease?: (event: OrbRelease) => void;
   onGesture?: (gesture: OrbGestureState) => void;
   onOrbCountChange?: (count: number) => void;
   camera?: THREE.Camera;
@@ -86,10 +114,10 @@ type DrumOptions = {
   sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
 };
 
-// Playable orbs arranged in a triangular pyramid in front of the player. Base
-// row count is tweakable (default 3 -> rows of 3,2,1 = 6 orbs). Each orb maps
-// to a scale degree from the shared Jam Train harmony, continuing upward by
-// octave when the pyramid has more orbs than one scale cycle.
+// Playable orbs arranged in a layered 3D pyramid in front of the player. Base
+// plane count is tweakable (default 4 -> planes of 4,3,2,1 = 10 orbs). Each
+// orb maps to a scale degree from the shared Jam Train harmony, continuing
+// upward by octave when the pyramid has more orbs than one scale cycle.
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
@@ -109,22 +137,59 @@ type AnyNode = any;
 // pyramids do not repeat exact pitches. The table is per-instance and tracks
 // the current key via the KeyDirector subscription set up in the constructor.
 
-function makeOrbOffsets(baseRow: number, columnSpacing: number, rowSpacing: number): THREE.Vector3[] {
-  // Pyramid: bottom row has `baseRow` orbs, each row above has one fewer, until
-  // a single orb at the apex. Default-size pad grids stay centered around the
-  // anchor; larger grids grow downward so the apex does not climb into the
-  // top of the view. Index order is bottom-up, left-to-right.
+function makeOrbPlanePoints(count: number, spacing: number): Array<{ x: number; z: number }> {
+  if (count <= 1) return [{ x: 0, z: 0 }];
+  if (count === 2) {
+    return [
+      { x: -spacing * 0.5, z: 0 },
+      { x:  spacing * 0.5, z: 0 },
+    ];
+  }
+  if (count === 3) {
+    const zBack = -spacing / (2 * Math.sqrt(3));
+    const zFront = spacing / Math.sqrt(3);
+    return [
+      { x: -spacing * 0.5, z: zBack },
+      { x:  spacing * 0.5, z: zBack },
+      { x: 0, z: zFront },
+    ];
+  }
+
+  const columns = Math.ceil(Math.sqrt(count));
+  const rows = Math.ceil(count / columns);
+  const points: Array<{ x: number; z: number }> = [];
+  let cursor = 0;
+  for (let row = 0; row < rows; row += 1) {
+    const remaining = count - cursor;
+    const rowsLeft = rows - row;
+    const inRow = Math.ceil(remaining / rowsLeft);
+    const z = (row - (rows - 1) * 0.5) * spacing;
+    for (let col = 0; col < inRow; col += 1) {
+      const x = (col - (inRow - 1) * 0.5) * spacing;
+      points.push({ x, z });
+      cursor += 1;
+    }
+  }
+  return points;
+}
+
+function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: number): THREE.Vector3[] {
+  // Pyramid: bottom plane has `baseRow` orbs, each plane above has one fewer,
+  // until a single orb at the apex. Default-size pad grids stay centered
+  // around the anchor; larger grids grow downward so the apex does not climb
+  // into the top of the view. Index order is bottom-up, then back-to-front
+  // within each plane.
   const rows = Math.max(1, Math.floor(baseRow));
   const offsets: THREE.Vector3[] = [];
-  const yCenter = (rows - 1) * 0.5 * rowSpacing;
+  const yCenter = (rows - 1) * 0.5 * layerSpacing;
   const topOverflowRows = Math.max(0, rows - DRUM_LAYOUT_TOP_ROWS);
-  const downBias = topOverflowRows * 0.5 * rowSpacing;
+  const downBias = topOverflowRows * 0.5 * layerSpacing;
   for (let row = 0; row < rows; row += 1) {
-    const orbsInRow = rows - row;
-    const y = row * rowSpacing - yCenter - downBias;
-    for (let col = 0; col < orbsInRow; col += 1) {
-      const x = (col - (orbsInRow - 1) / 2) * columnSpacing;
-      offsets.push(new THREE.Vector3(x, y, 0));
+    const orbsInPlane = rows - row;
+    const y = row * layerSpacing - yCenter - downBias;
+    const points = makeOrbPlanePoints(orbsInPlane, planeSpacing);
+    for (const point of points) {
+      offsets.push(new THREE.Vector3(point.x, y, point.z));
     }
   }
   return offsets;
@@ -164,6 +229,13 @@ type Orb = {
   material: THREE.MeshBasicNodeMaterial;
   lastHitAt: number;
   hitPulse: number;
+  envelopePhase: 'idle' | 'attack' | 'decay' | 'sustain' | 'release';
+  envelopeStartedAt: number;
+  envelopeStartLevel: number;
+  envelopePeak: number;
+  envelopeSustain: number;
+  envelopeReleaseFrom: number;
+  heldSources: Set<string>;
   offset: THREE.Vector3;
   uniforms: OrbPerInstanceUniforms;
 };
@@ -269,6 +341,7 @@ export class Drum implements PlayerVisual {
   private static readonly REVEAL_DROP_DISTANCE = 1.45;
 
   private onHitCallback?: (e: OrbHit) => void;
+  private onReleaseCallback?: (e: OrbRelease) => void;
   private onGestureCallback?: (gesture: OrbGestureState) => void;
   private onOrbCountChange?: (count: number) => void;
   private lastReportedOrbCount = -1;
@@ -281,6 +354,9 @@ export class Drum implements PlayerVisual {
   private static SPARK_COLOR_LOCAL = { r: 0.34, g: 0.88, b: 0.94 };
   private static SPARK_COLOR_REMOTE = { r: 0.48, g: 0.84, b: 0.98 };
   private keyDownListener?: (e: KeyboardEvent) => void;
+  private keyUpListener?: (e: KeyboardEvent) => void;
+  private keyBlurListener?: () => void;
+  private heldSources = new Map<string, { orbIndex: number; frequency: number; noteNumber?: number }>();
   private hzTable: readonly number[] = getDrumHz(keyDirector.getCurrent());
   private keyUnsubscribe?: () => void;
 
@@ -288,6 +364,7 @@ export class Drum implements PlayerVisual {
     this.params = { ...Object.fromEntries(Object.entries(DRUM_DEFS).map(([k, d]) => [k, d.default])) } as DrumParams;
     applyPaletteDefaults(this.params, opts.palette ?? 'local');
     this.onHitCallback = opts.onHit;
+    this.onReleaseCallback = opts.onRelease;
     this.onGestureCallback = opts.onGesture;
     this.onOrbCountChange = opts.onOrbCountChange;
     this.camera = opts.camera;
@@ -351,6 +428,7 @@ export class Drum implements PlayerVisual {
   private rebuildOrbs(): void {
     // Tear down any existing orbs and BVH, then rebuild for the current
     // pyramidBaseRow / spacing values. Per-orb state arrays are resized too.
+    this.releaseAllHeldNotes();
     for (const orb of this.orbs) {
       this.mesh.remove(orb.mesh);
       orb.material.dispose();
@@ -394,6 +472,13 @@ export class Drum implements PlayerVisual {
         material,
         lastHitAt: -10,
         hitPulse: 0,
+        envelopePhase: 'idle',
+        envelopeStartedAt: 0,
+        envelopeStartLevel: 0,
+        envelopePeak: 0,
+        envelopeSustain: 0,
+        envelopeReleaseFrom: 0,
+        heldSources: new Set(),
         offset: offsets[i].clone(),
         uniforms: orbUniforms,
       });
@@ -403,6 +488,7 @@ export class Drum implements PlayerVisual {
   setVisible(visible: boolean): void {
     this.active = visible;
     this.mesh.visible = visible;
+    if (!visible) this.releaseAllHeldNotes();
   }
 
   setAnchor(anchor: THREE.Vector3): void {
@@ -413,6 +499,7 @@ export class Drum implements PlayerVisual {
 
   startHidden(): void {
     this.mesh.visible = false;
+    this.releaseAllHeldNotes();
     this.revealedFully = false;
     this.revealActive = false;
   }
@@ -436,6 +523,7 @@ export class Drum implements PlayerVisual {
   playOutroAnimation(): Promise<void> {
     if (!this.mesh.visible) return Promise.resolve();
     if (this.outroPromise) return this.outroPromise;
+    this.releaseAllHeldNotes();
     this.revealStartedAt = this.elapsed;
     this.revealDirection = -1;
     this.revealActive = true;
@@ -560,8 +648,7 @@ export class Drum implements PlayerVisual {
     }
 
     for (const orb of this.orbs) {
-      // Decay the per-orb hit flash and push into shader uniform.
-      orb.hitPulse = Math.max(0, orb.hitPulse - delta * 2.4);
+      this.updateOrbEnvelope(orb);
       orb.uniforms.pulse.value = orb.hitPulse;
       orb.uniforms.elapsed.value = this.elapsed;
     }
@@ -572,6 +659,7 @@ export class Drum implements PlayerVisual {
   dispose(): void {
     this.registered?.dispose();
     this.keyUnsubscribe?.();
+    this.releaseAllHeldNotes();
     this.detachPointerEvents();
     this.detachKeyboardEvents();
     for (const orb of this.orbs) {
@@ -603,6 +691,82 @@ export class Drum implements PlayerVisual {
       this.revealResolveOutro = undefined;
       this.outroPromise = undefined;
       resolve?.();
+    }
+  }
+
+  private currentEnvelope(): OrbEnvelopeSettings {
+    return {
+      attack: Math.max(0.002, this.params.envAttack),
+      decay: Math.max(0.002, this.params.envDecay),
+      sustain: clamp(this.params.envSustain, 0, 1),
+      release: Math.max(0.002, this.params.envRelease),
+    };
+  }
+
+  private startOrbEnvelope(orb: Orb, velocity: number): void {
+    const envelope = this.currentEnvelope();
+    const peak = clamp(0.56 + velocity * 0.44, 0.05, 1);
+    orb.envelopePhase = 'attack';
+    orb.envelopeStartedAt = this.elapsed;
+    orb.envelopeStartLevel = orb.hitPulse;
+    orb.envelopePeak = Math.max(peak, orb.hitPulse);
+    orb.envelopeSustain = orb.envelopePeak * envelope.sustain;
+    orb.envelopeReleaseFrom = orb.hitPulse;
+  }
+
+  private beginOrbRelease(orb: Orb): void {
+    if (orb.envelopePhase === 'idle' || orb.envelopePhase === 'release') return;
+    orb.envelopePhase = 'release';
+    orb.envelopeStartedAt = this.elapsed;
+    orb.envelopeReleaseFrom = orb.hitPulse;
+  }
+
+  private updateOrbEnvelope(orb: Orb): void {
+    const envelope = this.currentEnvelope();
+    const age = this.elapsed - orb.envelopeStartedAt;
+    switch (orb.envelopePhase) {
+      case 'attack': {
+        const t = clamp(age / envelope.attack, 0, 1);
+        orb.hitPulse = lerp(orb.envelopeStartLevel, orb.envelopePeak, t);
+        if (t >= 1) {
+          orb.envelopePhase = 'decay';
+          orb.envelopeStartedAt = this.elapsed;
+        }
+        break;
+      }
+      case 'decay': {
+        const t = clamp(age / envelope.decay, 0, 1);
+        orb.hitPulse = lerp(orb.envelopePeak, orb.envelopeSustain, t);
+        if (t >= 1) {
+          if (orb.heldSources.size > 0) {
+            orb.envelopePhase = 'sustain';
+            orb.hitPulse = orb.envelopeSustain;
+          } else {
+            this.beginOrbRelease(orb);
+          }
+        }
+        break;
+      }
+      case 'sustain':
+        if (orb.heldSources.size > 0) {
+          orb.hitPulse += (orb.envelopeSustain - orb.hitPulse) * 0.35;
+        } else {
+          this.beginOrbRelease(orb);
+        }
+        break;
+      case 'release': {
+        const t = clamp(age / envelope.release, 0, 1);
+        orb.hitPulse = lerp(orb.envelopeReleaseFrom, 0, t);
+        if (t >= 1) {
+          orb.envelopePhase = 'idle';
+          orb.hitPulse = 0;
+        }
+        break;
+      }
+      case 'idle':
+      default:
+        orb.hitPulse = 0;
+        break;
     }
   }
 
@@ -693,12 +857,21 @@ export class Drum implements PlayerVisual {
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
       if (!this.isInteractive()) return;
-      const idx = drumKeyboardIndexForKey(e.key, this.orbs.length);
+      const key = e.key.toLowerCase();
+      const idx = drumKeyboardIndexForKey(key, this.orbs.length);
       if (idx === undefined) return;
       e.preventDefault();
-      this.fireKeyboardHit(idx);
+      this.fireKeyboardHit(key, idx);
+    };
+    this.keyUpListener = (e: KeyboardEvent) => {
+      this.releaseHeldSource(`keyboard:${e.key.toLowerCase()}`);
+    };
+    this.keyBlurListener = () => {
+      this.releaseAllHeldNotes('keyboard:');
     };
     window.addEventListener('keydown', this.keyDownListener);
+    window.addEventListener('keyup', this.keyUpListener);
+    window.addEventListener('blur', this.keyBlurListener);
   }
 
   private detachKeyboardEvents(): void {
@@ -706,9 +879,18 @@ export class Drum implements PlayerVisual {
       window.removeEventListener('keydown', this.keyDownListener);
       this.keyDownListener = undefined;
     }
+    if (this.keyUpListener) {
+      window.removeEventListener('keyup', this.keyUpListener);
+      this.keyUpListener = undefined;
+    }
+    if (this.keyBlurListener) {
+      window.removeEventListener('blur', this.keyBlurListener);
+      this.keyBlurListener = undefined;
+    }
+    this.releaseAllHeldNotes('keyboard:');
   }
 
-  private fireKeyboardHit(orbIndex: number): void {
+  private fireKeyboardHit(key: string, orbIndex: number): void {
     const orb = this.orbs[orbIndex];
     if (!orb) return;
     // Strike from the front of the orb (toward +z in local space).
@@ -718,7 +900,72 @@ export class Drum implements PlayerVisual {
     const velocity = 0.7;
     const worldStrike = _strikePoint.clone();
     this.mesh.localToWorld(worldStrike);
-    this.dispatchHit(orbIndex, velocity, worldStrike);
+    this.dispatchHit(orbIndex, velocity, worldStrike, false, undefined, {
+      held: true,
+      sourceId: `keyboard:${key}`,
+    });
+  }
+
+  triggerMidiNoteOn(noteNumber: number, velocity: number, sourceId?: string): void {
+    if (!this.isInteractive()) return;
+    const orbIndex = this.orbIndexForMidiNote(noteNumber);
+    if (orbIndex < 0) return;
+    const orb = this.orbs[orbIndex];
+    if (!orb) return;
+    _hitDir.set(0, 0.2, 1).normalize();
+    _strikePoint.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
+    const worldStrike = _strikePoint.clone();
+    this.mesh.localToWorld(worldStrike);
+    this.dispatchHit(orbIndex, clamp(velocity, 0, 1), worldStrike, false, undefined, {
+      held: true,
+      sourceId: this.midiSourceId(noteNumber, sourceId),
+      noteNumber,
+    });
+  }
+
+  triggerMidiNoteOff(noteNumber: number, sourceId?: string): void {
+    this.releaseHeldSource(this.midiSourceId(noteNumber, sourceId));
+  }
+
+  releaseAllMidiNotes(): void {
+    this.releaseAllHeldNotes('midi:');
+  }
+
+  private orbIndexForMidiNote(noteNumber: number): number {
+    const count = this.orbs.length;
+    if (count <= 0 || !Number.isFinite(noteNumber)) return -1;
+    const keyIndex = positiveModulo(Math.round(noteNumber) - 36, count);
+    return count - 1 - keyIndex;
+  }
+
+  private midiSourceId(noteNumber: number, sourceId?: string): string {
+    return `midi:${sourceId ?? Math.round(noteNumber)}`;
+  }
+
+  private releaseHeldSource(sourceId: string): void {
+    const held = this.heldSources.get(sourceId);
+    if (!held) return;
+    this.heldSources.delete(sourceId);
+    const orb = this.orbs[held.orbIndex];
+    if (orb) {
+      orb.heldSources.delete(sourceId);
+      if (orb.heldSources.size === 0) this.beginOrbRelease(orb);
+    }
+    this.onReleaseCallback?.({
+      sourceId,
+      orbIndex: held.orbIndex,
+      frequency: held.frequency,
+      noteNumber: held.noteNumber,
+      envelope: this.currentEnvelope(),
+    });
+  }
+
+  private releaseAllHeldNotes(prefix?: string): void {
+    const sources = [...this.heldSources.keys()];
+    for (const sourceId of sources) {
+      if (prefix && !sourceId.startsWith(prefix)) continue;
+      this.releaseHeldSource(sourceId);
+    }
   }
 
   private updatePointerGesture(delta: number): void {
@@ -874,6 +1121,7 @@ export class Drum implements PlayerVisual {
     worldPosition: THREE.Vector3,
     rippleBurst = false,
     hand?: HandContactPoint['hand'],
+    source?: { held?: boolean; sourceId?: string; noteNumber?: number },
   ): void {
     const orb = this.orbs[orbIndex];
     if (!orb) return;
@@ -887,11 +1135,31 @@ export class Drum implements PlayerVisual {
       this.addRippleAt(_strikePoint, velocity);
     }
 
-    orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
+    if (source?.held && source.sourceId) {
+      const existing = this.heldSources.get(source.sourceId);
+      if (existing && existing.orbIndex !== orbIndex) this.releaseHeldSource(source.sourceId);
+      orb.heldSources.add(source.sourceId);
+      this.heldSources.set(source.sourceId, {
+        orbIndex,
+        frequency: this.frequencyForOrb(orbIndex),
+        noteNumber: source.noteNumber,
+      });
+    }
+    this.startOrbEnvelope(orb, velocity);
     const frequency = this.frequencyForOrb(orbIndex);
     const worldStrike = worldPosition.clone();
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike, hand });
+      this.onHitCallback({
+        orbIndex,
+        frequency,
+        velocity,
+        worldPosition: worldStrike,
+        hand,
+        held: !!source?.held,
+        sourceId: source?.sourceId,
+        noteNumber: source?.noteNumber,
+        envelope: this.currentEnvelope(),
+      });
     }
     this.emitSparks(worldStrike, velocity);
   }
@@ -1021,11 +1289,18 @@ export class Drum implements PlayerVisual {
     _strikePoint.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
     this.addRippleAt(_strikePoint, velocity);
 
-    orb.hitPulse = Math.min(1, orb.hitPulse + 0.5 + velocity * 0.5);
+    this.startOrbEnvelope(orb, velocity);
     const frequency = this.frequencyForOrb(orbIndex);
     const worldStrike = _strikePoint.clone().add(this.mesh.position);
     if (this.onHitCallback) {
-      this.onHitCallback({ orbIndex, frequency, velocity, worldPosition: worldStrike, hand: contact.hand });
+      this.onHitCallback({
+        orbIndex,
+        frequency,
+        velocity,
+        worldPosition: worldStrike,
+        hand: contact.hand,
+        envelope: this.currentEnvelope(),
+      });
     }
     this.emitSparks(worldStrike, velocity);
   }
@@ -1226,4 +1501,12 @@ function applyPaletteDefaults(params: DrumParams, palette: DrumPalette): void {
   params.baseColor = '#102947';
   params.rimColor = '#75f0ff';
   params.hotColor = '#fff4ca';
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * clamp(t, 0, 1);
+}
+
+function positiveModulo(value: number, modulus: number): number {
+  return ((value % modulus) + modulus) % modulus;
 }

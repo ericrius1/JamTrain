@@ -5,6 +5,7 @@ import { JamAudioGraph } from './audioGraph';
 import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
+import { MidiInputController, type MidiNoteEvent } from './midiInput';
 import { clamp } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { Drum } from './visuals/Drum';
@@ -39,6 +40,8 @@ const PLAYERS_DEFS = {
 const INSTRUMENTS_DEFS = {
   playerOffset: { default: 0.7, min: 0, max: 1.0, step: 0.01, label: 'player offset' },
 } as const;
+
+const INSTRUMENT_ANCHOR_Y = 0.98;
 
 const INTRO_SCENE_DEFS = {
   opacity:    { default: 0.28, min: 0.08, max: 0.60, step: 0.01, label: 'opacity' },
@@ -125,6 +128,7 @@ export class Game {
   readonly handTracker: HandTracker;
   private audioGraph: JamAudioGraph;
   private handSynth: HandSynthEngine;
+  private midiInput: MidiInputController;
   readonly multiplayer: MultiplayerClient;
   private webrtc: WebRTCClient;
   private poseSession!: PoseSession;
@@ -199,6 +203,10 @@ export class Game {
     this.handTracker = new HandTracker(ui.inputStatus);
     this.audioGraph = new JamAudioGraph();
     this.handSynth = new HandSynthEngine(this.audioGraph, canvas, this.paneDock);
+    this.midiInput = new MidiInputController({
+      onNoteOn: note => this.handleMidiNoteOn(note),
+      onNoteOff: note => this.handleMidiNoteOff(note),
+    });
     this.handTracker.setPointerInputEnabled(false);
     this.handSynth.setMouseInputEnabled(false);
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
@@ -347,6 +355,7 @@ export class Game {
   async startAudio(): Promise<void> {
     await this.audioGraph.start();
     await this.handSynth.start();
+    await this.midiInput.start();
   }
 
   connectMultiplayer(): void {
@@ -489,6 +498,7 @@ export class Game {
     this.sculptor?.dispose();
     this.roundDirector?.dispose();
     this.disposePlayerVisuals();
+    this.midiInput.dispose();
     this.handSynth.dispose();
     this.audioGraph.dispose();
     this.cameraTweaks?.dispose();
@@ -886,10 +896,17 @@ export class Game {
         anchor,
         onOrbCountChange: player === 'local' ? count => this.setLocalDrumOrbCount(count) : undefined,
         onHit: hit => {
-          this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex);
+          if (hit.held && hit.sourceId) {
+            this.handSynth.triggerOrbNoteOn(player, hit.sourceId, hit.frequency, hit.velocity, hit.orbIndex, hit.envelope);
+          } else {
+            this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex, hit.envelope);
+          }
           this.cueRobotInstrumentStrike(player, hit.hand, hit.worldPosition, hit.velocity);
           this.lastDrumHitAt = performance.now() / 1000;
           this.checkSynchrony();
+        },
+        onRelease: release => {
+          this.handSynth.triggerOrbNoteOff(player, release.sourceId, release.envelope);
         },
         onGesture: gesture => {
           this.handSynth.setOrbGesture(player, gesture);
@@ -996,7 +1013,7 @@ export class Game {
    */
   private computeInstrumentAnchor(seatIndex: number): THREE.Vector3 {
     const dir = seatIndex === 0 ? 1 : -1;
-    return new THREE.Vector3(0, 1.05, dir * this.instrumentsParams.playerOffset);
+    return new THREE.Vector3(0, INSTRUMENT_ANCHOR_Y, dir * this.instrumentsParams.playerOffset);
   }
 
   private checkSynchrony(): void {
@@ -1006,6 +1023,14 @@ export class Game {
       this.lastSynchronyAt = now;
       this.sculptor?.fireSynchrony();
     }
+  }
+
+  private handleMidiNoteOn(note: MidiNoteEvent): void {
+    this.playerVisuals.local?.triggerMidiNoteOn?.(note.noteNumber, note.velocity, note.sourceId);
+  }
+
+  private handleMidiNoteOff(note: MidiNoteEvent): void {
+    this.playerVisuals.local?.triggerMidiNoteOff?.(note.noteNumber, note.sourceId);
   }
 
   private cueRobotInstrumentStrike(

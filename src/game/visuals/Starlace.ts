@@ -89,6 +89,7 @@ type KeyboardPathState = {
   step: number;
   phraseSeed: number;
   recentNodes: number[];
+  velocity: number;
 };
 
 const MAX_SPARKS = 64;
@@ -1212,7 +1213,30 @@ export class Starlace implements PlayerVisual {
     return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || element.isContentEditable;
   }
 
-  private startKeyboardPath(key: string, keyIndex: number): void {
+  triggerMidiNoteOn(noteNumber: number, velocity: number, sourceId?: string): void {
+    if (!this.isInteractive()) return;
+    if (!Number.isFinite(noteNumber)) return;
+    const keyIndex = positiveModulo(Math.round(noteNumber) - 36, Starlace.KEY_MAP.length);
+    const key = this.midiSourceId(noteNumber, sourceId);
+    if (this.keyboardPaths.has(key)) return;
+    this.startKeyboardPath(key, keyIndex, clamp(velocity, 0, 1));
+  }
+
+  triggerMidiNoteOff(noteNumber: number, sourceId?: string): void {
+    this.keyboardPaths.delete(this.midiSourceId(noteNumber, sourceId));
+  }
+
+  releaseAllMidiNotes(): void {
+    for (const key of [...this.keyboardPaths.keys()]) {
+      if (key.startsWith('midi:')) this.keyboardPaths.delete(key);
+    }
+  }
+
+  private midiSourceId(noteNumber: number, sourceId?: string): string {
+    return `midi:${sourceId ?? Math.round(noteNumber)}`;
+  }
+
+  private startKeyboardPath(key: string, keyIndex: number, velocity = 0.74): void {
     const homeNoteIndex = this.keyboardHomeNoteIndex(keyIndex);
     const startNode = this.pickKeyboardStartNode(homeNoteIndex);
     if (startNode < 0) return;
@@ -1226,10 +1250,11 @@ export class Starlace implements PlayerVisual {
       step: 0,
       phraseSeed: hash(keyIndex * 17.31 + this.elapsed * 0.71 + (this.keyboardStartCursor[homeNoteIndex] ?? 0) * 3.19),
       recentNodes: [startNode],
+      velocity: clamp(velocity, 0.2, 1),
     };
     state.nextAt = this.elapsed + this.keyboardStepDelay(state);
     this.keyboardPaths.set(key, state);
-    this.fireNode(startNode, 0.74);
+    this.fireNode(startNode, state.velocity);
   }
 
   private processKeyboardPaths(): void {
@@ -1358,7 +1383,8 @@ export class Starlace implements PlayerVisual {
 
   private keyboardPathVelocity(state: KeyboardPathState): number {
     const accent = state.step % 4 === 1 ? 0.11 : 0;
-    return clamp(0.52 + accent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.18, 0.48, 0.84);
+    const base = 0.38 + state.velocity * 0.38;
+    return clamp(base + accent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.18, 0.34, 0.92);
   }
 
   private emitStreak(node: StarNode, velocity: number): void {
@@ -1478,6 +1504,10 @@ function segmentPointDistance(from: THREE.Vector3, to: THREE.Vector3, point: THR
 function easeOutCubic(t: number): number {
   const inv = 1 - clamp(t, 0, 1);
   return 1 - inv * inv * inv;
+}
+
+function positiveModulo(value: number, modulus: number): number {
+  return ((value % modulus) + modulus) % modulus;
 }
 
 function rotateVectorTowards(

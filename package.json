@@ -19,7 +19,8 @@
     "three": "0.184.0",
     "three-mesh-bvh": "^0.9.9",
     "tone": "15.1.22",
-    "tweakpane": "^4.0.5"
+    "tweakpane": "^4.0.5",
+    "webmidi": "^3.1.16"
   },
   "devDependencies": {
     "@types/three": "^0.184.0",

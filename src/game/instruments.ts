@@ -35,6 +35,20 @@ export const voiceStateZero = (): VoiceState => ({
   noteCount: 1,
 });
 
+export type OrbEnvelopeSettings = {
+  attack: number;
+  decay: number;
+  sustain: number;
+  release: number;
+};
+
+export const DEFAULT_ORB_ENVELOPE: OrbEnvelopeSettings = {
+  attack: 0.026,
+  decay: 0.24,
+  sustain: 0.86,
+  release: 0.22,
+};
+
 export type HandContactPoint = {
   /** Stable within one player visual so velocity can be derived frame-to-frame. */
   id: string;
@@ -135,5 +149,9 @@ export interface PlayerVisual {
   /** Animate the instrument out. Promise resolves when the visual is fully
    *  hidden so the caller can dispose / swap. */
   playOutroAnimation(): Promise<void>;
+  /** Optional note input path used by Web MIDI devices. */
+  triggerMidiNoteOn?(noteNumber: number, velocity: number, sourceId?: string): void;
+  triggerMidiNoteOff?(noteNumber: number, sourceId?: string): void;
+  releaseAllMidiNotes?(): void;
   dispose(): void;
 }
