@@ -155,8 +155,8 @@ export class BeginGate {
 
     const tagline = this.div('begin-tagline');
     tagline.innerHTML = `
-      <p>Conduct sound with your hands, mouse, or keyboard</p>
-      <p>Share your room link with a friend to climb aboard and jam together.</p>
+      <p>Jam with your hands, mouse/trackpad, or keyboard</p>
+      <p>Share your room link with a friend to climb aboard and join the jam.</p>
     `;
     block.appendChild(tagline);
 

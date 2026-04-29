@@ -35,40 +35,55 @@ import {
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
+type DrumPalette = 'local' | 'remote';
+
 export const DRUM_DEFS = {
   // pyramidBaseRow must come first so registerTweaks' initial onChange fires it
-  // before ringRadius / orbRadius — those callbacks iterate the orb list which
-  // is populated by rebuildOrbs() inside the pyramidBaseRow handler.
+  // before the layout callbacks iterate the orb list populated by rebuildOrbs().
   pyramidBaseRow:    { default: DRUM_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'pyramid base row' },
-  orbRadius:         { default: 0.078, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
-  ringRadius:        { default: 0.20,  min: 0.10, max: 0.50, step: 0.005, label: 'plane spacing' },
-  pyramidRowSpacing: { default: 0.155, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
-  bobAmount:       { default: 0.003, min: 0,    max: 0.01, step: 0.001, label: 'bob amount' },
-  bobSpeed:        { default: 0.7,   min: 0,    max: 3,    step: 0.05,  label: 'bob speed' },
-  rippleSpeed:     { default: 1.28,  min: 0.2,  max: 4,    step: 0.01,  label: 'wave speed' },
-  rippleFreq:      { default: 27,    min: 4,    max: 80,   step: 0.5,   label: 'wave number' },
-  rippleDecay:     { default: 3.1,   min: 0.2,  max: 6,    step: 0.05,  label: 'wave decay s' },
-  rippleSigma:     { default: 0.18,  min: 0.05, max: 1.5,  step: 0.01,  label: 'packet width' },
-  rippleDisplace:  { default: 0.050, min: 0,    max: 0.16, step: 0.001, label: 'surface ripple' },
-  rippleGlow:      { default: 1.65,  min: 0,    max: 4,    step: 0.05,  label: 'crest glow' },
-  hitDistance:     { default: 0.045, min: 0,    max: 0.20, step: 0.001, label: 'hit margin' },
-  palmRadius:      { default: 0.100, min: 0.02, max: 0.18, step: 0.001, label: 'palm radius' },
-  fingerRadius:    { default: 0.050, min: 0.01, max: 0.12, step: 0.001, label: 'finger radius' },
-  hitCooldown:     { default: 0.075, min: 0.03, max: 0.6,  step: 0.005, label: 'hit cooldown s' },
-  hitVelMin:       { default: 0.012, min: 0,    max: 1,    step: 0.005, label: 'hit vel min m/s' },
-  anchorSmoothing: { default: 8.0,   min: 0.2,  max: 18,   step: 0.1,   label: 'anchor smoothing s' },
-  baseColor:       { type: 'color', default: '#1d3247', label: 'base' },
-  rimColor:        { type: 'color', default: '#7ad9ff', label: 'rim' },
-  hotColor:        { type: 'color', default: '#fff8d6', label: 'hot' },
-  hitTint:         { type: 'color', default: '#52ffaa', label: 'hit tint' },
-  hitTintAmount:   { default: 0.85, min: 0, max: 1, step: 0.01, label: 'hit tint amount' },
-  envAttack:       { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 0.45, step: 0.001, folder: 'Envelope', label: 'attack s' },
-  envDecay:        { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.02,  max: 1.50, step: 0.005, folder: 'Envelope', label: 'decay s' },
-  envSustain:      { default: DEFAULT_ORB_ENVELOPE.sustain, min: 0.05,  max: 1.00, step: 0.01,  folder: 'Envelope', label: 'sustain' },
-  envRelease:      { default: DEFAULT_ORB_ENVELOPE.release, min: 0.02,  max: 1.60, step: 0.005, folder: 'Envelope', label: 'release s' },
+  pyramidStartHeight: { default: 0.0, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
+  orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
+  ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
+  pyramidRowSpacing: { default: 0.105, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
 } as const;
 
 export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
+
+const DRUM_RUNTIME = {
+  bobAmount: 0.003,
+  bobSpeed: 0.7,
+  rippleSpeed: 1.28,
+  rippleFreq: 27,
+  rippleDecay: 3.1,
+  rippleSigma: 0.18,
+  rippleDisplace: 0.050,
+  rippleGlow: 1.65,
+  hitDistance: 0.045,
+  palmRadius: 0.100,
+  fingerRadius: 0.050,
+  hitCooldown: 0.075,
+  hitVelMin: 0.012,
+  anchorSmoothing: 8.0,
+  hitTint: '#52ffaa',
+  hitTintAmount: 0.85,
+  envAttack: DEFAULT_ORB_ENVELOPE.attack,
+  envDecay: DEFAULT_ORB_ENVELOPE.decay,
+  envSustain: DEFAULT_ORB_ENVELOPE.sustain,
+  envRelease: DEFAULT_ORB_ENVELOPE.release,
+} as const;
+
+const DRUM_PALETTES: Record<DrumPalette, { baseColor: string; rimColor: string; hotColor: string }> = {
+  local: {
+    baseColor: '#102947',
+    rimColor: '#75f0ff',
+    hotColor: '#fff4ca',
+  },
+  remote: {
+    baseColor: '#37183a',
+    rimColor: '#ff7ad6',
+    hotColor: '#fff0fb',
+  },
+};
 
 export type OrbHit = {
   /** Scale field selected from the strike point on the single orb. */
@@ -99,8 +114,6 @@ export type OrbRelease = {
   envelope: OrbEnvelopeSettings;
 };
 
-type DrumPalette = 'local' | 'remote';
-
 type DrumOptions = {
   palette?: DrumPalette;
   title?: string;
@@ -115,7 +128,7 @@ type DrumOptions = {
 };
 
 // Playable orbs arranged in a layered 3D pyramid in front of the player. Base
-// plane count is tweakable (default 4 -> planes of 4,3,2,1 = 10 orbs). Each
+// plane count is tweakable (default 5 -> planes of 5,4,3,2,1 = 15 orbs). Each
 // orb maps to a scale degree from the shared Jam Train harmony, continuing
 // upward by octave when the pyramid has more orbs than one scale cycle.
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
@@ -139,41 +152,20 @@ type AnyNode = any;
 
 function makeOrbPlanePoints(count: number, spacing: number): Array<{ x: number; z: number }> {
   if (count <= 1) return [{ x: 0, z: 0 }];
-  if (count === 2) {
-    return [
-      { x: -spacing * 0.5, z: 0 },
-      { x:  spacing * 0.5, z: 0 },
-    ];
-  }
-  if (count === 3) {
-    const zBack = -spacing / (2 * Math.sqrt(3));
-    const zFront = spacing / Math.sqrt(3);
-    return [
-      { x: -spacing * 0.5, z: zBack },
-      { x:  spacing * 0.5, z: zBack },
-      { x: 0, z: zFront },
-    ];
-  }
-
-  const columns = Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(count / columns);
+  const radius = spacing / (2 * Math.sin(Math.PI / count));
+  const startAngle = -Math.PI / 2;
   const points: Array<{ x: number; z: number }> = [];
-  let cursor = 0;
-  for (let row = 0; row < rows; row += 1) {
-    const remaining = count - cursor;
-    const rowsLeft = rows - row;
-    const inRow = Math.ceil(remaining / rowsLeft);
-    const z = (row - (rows - 1) * 0.5) * spacing;
-    for (let col = 0; col < inRow; col += 1) {
-      const x = (col - (inRow - 1) * 0.5) * spacing;
-      points.push({ x, z });
-      cursor += 1;
-    }
+  for (let i = 0; i < count; i += 1) {
+    const angle = startAngle + (i / count) * Math.PI * 2;
+    points.push({
+      x: Math.cos(angle) * radius,
+      z: Math.sin(angle) * radius,
+    });
   }
   return points;
 }
 
-function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: number): THREE.Vector3[] {
+function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: number, startHeight: number): THREE.Vector3[] {
   // Pyramid: bottom plane has `baseRow` orbs, each plane above has one fewer,
   // until a single orb at the apex. Default-size pad grids stay centered
   // around the anchor; larger grids grow downward so the apex does not climb
@@ -186,7 +178,7 @@ function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: num
   const downBias = topOverflowRows * 0.5 * layerSpacing;
   for (let row = 0; row < rows; row += 1) {
     const orbsInPlane = rows - row;
-    const y = row * layerSpacing - yCenter - downBias;
+    const y = startHeight + row * layerSpacing - yCenter - downBias;
     const points = makeOrbPlanePoints(orbsInPlane, planeSpacing);
     for (const point of points) {
       offsets.push(new THREE.Vector3(point.x, y, point.z));
@@ -195,20 +187,21 @@ function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: num
   return offsets;
 }
 
-function createOrbUniforms(params: DrumParams) {
+function createOrbUniforms(params: DrumParams, palette: DrumPalette) {
+  const colors = DRUM_PALETTES[palette];
   return {
-    baseColor:    uniform(new THREE.Color(params.baseColor)),
-    rimColor:     uniform(new THREE.Color(params.rimColor)),
-    hotColor:     uniform(new THREE.Color(params.hotColor)),
-    hitTint:      uniform(new THREE.Color(params.hitTint)),
-    hitTintAmount: uniform(params.hitTintAmount),
+    baseColor:    uniform(new THREE.Color(colors.baseColor)),
+    rimColor:     uniform(new THREE.Color(colors.rimColor)),
+    hotColor:     uniform(new THREE.Color(colors.hotColor)),
+    hitTint:      uniform(new THREE.Color(DRUM_RUNTIME.hitTint)),
+    hitTintAmount: uniform(DRUM_RUNTIME.hitTintAmount),
     orbRadius:    uniform(params.orbRadius),
-    rippleSpeed:  uniform(params.rippleSpeed),
-    rippleFreq:   uniform(params.rippleFreq),
-    rippleDecay:  uniform(params.rippleDecay),
-    rippleSigma:  uniform(params.rippleSigma),
-    rippleDisplace: uniform(params.rippleDisplace),
-    rippleGlow:   uniform(params.rippleGlow),
+    rippleSpeed:  uniform(DRUM_RUNTIME.rippleSpeed),
+    rippleFreq:   uniform(DRUM_RUNTIME.rippleFreq),
+    rippleDecay:  uniform(DRUM_RUNTIME.rippleDecay),
+    rippleSigma:  uniform(DRUM_RUNTIME.rippleSigma),
+    rippleDisplace: uniform(DRUM_RUNTIME.rippleDisplace),
+    rippleGlow:   uniform(DRUM_RUNTIME.rippleGlow),
     gesture:      uniform(new THREE.Vector4(0, 0, 0, 0)),
     gestureDepth: uniform(0),
   };
@@ -362,7 +355,6 @@ export class Drum implements PlayerVisual {
 
   constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'drum', opts: DrumOptions = {}) {
     this.params = { ...Object.fromEntries(Object.entries(DRUM_DEFS).map(([k, d]) => [k, d.default])) } as DrumParams;
-    applyPaletteDefaults(this.params, opts.palette ?? 'local');
     this.onHitCallback = opts.onHit;
     this.onReleaseCallback = opts.onRelease;
     this.onGestureCallback = opts.onGesture;
@@ -381,7 +373,7 @@ export class Drum implements PlayerVisual {
       this.hzTable = getDrumHz(current);
     });
 
-    this.uniforms = createOrbUniforms(this.params);
+    this.uniforms = createOrbUniforms(this.params, this.palette);
     for (let r = 0; r < MAX_RIPPLES; r += 1) {
       this.rippleSources.push(new THREE.Vector4(0, 0, 0, 0));
       this.rippleStarts.push(-1);
@@ -396,23 +388,13 @@ export class Drum implements PlayerVisual {
       title: opts.title ?? 'Piano Pads',
       params: this.params,
       onChange: {
-        baseColor:    () => this.uniforms.baseColor.value.set(this.params.baseColor),
-        rimColor:     () => this.uniforms.rimColor.value.set(this.params.rimColor),
-        hotColor:     () => this.uniforms.hotColor.value.set(this.params.hotColor),
-        hitTint:      () => this.uniforms.hitTint.value.set(this.params.hitTint),
-        hitTintAmount: v => { this.uniforms.hitTintAmount.value = v; },
-        rippleSpeed:  v => { this.uniforms.rippleSpeed.value = v; },
-        rippleFreq:   v => { this.uniforms.rippleFreq.value = v; },
-        rippleDecay:  v => { this.uniforms.rippleDecay.value = v; },
-        rippleSigma:  v => { this.uniforms.rippleSigma.value = v; },
-        rippleDisplace: v => { this.uniforms.rippleDisplace.value = v; },
-        rippleGlow:   v => { this.uniforms.rippleGlow.value = v; },
         orbRadius:    v => {
           this.uniforms.orbRadius.value = v;
           for (const o of this.orbs) o.mesh.scale.setScalar(v);
         },
         ringRadius:        () => this.layoutOrbs(),
         pyramidRowSpacing: () => this.layoutOrbs(),
+        pyramidStartHeight: () => this.layoutOrbs(),
         pyramidBaseRow:    () => this.rebuildOrbs(),
       },
     });
@@ -437,7 +419,12 @@ export class Drum implements PlayerVisual {
     this.collisionBVH?.dispose();
 
     const baseRow = Math.max(1, Math.floor(this.params.pyramidBaseRow));
-    const offsets = makeOrbOffsets(baseRow, this.params.ringRadius, this.params.pyramidRowSpacing);
+    const offsets = makeOrbOffsets(
+      baseRow,
+      this.params.ringRadius,
+      this.params.pyramidRowSpacing,
+      this.params.pyramidStartHeight,
+    );
     const count = offsets.length;
     this.notifyOrbCount(count);
 
@@ -612,7 +599,7 @@ export class Drum implements PlayerVisual {
     } else if (!this.pointerInside && !this.pointerDown) {
       _palmTmp.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
       _palmTmp.z -= 0.06;
-      const alpha = 1 - Math.exp(-delta / Math.max(0.05, this.params.anchorSmoothing));
+      const alpha = 1 - Math.exp(-delta / Math.max(0.05, DRUM_RUNTIME.anchorSmoothing));
       this.anchor.lerp(_palmTmp, alpha);
     }
     this.placeGroup();
@@ -625,7 +612,7 @@ export class Drum implements PlayerVisual {
     for (let i = 0; i < this.orbs.length; i += 1) {
       const orb = this.orbs[i];
       // Subtle bob — each orb has its own phase.
-      const bob = Math.sin(this.elapsed * this.params.bobSpeed * 1.3 + i * 1.21) * this.params.bobAmount;
+      const bob = Math.sin(this.elapsed * DRUM_RUNTIME.bobSpeed * 1.3 + i * 1.21) * DRUM_RUNTIME.bobAmount;
       const reveal = this.orbReveal(i);
       orb.mesh.position.set(orb.offset.x, orb.offset.y + bob + reveal.offsetY, orb.offset.z);
       orb.mesh.scale.setScalar(baseRadius * reveal.scale);
@@ -696,10 +683,10 @@ export class Drum implements PlayerVisual {
 
   private currentEnvelope(): OrbEnvelopeSettings {
     return {
-      attack: Math.max(0.002, this.params.envAttack),
-      decay: Math.max(0.002, this.params.envDecay),
-      sustain: clamp(this.params.envSustain, 0, 1),
-      release: Math.max(0.002, this.params.envRelease),
+      attack: Math.max(0.002, DRUM_RUNTIME.envAttack),
+      decay: Math.max(0.002, DRUM_RUNTIME.envDecay),
+      sustain: clamp(DRUM_RUNTIME.envSustain, 0, 1),
+      release: Math.max(0.002, DRUM_RUNTIME.envRelease),
     };
   }
 
@@ -772,7 +759,12 @@ export class Drum implements PlayerVisual {
 
   private layoutOrbs(): void {
     const baseRow = Math.max(1, Math.floor(this.params.pyramidBaseRow));
-    const offsets = makeOrbOffsets(baseRow, this.params.ringRadius, this.params.pyramidRowSpacing);
+    const offsets = makeOrbOffsets(
+      baseRow,
+      this.params.ringRadius,
+      this.params.pyramidRowSpacing,
+      this.params.pyramidStartHeight,
+    );
     if (offsets.length !== this.orbs.length) {
       // Spacing changed at the same time the row count did — defer to a full
       // rebuild so per-orb state arrays stay sized to the orb list.
@@ -1110,7 +1102,7 @@ export class Drum implements PlayerVisual {
   private firePointerHit(orbIndex: number, velocity: number, worldPoint: THREE.Vector3): boolean {
     const orb = this.orbs[orbIndex];
     if (!orb) return false;
-    if (this.elapsed - orb.lastHitAt <= this.params.hitCooldown) return false;
+    if (this.elapsed - orb.lastHitAt <= DRUM_RUNTIME.hitCooldown) return false;
     this.dispatchHit(orbIndex, velocity, worldPoint, true);
     return true;
   }
@@ -1232,8 +1224,8 @@ export class Drum implements PlayerVisual {
       this.contactHits.length = 0;
       this.currentContactHits.length = 0;
 
-      const contactRadius = contact.kind === 'palm' ? this.params.palmRadius : this.params.fingerRadius;
-      const hitRadius = this.params.orbRadius + contactRadius + this.params.hitDistance;
+      const contactRadius = contact.kind === 'palm' ? DRUM_RUNTIME.palmRadius : DRUM_RUNTIME.fingerRadius;
+      const hitRadius = this.params.orbRadius + contactRadius + DRUM_RUNTIME.hitDistance;
       this.collisionBVH.collectPointHits(contact.position, hitRadius, this.currentContactHits);
       this.collisionBVH.collectSweptPointHits(previous, contact.position, hitRadius, this.contactHits);
 
@@ -1241,7 +1233,7 @@ export class Drum implements PlayerVisual {
         this.currentContactKeys.add(this.contactKey(contact.id, orbIndex));
       }
 
-      const fastEnough = speed > this.params.hitVelMin;
+      const fastEnough = speed > DRUM_RUNTIME.hitVelMin;
       for (const orbIndex of this.contactHits) {
         const key = this.contactKey(contact.id, orbIndex);
         const currentlyOverlapping = this.currentContactHits.includes(orbIndex);
@@ -1262,7 +1254,7 @@ export class Drum implements PlayerVisual {
       const candidate = this.hitCandidates[i];
       if (!candidate) continue;
       const orb = this.orbs[i];
-      if (this.elapsed - orb.lastHitAt <= this.params.hitCooldown) continue;
+      if (this.elapsed - orb.lastHitAt <= DRUM_RUNTIME.hitCooldown) continue;
       this.fireHit(i, candidate.contact, candidate.speed);
     }
 
@@ -1488,19 +1480,6 @@ export class Drum implements PlayerVisual {
 
     return { colorNode, positionNode };
   }
-}
-
-function applyPaletteDefaults(params: DrumParams, palette: DrumPalette): void {
-  if (palette === 'remote') {
-    params.baseColor = '#37183a';
-    params.rimColor = '#ff7ad6';
-    params.hotColor = '#fff0fb';
-    return;
-  }
-  // local — cool blue piano pads
-  params.baseColor = '#102947';
-  params.rimColor = '#75f0ff';
-  params.hotColor = '#fff4ca';
 }
 
 function lerp(a: number, b: number, t: number): number {

@@ -35,6 +35,30 @@ import {
   type AttractorPreset,
 } from './sculptor/strangeAttractors';
 
+type AttractorMode = 'cycle' | 'auto' | AttractorKind;
+
+const ATTRACTOR_SEQUENCE: AttractorKind[] = ['thomas', 'lorenz', 'aizawa', 'halvorsen', 'rossler', 'dadras'];
+
+const ATTRACTOR_OPTIONS = {
+  cycle: 'cycle',
+  auto: 'auto',
+  thomas: 'thomas',
+  lorenz: 'lorenz',
+  aizawa: 'aizawa',
+  halvorsen: 'halvorsen',
+  rossler: 'rossler',
+  dadras: 'dadras',
+} as const satisfies Record<string, AttractorMode>;
+
+const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
+  thomas: 'Thomas',
+  lorenz: 'Lorenz',
+  aizawa: 'Aizawa',
+  halvorsen: 'Halvorsen',
+  rossler: 'Rossler',
+  dadras: 'Dadras',
+};
+
 export const SCULPTOR_DEFS = {
   particleCount:      { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
   particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
@@ -53,7 +77,7 @@ export const SCULPTOR_DEFS = {
 
   fieldRotationRate:  { default: 0.3,   min: 0,     max: 10,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
   fieldDebugDensity:  { default: 11,    min: 3,     max: 15,   step: 1,     folder: 'Field Shape', label: 'debug density' },
-  attractorOverride:  { type: 'select' as const, default: 'thomas' as const, options: { auto: 'auto', thomas: 'thomas', lorenz: 'lorenz', aizawa: 'aizawa', halvorsen: 'halvorsen', rossler: 'rossler', dadras: 'dadras' }, folder: 'Field Shape', label: 'attractor' },
+  attractorOverride:  { type: 'select' as const, default: 'cycle' as const, options: ATTRACTOR_OPTIONS, folder: 'Field Shape', label: 'attractor' },
 
   speedGlow:          { default: 0.7,   min: 0,     max: 2,    step: 0.01,  folder: 'Appearance', label: 'speed glow' },
   stretchScale:       { default: 0.06,  min: 0,     max: 0.4,  step: 0.005, folder: 'Appearance', label: 'accel stretch' },
@@ -169,8 +193,9 @@ export class EnergySculptor implements EnergySink {
   private dadrasE = uniform(9);
 
   private fieldRotationRate = 1.0;
-  // 'auto' = follow archetype-driven attractor; otherwise pin to the chosen kind.
-  private attractorOverride: 'auto' | AttractorKind = 'thomas';
+  // cycle = timed preset tour, auto = follow archetype-driven attractor,
+  // otherwise pin to the chosen kind.
+  private attractorOverride: AttractorMode = 'cycle';
 
   // Lifetime-keyed field falloff. fieldEffect = mix(1, finalFieldEffect,
   // smoothstep(start, end, normalizedAge)). If finalFieldEffect is exactly 0
@@ -181,8 +206,9 @@ export class EnergySculptor implements EnergySink {
   private finalFieldEffectUniform = uniform(0.0);
   // Master force multiplier — 0 means no acceleration is applied to particles.
   private fieldStrengthUniform = uniform(1.0);
-  // World-space spherical sculptor volume relative to center. This keeps the
-  // field over the table even as attractor presets change local-space scale.
+  // Attractor-coordinate to world-coordinate scale used when sampling the
+  // field. Particle positions themselves are stored in world-relative meters
+  // so settled particles do not move when this changes during a transition.
   private fieldSphereRadiusUniform = uniform(0.55);
   private fieldSphereCenterYUniform = uniform(0.12);
 
@@ -197,10 +223,12 @@ export class EnergySculptor implements EnergySink {
   // Attractor crossfade — during an archetype change, the shader evaluates
   // both the current and target flow fields and lerps between them. Preset
   // scale/speed values are also lerped on CPU.
+  private static readonly CROSSFADE_DURATION = 6;
+  private static readonly ATTRACTOR_CYCLE_INTERVAL = 10;
   private attractorTargetUniform = uniform(1);
   private crossfadeWeightUniform = uniform(0);
   private crossfadeRemaining = 0;
-  private static readonly CROSSFADE_DURATION = 6;
+  private crossfadeDuration = EnergySculptor.CROSSFADE_DURATION;
   private fromPreset = ATTRACTOR_PRESETS.thomas;
   private toPreset = ATTRACTOR_PRESETS.thomas;
 
@@ -211,6 +239,9 @@ export class EnergySculptor implements EnergySink {
   // Frame state.
   private currentArchetype: ArchetypeId = 'drumMelody';
   private currentAttractor: AttractorKind = 'thomas';
+  private transitionTarget: AttractorKind = 'thomas';
+  private attractorCycleIndex = 0;
+  private attractorCycleElapsed = 0;
   private roundProgress = 0;
   private dissolveMode = 0;
   private synchronyBoost = 0;
@@ -241,6 +272,9 @@ export class EnergySculptor implements EnergySink {
   private thomasSeedTargets: THREE.Vector3[] = [];
   private thomasTargetScratch = new THREE.Vector3();
   private thomasTargetCursor = 0;
+  private attractorDebugMessage?: HTMLDivElement;
+  private affinityDebugParticleAge = 0;
+  private affinityDebugParticleLifeMax = 0;
 
   private registered?: ReturnType<typeof registerTweaks<typeof SCULPTOR_DEFS>>;
 
@@ -266,6 +300,7 @@ export class EnergySculptor implements EnergySink {
     this.buildThomasSeedTargets();
 
     this.applyAttractorPreset(this.currentAttractor);
+    this.buildAttractorDebugMessage(paneDock);
     this.centerUniform.value.copy(this.center);
     this.particleSizeUniform.value = this.params.particleSize;
     this.particleOpacityUniform.value = this.params.particleOpacity;
@@ -312,10 +347,12 @@ export class EnergySculptor implements EnergySink {
           this.fieldDebugGrid = next;
           this.rebuildFieldDebugLines();
         },
-        attractorOverride: v => { this.setAttractorOverride(v as 'auto' | AttractorKind); },
+        attractorOverride: v => { this.setAttractorOverride(v as AttractorMode); },
         dissolveBurstSpeed: v => { this.dissolveBurstUniform.value = v; },
       },
     });
+    this.syncAttractorCycleIndex();
+    this.updateAttractorDebugMessage();
   }
 
   // ---------------------------------------------------------------------- emit
@@ -328,19 +365,28 @@ export class EnergySculptor implements EnergySink {
   setArchetype(id: ArchetypeId): void {
     if (this.currentArchetype === id) return;
     this.currentArchetype = id;
-    // Manual dropdown override pins the attractor — skip archetype-driven swaps.
-    if (this.attractorOverride !== 'auto') return;
+    if (this.attractorOverride !== 'auto') {
+      this.updateAttractorDebugMessage();
+      return;
+    }
     const next = ARCHETYPE_TO_ATTRACTOR[id];
     if (next !== this.currentAttractor) {
       this.currentAttractor = next;
       this.beginAttractorCrossfade(next);
     }
+    this.updateAttractorDebugMessage();
   }
 
-  // Pin the active attractor (or 'auto' to resume archetype-driven selection).
+  // Select cycle, archetype auto, or a manually pinned attractor.
   // Called from the tweakpane dropdown's onChange.
-  private setAttractorOverride(override: 'auto' | AttractorKind): void {
+  private setAttractorOverride(override: AttractorMode): void {
     this.attractorOverride = override;
+    if (override === 'cycle') {
+      this.syncAttractorCycleIndex();
+      this.attractorCycleElapsed = 0;
+      this.updateAttractorDebugMessage();
+      return;
+    }
     const target: AttractorKind = override === 'auto'
       ? ARCHETYPE_TO_ATTRACTOR[this.currentArchetype]
       : override;
@@ -348,6 +394,7 @@ export class EnergySculptor implements EnergySink {
       this.currentAttractor = target;
       this.beginAttractorCrossfade(target);
     }
+    this.updateAttractorDebugMessage();
   }
 
   setRoundProgress(progress: number): void {
@@ -396,6 +443,9 @@ export class EnergySculptor implements EnergySink {
     this.updateProjectorRing();
     this.tickSampleRotation();
     this.tickAttractorCrossfade(delta);
+    this.tickAttractorCycle(delta);
+    this.tickAffinityDebugParticle(delta);
+    this.updateAttractorDebugMessage();
     this.tickFieldDebug();
 
     // Drain CPU emit queue into the spawn uniformArrays.
@@ -424,6 +474,7 @@ export class EnergySculptor implements EnergySink {
 
   dispose(): void {
     this.registered?.dispose();
+    this.attractorDebugMessage?.remove();
     this.mesh.geometry.dispose();
     this.material.dispose();
     this.mesh.removeFromParent();
@@ -442,6 +493,132 @@ export class EnergySculptor implements EnergySink {
   }
 
   // ----------------------------------------------------------------- internals
+
+  private buildAttractorDebugMessage(paneDock?: HTMLElement): void {
+    if (!paneDock) return;
+    const message = document.createElement('div');
+    message.className = 'attractor-debug-message';
+    message.setAttribute('aria-live', 'polite');
+    const summary = paneDock.querySelector('.tweak-pane-dock-summary');
+    const anchor = summary?.nextSibling ?? null;
+    paneDock.insertBefore(message, anchor);
+    this.attractorDebugMessage = message;
+    this.updateAttractorDebugMessage();
+  }
+
+  private syncAttractorCycleIndex(): void {
+    const idx = ATTRACTOR_SEQUENCE.indexOf(this.currentAttractor);
+    this.attractorCycleIndex = idx >= 0 ? idx : 0;
+  }
+
+  private nextCycleTarget(): AttractorKind {
+    return ATTRACTOR_SEQUENCE[(this.attractorCycleIndex + 1) % ATTRACTOR_SEQUENCE.length];
+  }
+
+  private tickAttractorCycle(delta: number): void {
+    if (this.attractorOverride !== 'cycle') return;
+    this.attractorCycleElapsed += delta;
+    if (this.attractorCycleElapsed < EnergySculptor.ATTRACTOR_CYCLE_INTERVAL) return;
+
+    while (this.attractorCycleElapsed >= EnergySculptor.ATTRACTOR_CYCLE_INTERVAL) {
+      this.attractorCycleElapsed -= EnergySculptor.ATTRACTOR_CYCLE_INTERVAL;
+      this.attractorCycleIndex = (this.attractorCycleIndex + 1) % ATTRACTOR_SEQUENCE.length;
+    }
+
+    const next = ATTRACTOR_SEQUENCE[this.attractorCycleIndex];
+    this.currentAttractor = next;
+    this.beginAttractorCrossfade(next, EnergySculptor.ATTRACTOR_CYCLE_INTERVAL);
+  }
+
+  private updateAttractorDebugMessage(): void {
+    const message = this.attractorDebugMessage;
+    if (!message) return;
+
+    const lines = [this.getAttractorDebugLine(), ...this.getAffinityDebugLines()];
+    this.setAttractorDebugText(lines.join('\n'));
+  }
+
+  private getAttractorDebugLine(): string {
+    if (this.crossfadeRemaining > 0) {
+      const t = 1 - this.crossfadeRemaining / Math.max(this.crossfadeDuration, 0.001);
+      const progress = Math.round(Math.max(0, Math.min(1, t)) * 100);
+      const prefix = this.attractorOverride === 'cycle' ? 'Attractor cycle' : 'Attractor field';
+      return `${prefix}: transitioning into ${ATTRACTOR_LABELS[this.transitionTarget]} (${progress}%)`;
+    }
+
+    if (this.attractorOverride === 'cycle') {
+      const remaining = Math.max(0, EnergySculptor.ATTRACTOR_CYCLE_INTERVAL - this.attractorCycleElapsed);
+      return `Attractor cycle: ${ATTRACTOR_LABELS[this.currentAttractor]} now; next ${ATTRACTOR_LABELS[this.nextCycleTarget()]} in ${remaining.toFixed(1)}s`;
+    }
+
+    if (this.attractorOverride === 'auto') {
+      return `Attractor auto: ${ATTRACTOR_LABELS[this.currentAttractor]} from instruments`;
+    }
+
+    return `Attractor pinned: ${ATTRACTOR_LABELS[this.currentAttractor]}`;
+  }
+
+  private getAffinityDebugLines(): string[] {
+    const hasParticle = this.affinityDebugParticleLifeMax > 0 && this.affinityDebugParticleAge < this.affinityDebugParticleLifeMax;
+    const life = Math.max(
+      MIN_PARTICLE_LIFETIME,
+      hasParticle ? this.affinityDebugParticleLifeMax : this.lifeMaxUniform.value,
+    );
+    const age = hasParticle ? Math.min(this.affinityDebugParticleAge, life) : 0;
+    const lifeT = life > 0 ? age / life : 0;
+    const { start, end } = this.affinityFalloffWindow();
+    const startSec = start * life;
+    const endSec = end * life;
+    const finalAffinity = clamp01(this.finalFieldEffectUniform.value);
+    const currentAffinity = this.affinityAtLifeT(lifeT);
+    const journey = start === end
+      ? `${this.formatPercent(1)} until ${this.formatSeconds(endSec)}, then ${this.formatPercent(finalAffinity)}`
+      : `${this.formatPercent(1)} at ${this.formatSeconds(startSec)} -> ${this.formatPercent(finalAffinity)} at ${this.formatSeconds(endSec)}`;
+    const finalBehavior = finalAffinity <= 0.0005
+      ? `field motion stops after ${this.formatSeconds(endSec)}`
+      : `keeps ${this.formatPercent(finalAffinity)} field after ${this.formatSeconds(endSec)}`;
+    const particleLabel = hasParticle ? 'debug particle' : 'next particle';
+
+    return [
+      `Affinity: ${this.formatSeconds(life)} life, ${journey}; ${finalBehavior}`,
+      `${particleLabel}: age ${this.formatSeconds(age)} (${this.formatPercent(lifeT)}), affinity ${this.formatPercent(currentAffinity)}`,
+    ];
+  }
+
+  private tickAffinityDebugParticle(delta: number): void {
+    if (this.affinityDebugParticleLifeMax <= 0) return;
+    this.affinityDebugParticleAge = Math.min(
+      this.affinityDebugParticleLifeMax,
+      this.affinityDebugParticleAge + delta,
+    );
+  }
+
+  private affinityFalloffWindow(): { start: number; end: number } {
+    const a = clamp01(this.fieldFalloffStartUniform.value);
+    const b = clamp01(this.fieldFalloffEndUniform.value);
+    return { start: Math.min(a, b), end: Math.max(a, b) };
+  }
+
+  private affinityAtLifeT(lifeT: number): number {
+    const { start, end } = this.affinityFalloffWindow();
+    const span = Math.max(0.0001, end - start);
+    const raw = clamp01((clamp01(lifeT) - start) / span);
+    const eased = raw * raw * (3 - 2 * raw);
+    return clamp01(1 + (clamp01(this.finalFieldEffectUniform.value) - 1) * eased);
+  }
+
+  private formatSeconds(value: number): string {
+    return `${value.toFixed(value >= 10 ? 0 : 1)}s`;
+  }
+
+  private formatPercent(value: number): string {
+    return `${Math.round(clamp01(value) * 100)}%`;
+  }
+
+  private setAttractorDebugText(text: string): void {
+    if (!this.attractorDebugMessage || this.attractorDebugMessage.textContent === text) return;
+    this.attractorDebugMessage.textContent = text;
+  }
 
   private allocateBuffers(): void {
     // All particles start zeroed → alphaLife=0, which the integrate pass
@@ -568,12 +745,10 @@ export class EnergySculptor implements EnergySink {
       // (R^-1 * p), evaluate the flow there, then rotate the flow back into
       // particle space (R * f). The orbits stay structurally intact but tumble
       // through world space, giving a "moving through a meta-realm" feel.
-      const fieldCenterLocal = vec3(
-        0,
-        this.fieldSphereCenterYUniform.div(this.worldScaleUniform.max(0.001)),
-        0,
+      const fieldCenterWorld = vec3(0, this.fieldSphereCenterYUniform, 0);
+      const samplePos = this.sampleRotInvUniform.mul(
+        pos.sub(fieldCenterWorld).div(this.worldScaleUniform.max(0.001)),
       );
-      const samplePos = this.sampleRotInvUniform.mul(pos.sub(fieldCenterLocal));
       const flowA = sampleFlow(this.attractorSelectUniform, samplePos);
       const flowB = sampleFlow(this.attractorTargetUniform, samplePos);
       const sampledFlow = mix(flowA, flowB, this.crossfadeWeightUniform);
@@ -590,7 +765,8 @@ export class EnergySculptor implements EnergySink {
       // each other without inverting the curve.
       const falloffLo = this.fieldFalloffStartUniform.min(this.fieldFalloffEndUniform);
       const falloffHi = this.fieldFalloffStartUniform.max(this.fieldFalloffEndUniform);
-      const falloffT = smoothstep(falloffLo, falloffHi, lifeT).clamp(0, 1);
+      const falloffRaw = lifeT.sub(falloffLo).div(falloffHi.sub(falloffLo).max(0.0001)).clamp(0, 1);
+      const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
       const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
 
       // The field is the only sculpting force. Treat it as a velocity field
@@ -598,7 +774,11 @@ export class EnergySculptor implements EnergySink {
       // trace the attractor lobes rather than ballistically filling the bounds.
       // `fieldEffect` scales the target velocity itself, so an affinity of 0
       // settles motion to a full stop while 0.2 keeps exactly 20% field speed.
-      const desiredVel = flow.mul(this.flowSpeedUniform).mul(this.fieldStrengthUniform).mul(fieldEffect);
+      const desiredVel = flow
+        .mul(this.flowSpeedUniform)
+        .mul(this.worldScaleUniform)
+        .mul(this.fieldStrengthUniform)
+        .mul(fieldEffect);
       const fieldFollow = this.dtUniform.mul(6.5).clamp(0, 1);
       const newVel = mix(vel, desiredVel, fieldFollow).toVar();
       const freezeWhenSettled = this.finalFieldEffectUniform.lessThanEqual(0.0001).and(falloffT.greaterThanEqual(0.999));
@@ -608,13 +788,12 @@ export class EnergySculptor implements EnergySink {
 
       // Dissolve burst: blow particles outward away from origin and shorten life.
       const dm = this.dissolveModeUniform;
-      const outward = pos.normalize().mul(this.dissolveBurstUniform);
+      const outward = pos.normalize().mul(this.dissolveBurstUniform).mul(this.worldScaleUniform);
       newVel.assign(mix(newVel, outward, dm));
 
       const containedPos = pos.add(newVel.mul(this.dtUniform)).toVar();
-      const containedWorld = containedPos.mul(this.worldScaleUniform);
       const sphereCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
-      const fromSphereCenter = containedWorld.sub(sphereCenter);
+      const fromSphereCenter = containedPos.sub(sphereCenter);
       const sphereDist = fromSphereCenter.length();
       const sphereRadius = this.fieldSphereRadiusUniform.max(0.01);
       const sphereNormal = fromSphereCenter.div(sphereDist.max(0.0001));
@@ -628,18 +807,17 @@ export class EnergySculptor implements EnergySink {
       const containActive = dm.lessThan(0.5);
       If(containActive.and(outsideT.greaterThan(0)), () => {
         const outwardSpeed = radialSpeed.max(0);
-        const inwardSpeed = outsideT.mul(0.38).div(this.worldScaleUniform.max(0.001));
+        const inwardSpeed = outsideT.mul(0.38);
         newVel.assign(newVel.sub(sphereNormal.mul(outwardSpeed.mul(outsideT))).sub(sphereNormal.mul(inwardSpeed)));
         containedPos.assign(pos.add(newVel.mul(this.dtUniform)));
       });
-      const finalWorld = containedPos.mul(this.worldScaleUniform);
-      const hardFromSphereCenter = finalWorld.sub(sphereCenter);
+      const hardFromSphereCenter = containedPos.sub(sphereCenter);
       const hardDist = hardFromSphereCenter.length();
       const hardRadius = sphereRadius.mul(1.18);
       const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
       If(containActive.and(hardDist.greaterThan(hardRadius)), () => {
         const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
-        containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)).div(this.worldScaleUniform.max(0.001)));
+        containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)));
         newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
       });
 
@@ -676,9 +854,9 @@ export class EnergySculptor implements EnergySink {
       depthWrite: false,
     });
 
-    // Position: attractor-space → world-space.
+    // Position: particles are stored as world-relative offsets from center.
     const localPos = this.positionsBuffer.toAttribute();
-    material.positionNode = localPos.mul(this.worldScaleUniform).add(this.centerUniform);
+    material.positionNode = localPos.add(this.centerUniform);
 
     const m = this.metaBuffer.toAttribute();
     const alpha = m.w;
@@ -701,9 +879,9 @@ export class EnergySculptor implements EnergySink {
     // direction. Length-zero velocities (just-spawned, frozen) fall back to
     // angle 0 — the speedRamp gate above already disables their stretch.
     const viewVel = cameraViewMatrix.mul(vec4(
-      vel.x.mul(this.worldScaleUniform),
-      vel.y.mul(this.worldScaleUniform),
-      vel.z.mul(this.worldScaleUniform),
+      vel.x,
+      vel.y,
+      vel.z,
       0,
     ));
     const angle = atan(viewVel.y, viewVel.x);
@@ -1026,7 +1204,7 @@ export class EnergySculptor implements EnergySink {
   private tickAttractorCrossfade(delta: number): void {
     if (this.crossfadeRemaining <= 0) return;
     this.crossfadeRemaining = Math.max(0, this.crossfadeRemaining - delta);
-    const dur = EnergySculptor.CROSSFADE_DURATION;
+    const dur = Math.max(this.crossfadeDuration, 0.001);
     const t = 1 - this.crossfadeRemaining / dur;
     const eased = t * t * (3 - 2 * t); // smoothstep
     this.crossfadeWeightUniform.value = eased;
@@ -1122,8 +1300,6 @@ export class EnergySculptor implements EnergySink {
   private fillSpawnQueue(): void {
     let cursor = 0;
     const lifeBase = Math.max(MIN_PARTICLE_LIFETIME, this.lifeMaxUniform.value);
-    const worldScale = this.worldScaleUniform.value || 1;
-    const invWorldScale = 1 / worldScale;
     const sphereRadius = this.fieldSphereRadiusUniform.value;
     const sphereCenterY = this.fieldSphereCenterYUniform.value;
     const sphereCenterWorldY = this.center.y + sphereCenterY;
@@ -1178,9 +1354,9 @@ export class EnergySculptor implements EnergySink {
         const spawnY = req.origin.y + sideY * launchA + liftY * launchB + dirY * forwardJitter;
         const spawnZ = req.origin.z + sideZ * launchA + liftZ * launchB + dirZ * forwardJitter;
         this.spawnPosArray[slot].set(
-          (spawnX - this.center.x) * invWorldScale,
-          (spawnY - this.center.y) * invWorldScale,
-          (spawnZ - this.center.z) * invWorldScale,
+          spawnX - this.center.x,
+          spawnY - this.center.y,
+          spawnZ - this.center.z,
         );
 
         // Initial velocity aims at the active attractor, not at a random point
@@ -1215,9 +1391,9 @@ export class EnergySculptor implements EnergySink {
         const lateralSpeed = seedSpeed * coneSpread * (0.35 + Math.random() * 0.65);
         const swirlSpeed = seedSpeed * coneSpread * (Math.random() - 0.5) * 0.18;
         this.spawnVelArray[slot].set(
-          (aimX * seedSpeed + sideX * lateralA * lateralSpeed + liftX * lateralB * lateralSpeed + sideX * swirlSpeed) * invWorldScale,
-          (aimY * seedSpeed + sideY * lateralA * lateralSpeed + liftY * lateralB * lateralSpeed + sideY * swirlSpeed) * invWorldScale,
-          (aimZ * seedSpeed + sideZ * lateralA * lateralSpeed + liftZ * lateralB * lateralSpeed + sideZ * swirlSpeed) * invWorldScale,
+          aimX * seedSpeed + sideX * lateralA * lateralSpeed + liftX * lateralB * lateralSpeed + sideX * swirlSpeed,
+          aimY * seedSpeed + sideY * lateralA * lateralSpeed + liftY * lateralB * lateralSpeed + sideY * swirlSpeed,
+          aimZ * seedSpeed + sideZ * lateralA * lateralSpeed + liftZ * lateralB * lateralSpeed + sideZ * swirlSpeed,
         );
 
         this.spawnColorArray[slot].set(req.color.r, req.color.g, req.color.b);
@@ -1230,6 +1406,10 @@ export class EnergySculptor implements EnergySink {
       }
     }
     this.pendingEmits.length = 0;
+    if (cursor > 0 && (this.affinityDebugParticleLifeMax <= 0 || this.affinityDebugParticleAge >= this.affinityDebugParticleLifeMax)) {
+      this.affinityDebugParticleAge = 0;
+      this.affinityDebugParticleLifeMax = lifeBase;
+    }
     this.spawnsThisFrame = cursor;
     this.spawnCountUniform.value = cursor;
     this.spawnCursorUniform.value = this.spawnCursorCpu;
@@ -1257,10 +1437,12 @@ export class EnergySculptor implements EnergySink {
     this.crossfadeWeightUniform.value = 0;
     this.fromPreset = preset;
     this.toPreset = preset;
+    this.transitionTarget = kind;
+    this.crossfadeDuration = EnergySculptor.CROSSFADE_DURATION;
     this.crossfadeRemaining = 0;
   }
 
-  private beginAttractorCrossfade(kind: AttractorKind): void {
+  private beginAttractorCrossfade(kind: AttractorKind, duration = EnergySculptor.CROSSFADE_DURATION): void {
     // Snapshot the currently-displayed preset (which may itself be mid-lerp)
     // so the next crossfade starts from where we visually are. The target's
     // index goes into attractorTargetUniform; the shader then evaluates both
@@ -1272,13 +1454,21 @@ export class EnergySculptor implements EnergySink {
     };
     this.fromPreset = captured;
     this.toPreset = ATTRACTOR_PRESETS[kind];
+    this.transitionTarget = kind;
     this.attractorSelectUniform.value = EnergySculptor.ATTRACTOR_INDEX[captured.kind];
     this.attractorTargetUniform.value = EnergySculptor.ATTRACTOR_INDEX[kind];
     this.crossfadeWeightUniform.value = 0;
-    this.crossfadeRemaining = EnergySculptor.CROSSFADE_DURATION;
+    this.crossfadeDuration = Math.max(duration, 0.001);
+    this.crossfadeRemaining = this.crossfadeDuration;
+    this.updateAttractorDebugMessage();
   }
 }
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(1, value));
 }
