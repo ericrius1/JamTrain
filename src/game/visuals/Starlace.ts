@@ -1,8 +1,10 @@
 import * as THREE from 'three/webgpu';
 import {
+  float,
   instancedBufferAttribute,
   normalView,
   screenUV,
+  vec3,
   viewportMipTexture,
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
@@ -171,8 +173,6 @@ export class Starlace implements PlayerVisual {
   private nodeMesh?: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicNodeMaterial>;
   private nodeMaterial?: THREE.MeshBasicNodeMaterial;
   private nodeGemParams?: THREE.InstancedBufferAttribute;
-  private nodeGlowMesh?: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
-  private nodeGlowMaterial?: THREE.MeshBasicMaterial;
   private sparkMesh: THREE.InstancedMesh;
   private sparkMaterial: THREE.MeshBasicMaterial;
 
@@ -603,7 +603,6 @@ export class Starlace implements PlayerVisual {
     this.pulseLineMaterial.dispose();
     this.nodeGeometry?.dispose();
     this.nodeMaterial?.dispose();
-    this.nodeGlowMaterial?.dispose();
     this.sparkMesh.geometry.dispose();
     this.sparkMaterial.dispose();
     this.mesh.removeFromParent();
@@ -716,7 +715,7 @@ export class Starlace implements PlayerVisual {
   }
 
   private buildNodeMeshes(): void {
-    const gemParams = new THREE.InstancedBufferAttribute(new Float32Array(this.nodes.length * 3), 3);
+    const gemParams = new THREE.InstancedBufferAttribute(new Float32Array(this.nodes.length * 4), 4);
     for (let i = 0; i < this.nodes.length; i += 1) {
       const node = this.nodes[i];
       const lateral = clamp(node.u + 0.5, 0, 1);
@@ -726,14 +725,18 @@ export class Starlace implements PlayerVisual {
       const refraction = 0.056 + lateral * 0.024 + scatter * 0.034;
       const frost = 2.20 + vertical * 0.52 + depth * 0.30 + scatter * 0.58;
       const backdropMix = 0.54 + scatter * 0.10 + (1 - vertical) * 0.06;
-      gemParams.setXYZ(i, refraction, frost, clamp(backdropMix, 0.50, 0.70));
+      gemParams.setXYZW(i, refraction, frost, clamp(backdropMix, 0.50, 0.70), 0.12);
     }
-    gemParams.setUsage(THREE.StaticDrawUsage);
+    gemParams.setUsage(THREE.DynamicDrawUsage);
     this.nodeGemParams = gemParams;
 
-    const gemParamsNode = instancedBufferAttribute<'vec3'>(gemParams, 'vec3');
-    const refractedUv = screenUV.add(normalView.xy.mul(gemParamsNode.x));
-    const frostedBackdrop = viewportMipTexture(refractedUv, gemParamsNode.y);
+    const gemParamsNode = instancedBufferAttribute<'vec4'>(gemParams, 'vec4');
+    const hitGlow = gemParamsNode.w;
+    const refractStrength = gemParamsNode.x.add(hitGlow.mul(float(0.018)));
+    const refractedUv = screenUV.add(normalView.xy.mul(refractStrength));
+    const frostedBackdrop = viewportMipTexture(refractedUv, gemParamsNode.y.add(hitGlow.mul(float(0.36))));
+    const faceCore = normalView.z.mul(normalView.z).pow(float(1.15));
+    const innerGlow = faceCore.mul(float(0.28)).add(hitGlow.mul(float(0.42))).add(faceCore.mul(hitGlow).mul(float(0.56)));
     const material = new THREE.MeshBasicNodeMaterial({
       color: 0xf0f7ff,
       transparent: true,
@@ -743,8 +746,9 @@ export class Starlace implements PlayerVisual {
       vertexColors: true,
       side: THREE.FrontSide,
     });
+    material.colorNode = vec3(float(0.90).add(innerGlow));
     material.backdropNode = frostedBackdrop;
-    material.backdropAlphaNode = gemParamsNode.z;
+    material.backdropAlphaNode = gemParamsNode.z.sub(hitGlow.mul(float(0.08)));
     material.forceSinglePass = true;
 
     this.nodeGeometry = new THREE.IcosahedronGeometry(1, 0);
@@ -755,26 +759,7 @@ export class Starlace implements PlayerVisual {
     this.nodeMesh.frustumCulled = false;
     this.nodeMesh.renderOrder = 20;
     this.nodeMaterial = material;
-
-    const glowMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.34,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      depthTest: true,
-      vertexColors: true,
-    });
-    glowMaterial.toneMapped = false;
-    glowMaterial.forceSinglePass = true;
-    this.nodeGlowMesh = new THREE.InstancedMesh(this.nodeGeometry, glowMaterial, this.nodes.length);
-    this.nodeGlowMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    this.nodeGlowMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.nodes.length * 3), 3);
-    this.nodeGlowMesh.frustumCulled = false;
-    this.nodeGlowMesh.renderOrder = 21;
-    this.nodeGlowMaterial = glowMaterial;
-
-    this.mesh.add(this.nodeMesh, this.nodeGlowMesh);
+    this.mesh.add(this.nodeMesh);
   }
 
   private resolveAxes(delta: number): void {
@@ -891,8 +876,8 @@ export class Starlace implements PlayerVisual {
   private writeNodes(): void {
     const mesh = this.nodeMesh;
     const material = this.nodeMaterial;
-    const glowMesh = this.nodeGlowMesh;
-    const glowMaterial = this.nodeGlowMaterial;
+    const gemParams = this.nodeGemParams;
+    const gemParamArray = gemParams?.array as Float32Array | undefined;
     if (!mesh || !material) return;
 
     for (let i = 0; i < this.nodes.length; i += 1) {
@@ -903,7 +888,7 @@ export class Starlace implements PlayerVisual {
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
       const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.10) * reveal;
       const drawSize = Math.max(size, 0.0001);
-      const hitGlow = Math.pow(clamp(node.pulse + pulse * 0.22, 0, 1), 1.25);
+      const materialGlow = reveal * clamp(0.10 + twinkle * 0.05 + pulse * 0.12 + Math.pow(node.pulse, 1.15) * 0.62, 0, 0.88);
 
       _dummy.position.copy(node.world);
       _dummy.rotation.set(
@@ -917,26 +902,13 @@ export class Starlace implements PlayerVisual {
 
       this.nodeGemColor(node, pulse, twinkle, _colorA);
       mesh.setColorAt(i, _colorA);
-
-      if (glowMesh) {
-        _dummy.scale.setScalar(drawSize * (0.44 + twinkle * 0.06 + hitGlow * 0.34));
-        _dummy.updateMatrix();
-        glowMesh.setMatrixAt(i, _dummy.matrix);
-        this.nodeGlowColor(node, pulse, twinkle, _colorB);
-        glowMesh.setColorAt(i, _colorB);
-      }
+      if (gemParamArray) gemParamArray[i * 4 + 3] = materialGlow;
     }
 
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (gemParams) gemParams.needsUpdate = true;
     material.opacity = clamp(0.80 + this.maxPulse * 0.06 + this.smoothedPulse * 0.04, 0.80, 0.90);
-    if (glowMesh) {
-      glowMesh.instanceMatrix.needsUpdate = true;
-      if (glowMesh.instanceColor) glowMesh.instanceColor.needsUpdate = true;
-    }
-    if (glowMaterial) {
-      glowMaterial.opacity = clamp(0.30 + this.maxPulse * 0.16 + this.smoothedPulse * 0.08, 0.30, 0.58);
-    }
   }
 
   private writeSparks(): void {
@@ -1473,7 +1445,6 @@ export class Starlace implements PlayerVisual {
     this.lineMaterial.color.setRGB(0.98, 0.97, 0.94);
     this.pulseLineMaterial.color.setRGB(1.00, 0.96, 0.92);
     this.nodeMaterial?.color.setRGB(0.94, 0.97, 1.00);
-    this.nodeGlowMaterial?.color.setRGB(1.00, 0.94, 0.86);
     this.sparkMaterial.color.setRGB(1.00, 0.97, 0.92);
   }
 
@@ -1530,18 +1501,6 @@ export class Starlace implements PlayerVisual {
     target.r = Math.min(target.r, 1.36);
     target.g = Math.min(target.g, 1.28);
     target.b = Math.min(target.b, 1.42);
-    return target;
-  }
-
-  private nodeGlowColor(node: StarNode, pulse: number, twinkle: number, target: THREE.Color): THREE.Color {
-    this.nodeGemColor(node, clamp(pulse + 0.16, 0, 1), twinkle, target);
-    const flash = Math.pow(pulse, 1.35);
-    target
-      .lerp(STARLACE_FROST_WHITE, 0.20 + flash * 0.10)
-      .multiplyScalar(0.92 + twinkle * 0.18 + flash * 1.45);
-    target.r = Math.min(target.r, 2.45);
-    target.g = Math.min(target.g, 2.20);
-    target.b = Math.min(target.b, 2.60);
     return target;
   }
 

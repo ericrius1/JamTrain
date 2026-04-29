@@ -15,7 +15,7 @@ import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
-import { isCreatureId } from './creatures';
+import { isCreatureId, type CreatureId } from './creatures';
 import { attachMousePosePane, makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
@@ -146,6 +146,7 @@ export class Game {
     remote: {},
   };
   private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'starlace' };
+  private playerCreatures: Record<PlayerSlot, CreatureId> = { local: 'lion', remote: 'robot' };
   private pendingPartnerInstrument: InstrumentId | null = null;
   private roundDirector!: RoundDirector;
   private sculptor!: EnergySculptor;
@@ -216,6 +217,8 @@ export class Game {
     // values and swap the visuals before the user does anything.
     this.playerInstruments.local = normalizeInstrumentId(this.multiplayer.getLocalInstrument());
     this.playerInstruments.remote = normalizeInstrumentId(this.multiplayer.getPartnerInstrument());
+    this.playerCreatures.local = this.normalizeCreature(this.multiplayer.getLocalCreature(), 'lion');
+    this.playerCreatures.remote = this.normalizeCreature(this.multiplayer.getPartnerCreature(), 'robot');
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
     keyDirector.setRoomSeed(this.roomSeed);
@@ -889,6 +892,7 @@ export class Game {
     } else {
       visual = new Drum(this.scene, paneDock, `drum-${player}`, {
         palette: player,
+        creature: this.playerCreatures[player],
         title: `Piano Pads (${player === 'local' ? 'Local' : 'Partner'})`,
         camera: player === 'local' ? this.camera : undefined,
         canvas: player === 'local' ? this.canvas : undefined,
@@ -1075,13 +1079,21 @@ export class Game {
     this.sculptor?.setArchetype(pickArchetype(localKind, remoteKind));
   }
 
+  private normalizeCreature(value: string, fallback: CreatureId): CreatureId {
+    return isCreatureId(value) ? value : fallback;
+  }
+
   setPlayerCreature(player: PlayerSlot, id: string): void {
     if (!isCreatureId(id)) {
       console.warn('[game] setPlayerCreature: invalid id', id);
       return;
     }
+    this.playerCreatures[player] = id;
     const rig = player === 'local' ? this.localRig : this.remoteRig;
     rig.setCreature(id);
+    for (const visual of Object.values(this.playerVisualCache[player])) {
+      visual?.setCreature?.(id);
+    }
   }
 
   private setupCabinPane(): void {

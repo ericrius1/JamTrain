@@ -372,8 +372,7 @@ export class Drum implements PlayerVisual {
   private fixedAnchor?: THREE.Vector3;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
   private palette: DrumPalette;
-  private static SPARK_COLOR_LOCAL = { r: 0.34, g: 0.88, b: 0.94 };
-  private static SPARK_COLOR_REMOTE = { r: 0.48, g: 0.84, b: 0.98 };
+  private creature: CreatureId;
   private keyDownListener?: (e: KeyboardEvent) => void;
   private keyUpListener?: (e: KeyboardEvent) => void;
   private keyBlurListener?: () => void;
@@ -392,6 +391,7 @@ export class Drum implements PlayerVisual {
     this.fixedAnchor = opts.anchor?.clone();
     this.sculptor = opts.sculptor;
     this.palette = opts.palette ?? 'local';
+    this.creature = opts.creature ?? (this.palette === 'remote' ? 'robot' : 'lion');
 
     this.mesh = new THREE.Group();
     this.mesh.name = `piano-pads-${opts.palette ?? 'local'}`;
@@ -401,7 +401,7 @@ export class Drum implements PlayerVisual {
       this.hzTable = getDrumHz(current);
     });
 
-    this.uniforms = createOrbUniforms(this.params, this.palette);
+    this.uniforms = createOrbUniforms(this.params);
     for (let r = 0; r < MAX_RIPPLES; r += 1) {
       this.rippleSources.push(new THREE.Vector4(0, 0, 0, 0));
       this.rippleStarts.push(-1);
@@ -498,6 +498,8 @@ export class Drum implements PlayerVisual {
         uniforms: orbUniforms,
       });
     }
+
+    this.applyCreaturePalette();
   }
 
   setVisible(visible: boolean): void {
@@ -551,6 +553,12 @@ export class Drum implements PlayerVisual {
 
   isInteractive(): boolean {
     return this.revealedFully && !this.revealActive;
+  }
+
+  setCreature(id: CreatureId): void {
+    if (id === this.creature) return;
+    this.creature = id;
+    this.applyCreaturePalette();
   }
 
   getPerformanceTargets(targets = this.performanceTargets): readonly THREE.Vector3[] {
@@ -802,6 +810,22 @@ export class Drum implements PlayerVisual {
     for (let i = 0; i < this.orbs.length; i += 1) {
       this.orbs[i].offset.copy(offsets[i]);
       this.orbs[i].uniforms.offset.value.copy(offsets[i]);
+    }
+    this.applyCreaturePalette();
+  }
+
+  private applyCreaturePalette(): void {
+    if (this.orbs.length === 0) return;
+    let minY = Infinity;
+    let maxY = -Infinity;
+    for (const orb of this.orbs) {
+      minY = Math.min(minY, orb.offset.y);
+      maxY = Math.max(maxY, orb.offset.y);
+    }
+    const yRange = Math.max(0.0001, maxY - minY);
+    for (let i = 0; i < this.orbs.length; i += 1) {
+      const orb = this.orbs[i];
+      applyOrbRobeGradient(this.creature, (orb.offset.y - minY) / yRange, i, orb.uniforms);
     }
   }
 
@@ -1180,7 +1204,7 @@ export class Drum implements PlayerVisual {
         envelope: this.currentEnvelope(),
       });
     }
-    this.emitSparks(worldStrike, velocity);
+    this.emitSparks(orbIndex, worldStrike, velocity);
   }
 
   private emitGesture(active: boolean, localPoint: THREE.Vector3, depth: number, radius: number, speed: number): void {
@@ -1321,20 +1345,22 @@ export class Drum implements PlayerVisual {
         envelope: this.currentEnvelope(),
       });
     }
-    this.emitSparks(worldStrike, velocity);
+    this.emitSparks(orbIndex, worldStrike, velocity);
   }
 
-  private emitSparks(worldPosition: THREE.Vector3, velocity: number): void {
+  private emitSparks(orbIndex: number, worldPosition: THREE.Vector3, velocity: number): void {
     if (!this.sculptor) return;
     const sink = this.sculptor;
     const dir = _sparkDir.copy(sink.center).sub(worldPosition);
     if (dir.lengthSq() < 1e-4) dir.set(0, 0.1, 0);
     dir.normalize();
+    const spark = this.orbs[orbIndex]?.uniforms.sparkColor;
+    if (!spark) return;
     sink.emit({
       kind: 'drum',
       origin: worldPosition.clone(),
       direction: dir.clone(),
-      color: this.palette === 'local' ? Drum.SPARK_COLOR_LOCAL : Drum.SPARK_COLOR_REMOTE,
+      color: { r: spark.r, g: spark.g, b: spark.b },
       count: Math.round(40 + velocity * 40),
       speed: 0.9 + velocity * 1.4,
     });
@@ -1449,9 +1475,9 @@ export class Drum implements PlayerVisual {
       // that cast-metal read.
       const latShade = float(1).sub(float(1).sub(positionLocal.y.abs()).mul(0.18));
 
-      // Hit-tint lerp: base orb color shifts toward hitTint while the per-orb
-      // pulse decays. So a struck orb visibly glows green and fades back.
-      const tintBase = mix(u.baseColor, u.hitTint, perOrb.pulse.mul(u.hitTintAmount).clamp(0, 1)).toVar('orbTintBase');
+      // Hit lift stays in the creature robe family instead of introducing a
+      // fixed green flash, so struck orbs and their particles keep identity.
+      const tintBase = mix(perOrb.baseColor, perOrb.hotColor, perOrb.pulse.mul(u.hitTintAmount).clamp(0, 1)).toVar('orbTintBase');
 
       const lit = mix(
         tintBase.mul(0.45),
@@ -1459,12 +1485,12 @@ export class Drum implements PlayerVisual {
         smoothstep(float(0), float(1), ndl),
       ).mul(latShade).toVar('lit');
 
-      // Fresnel rim — bright cyan halo at the silhouette.
+      // Fresnel rim — a brighter robe-family halo at the silhouette.
       const rim = pow(fres, float(2.2)).mul(0.85);
-      lit.addAssign(u.rimColor.mul(rim));
+      lit.addAssign(perOrb.rimColor.mul(rim));
       const restGlow = cos(positionLocal.y.mul(6.5).add(positionLocal.x.mul(2.2)).add(perOrb.elapsed.mul(0.65)))
         .mul(0.5).add(0.5);
-      lit.addAssign(u.rimColor.mul(float(0.08).add(restGlow.mul(0.045))));
+      lit.addAssign(perOrb.rimColor.mul(float(0.08).add(restGlow.mul(0.045))));
 
       const gestureDelta = samplePos.sub(u.gesture.xyz);
       const gestureDist = gestureDelta.length().div(u.orbRadius.max(0.001));
@@ -1476,8 +1502,8 @@ export class Drum implements PlayerVisual {
         .mul(float(1).sub(smoothstep(float(0.05), float(1.25), gestureDist)))
         .mul(u.gesture.w)
         .mul(float(0.18).add(u.gestureDepth.mul(0.36)));
-      lit.addAssign(u.rimColor.mul(gestureAura.mul(0.50).add(gestureFilament.mul(0.32))));
-      lit.addAssign(u.hotColor.mul(gestureAura.mul(0.38).add(gestureFilament.mul(0.54))));
+      lit.addAssign(perOrb.rimColor.mul(gestureAura.mul(0.50).add(gestureFilament.mul(0.32))));
+      lit.addAssign(perOrb.hotColor.mul(gestureAura.mul(0.38).add(gestureFilament.mul(0.54))));
 
       const waveEnergy = h.abs().clamp(0, 1.4);
       const crest = smoothstep(float(0.08), float(0.54), h);
@@ -1488,19 +1514,19 @@ export class Drum implements PlayerVisual {
       const spec = pow(n.dot(halfDir).max(0), float(38)).mul(visibleWave).mul(float(0.55).add(u.rippleGlow.mul(0.28)));
       const edgeGlint = smoothstep(float(0.14), float(0.82), slope).mul(visibleWave).mul(0.22);
 
-      lit.addAssign(u.hotColor.mul(crest.mul(u.rippleGlow).mul(0.52)));
-      lit.addAssign(u.rimColor.mul(visibleWave.mul(0.13).add(edgeGlint)));
-      lit.addAssign(u.hotColor.mul(spec));
+      lit.addAssign(perOrb.hotColor.mul(crest.mul(u.rippleGlow).mul(0.52)));
+      lit.addAssign(perOrb.rimColor.mul(visibleWave.mul(0.13).add(edgeGlint)));
+      lit.addAssign(perOrb.hotColor.mul(spec));
       lit.assign(lit.mul(float(1).sub(trough.mul(0.30))));
 
       // Hit flash — subtle global lift on each orb at the moment of contact.
       const flash = perOrb.pulse.mul(float(0.35)).mul(float(1).sub(fres.mul(0.6)));
-      lit.addAssign(u.rimColor.mul(flash));
+      lit.addAssign(perOrb.rimColor.mul(flash));
 
       // Subtle iridescent shimmer — a slow cosine band against view-aligned
       // latitude — so the orbs don't read as flat at rest.
       const shimmer = cos(positionLocal.y.mul(8).add(perOrb.elapsed.mul(0.6))).mul(0.06).mul(fres);
-      lit.addAssign(u.hotColor.mul(shimmer));
+      lit.addAssign(perOrb.hotColor.mul(shimmer));
 
       return lit;
     })();
