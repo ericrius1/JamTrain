@@ -69,7 +69,7 @@ const DEFAULT_ATTRACTOR_HOLD_SECONDS = 20;
 const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 
 export const SCULPTOR_DEFS = {
-  particleCount:      { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
+  particleCount:      { default: 100000, min: 4096, max: 2000000, step: 256, label: 'particle pool', hidden: false },
   maxSpawnsPerFrame:  { default: DEFAULT_MAX_SPAWNS_PER_FRAME, min: MIN_CONFIGURABLE_SPAWNS_PER_FRAME, max: MAX_CONFIGURABLE_SPAWNS_PER_FRAME, step: 16, folder: 'Particles', label: 'stream cap / frame' },
   particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
@@ -142,7 +142,7 @@ export class EnergySculptor implements EnergySink {
   private positionsBuffer!: THREE.StorageBufferNode<'vec3'>;
   private velocitiesBuffer!: THREE.StorageBufferNode<'vec3'>;
   private colorsBuffer!: THREE.StorageBufferNode<'vec3'>;
-  // x = age (seconds), y = lifeMax (seconds), z = smoothedAccel, w = alphaLife (0..1)
+  // x = age (seconds), y = lifeMax (seconds), z = smoothedAccel, w = reserved
   private metaBuffer!: THREE.StorageBufferNode<'vec4'>;
 
   // Spawn queue uniforms (uniformArray mutated on CPU each frame, auto-uploaded).
@@ -666,8 +666,8 @@ export class EnergySculptor implements EnergySink {
   }
 
   private allocateBuffers(): void {
-    // All particles start zeroed → alphaLife=0, which the integrate pass
-    // treats as dead, so the freshly-allocated pool draws nothing.
+    // All particles start zeroed. lifeMax=0 means dead, so the freshly
+    // allocated pool draws nothing.
     this.positionsBuffer = instancedArray(this.count, 'vec3');
     this.velocitiesBuffer = instancedArray(this.count, 'vec3');
     this.colorsBuffer = instancedArray(this.count, 'vec3');
@@ -717,8 +717,8 @@ export class EnergySculptor implements EnergySink {
         positions.element(slot).assign(spawnPos);
         velocities.element(slot).assign(spawnVel);
         colors.element(slot).assign(spawnColor);
-        // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
-        meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
+        // meta = (age=0, lifeMax, smoothedAccel=0, reserved=0)
+        meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 0));
       };
       Loop(spawnSearchSteps, ({ i: scan }) => {
         const slot = spawnCursorU
@@ -810,7 +810,6 @@ export class EnergySculptor implements EnergySink {
 
       // Age fraction (0 born -> 1 dead).
       const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
-      const fadeStart = this.opacityFadeStartUniform.clamp(0, 1);
 
       // Field affinity stays full until the configured normalized start, then
       // reaches the configured final affinity by the configured normalized end.
@@ -819,20 +818,30 @@ export class EnergySculptor implements EnergySink {
       const falloffRaw = lifeT.sub(falloffStart).div(falloffFinalAt.sub(falloffStart).max(0.0001)).clamp(0, 1);
       const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
       const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
-      const freezeWhenSettled = this.finalFieldEffectUniform.lessThanEqual(0.0001).and(falloffT.greaterThanEqual(0.999));
+      // Below ~2% field influence, recoupling to a new attractor reads as a bug,
+      // not as intentional drift. Treat it as settled so field transitions cannot
+      // sweep old particles back into motion.
+      const freezeWhenSettled = fieldEffect.lessThanEqual(0.02);
+      const fieldCoupled = fieldEffect.greaterThan(0.02);
 
       // The field is the only sculpting force. Treat it as a velocity field
       // with light inertia instead of a raw acceleration so Thomas particles
       // trace the attractor lobes rather than ballistically filling the bounds.
-      // `fieldEffect` scales the target velocity itself, so an affinity of 0
-      // settles motion to a full stop while 0.2 keeps exactly 20% field speed.
+      // Affinity controls both field speed and coupling. Scaling only the
+      // desired velocity still allowed low-affinity particles to re-follow a
+      // transitioning field with full responsiveness.
       const desiredVel = flow
         .mul(this.flowSpeedUniform)
         .mul(this.worldScaleUniform)
         .mul(this.fieldStrengthUniform)
         .mul(fieldEffect);
-      const fieldFollow = this.dtUniform.mul(6.5).clamp(0, 1);
+      const fieldFollow = this.dtUniform.mul(6.5).mul(fieldEffect).clamp(0, 1);
       const newVel = mix(vel, desiredVel, fieldFollow).toVar();
+      const settleDrag = this.dtUniform
+        .mul(4.0)
+        .mul(float(1).sub(fieldEffect))
+        .clamp(0, 1);
+      newVel.assign(mix(newVel, vec3(0), settleDrag));
 
       // Dissolve burst: blow particles outward away from origin and shorten life.
       const dm = this.dissolveModeUniform;
@@ -853,9 +862,9 @@ export class EnergySculptor implements EnergySink {
       // softly remove outward radial velocity and add a small inward drift;
       // only well beyond the guardrail do we clamp as an escape hatch.
       const containActive = dm.lessThan(0.5);
-      If(containActive.and(outsideT.greaterThan(0)), () => {
+      If(containActive.and(fieldCoupled).and(outsideT.greaterThan(0)), () => {
         const outwardSpeed = radialSpeed.max(0);
-        const inwardSpeed = outsideT.mul(0.38);
+        const inwardSpeed = outsideT.mul(0.38).mul(fieldEffect);
         newVel.assign(newVel.sub(sphereNormal.mul(outwardSpeed.mul(outsideT))).sub(sphereNormal.mul(inwardSpeed)));
         containedPos.assign(pos.add(newVel.mul(this.dtUniform)));
       });
@@ -863,31 +872,23 @@ export class EnergySculptor implements EnergySink {
       const hardDist = hardFromSphereCenter.length();
       const hardRadius = sphereRadius.mul(1.18);
       const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
-      If(containActive.and(hardDist.greaterThan(hardRadius)), () => {
+      If(containActive.and(fieldCoupled).and(hardDist.greaterThan(hardRadius)), () => {
         const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
         containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)));
         newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
       });
 
-      // A final affinity of zero means "no field or guardrail influence" once
-      // the settling window is complete. Apply the hard stop after containment
-      // so the bounds guardrail cannot keep pulling settled particles inward.
+      // Settled particles are independent of field and guardrail changes.
       If(containActive.and(freezeWhenSettled), () => {
         containedPos.assign(pos);
         newVel.assign(vec3(0));
       });
 
-      // Age + alpha.
+      // Age update. Particle death is only age >= lifeMax; field affinity never
+      // changes lifeMax or the aging rate.
       const ageStep = this.ageDtUniform.mul(float(1).add(dm.mul(2.0)));
       const newAge = m.x.add(ageStep);
       const lifeMax = m.y;
-      const newLifeT = newAge.div(lifeMax.max(0.0001)).clamp(0, 1);
-      // Short fade-in so emit-bursts read as emanating from the source node,
-      // not blooming into existence already mid-flight. Fade-out is opacity-only
-      // from the configured normalized lifetime point to death.
-      const born = newAge.div(0.04).clamp(0, 1);
-      const fadeOut = float(1).sub(newLifeT).div(float(1).sub(fadeStart).max(0.0001)).clamp(0, 1);
-      const alphaLife = born.mul(fadeOut);
 
       // Signed acceleration along the path, low-passed across frames so the
       // visual stretch doesn't strobe on every integration tick.
@@ -897,7 +898,7 @@ export class EnergySculptor implements EnergySink {
 
       positions.element(i).assign(containedPos);
       velocities.element(i).assign(newVel);
-      meta.element(i).assign(vec4(newAge, lifeMax, smoothedAccel, alphaLife));
+      meta.element(i).assign(vec4(newAge, lifeMax, smoothedAccel, 0));
     });
     this.integrateCompute = integrateFn().compute(this.count);
   }
@@ -915,7 +916,13 @@ export class EnergySculptor implements EnergySink {
     material.positionNode = localPos.add(this.centerUniform);
 
     const m = this.metaBuffer.toAttribute();
-    const alpha = m.w;
+    const age = m.x;
+    const lifeMax = m.y;
+    const lifeT = age.div(lifeMax.max(0.0001)).clamp(0, 1);
+    const fadeStart = this.opacityFadeStartUniform.clamp(0, 1);
+    const born = age.div(0.04).clamp(0, 1);
+    const fadeOut = float(1).sub(lifeT).div(float(1).sub(fadeStart).max(0.0001)).clamp(0, 1);
+    const alpha = born.mul(fadeOut);
     const accel = m.z;
     const vel = this.velocitiesBuffer.toAttribute();
     const speed = vel.length();
@@ -947,19 +954,15 @@ export class EnergySculptor implements EnergySink {
     const sizeBase = this.particleSizeUniform;
     material.scaleNode = vec2(sizeBase.mul(stretchSafe), sizeBase.div(stretchSafe));
 
-    // Color: base color brightened only by motion. Multiplying by alphaLife
-    // keeps dead particles invisible under additive blending.
+    // Color: base color brightened only by motion. Render alpha is derived here
+    // from age/lifeMax, so field affinity cannot affect opacity or death time.
     const baseColor = this.colorsBuffer.toAttribute();
     const speedTerm = speed.mul(0.05).clamp(0, 1).mul(this.speedGlowUniform);
     const glow = float(0.55).add(speedTerm);
-    const lit = baseColor.mul(glow).mul(alpha);
-    material.colorNode = lit;
-
-    // Discard quad corners so the underlying PlaneGeometry reads as a circle.
-    // Soft edge over a few percent of the radius gives it a glow falloff that
-    // plays nicely with additive blending.
     const r = uv().sub(0.5).length();
     const disc = smoothstep(0.5, 0.42, r);
+    const lit = baseColor.mul(glow).mul(alpha);
+    material.colorNode = lit;
     material.opacityNode = alpha.mul(this.particleOpacityUniform).mul(disc);
 
     this.material = material;
