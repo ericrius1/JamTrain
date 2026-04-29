@@ -120,7 +120,7 @@ function pickRandomAvailable(ctx: any, roomId: string, pool: string[], field: 'c
   }
   const available = pool.filter(c => !taken.has(c));
   const choices = available.length > 0 ? available : pool;
-  return choices[Math.floor(Math.random() * choices.length)];
+  return choices[ctx.random.integerInRange(0, choices.length - 1)];
 }
 
 export const request_seat = spacetimedb.reducer(

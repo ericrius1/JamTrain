@@ -1,4 +1,4 @@
-export const DRUM_DEFAULT_BASE_ROW = 4;
+export const DRUM_DEFAULT_BASE_ROW = 3;
 
 // Covers the current TweakPaint max of base row 8: 8 + 7 + ... + 1 = 36 orbs.
 export const DRUM_KEY_RANGE = [

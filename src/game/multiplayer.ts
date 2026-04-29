@@ -58,6 +58,7 @@ export class MultiplayerClient {
   private partnerCreatureListeners = new Set<CreatureListener>();
   private subscriptionApplied = false;
   private roomId: string;
+  private lastEmittedRoomId: string | null = null;
   private displayName: string;
   // Empty string when the user landed without a URL room — signals the
   // server to auto-pair instead of creating a fresh empty room with our
@@ -404,7 +405,7 @@ export class MultiplayerClient {
         // Pass 1: figure out which room the server actually placed us in.
         for (const row of conn.db.player.iter()) {
           if (row.identity.toHexString() === this.localId) {
-            this.setRoomId(row.roomId);
+            this.setRoomId(row.roomId, { emitIfSame: true });
           }
         }
         // Pass 2: track who's already in the cabin (silent — no toasts;
@@ -536,7 +537,7 @@ export class MultiplayerClient {
 
   private acceptOwnPlayer(row: Player): void {
     if (row.identity.toHexString() !== this.localId) return;
-    this.setRoomId(row.roomId);
+    this.setRoomId(row.roomId, { emitIfSame: true });
     this.setLocalSeat(row.seatIndex);
     this.acceptServerLocalInstrument(row.instrument || '');
     this.acceptServerLocalCreature(row.creature || '');
@@ -551,13 +552,19 @@ export class MultiplayerClient {
     for (const listener of this.seatListeners) listener(local, partner);
   }
 
-  private setRoomId(nextRoom: string): void {
+  private setRoomId(nextRoom: string, opts: { emitIfSame?: boolean } = {}): void {
     const sanitized = sanitizeRoomName(nextRoom);
-    if (!sanitized || sanitized === this.roomId) return;
-    this.roomId = sanitized;
-    // After moving rooms, recompute who's already here so we don't toast
-    // them as if they just boarded.
-    this.rebuildKnownPlayers();
+    if (!sanitized) return;
+    const changed = sanitized !== this.roomId;
+    if (changed) {
+      this.roomId = sanitized;
+      // After moving rooms, recompute who's already here so we don't toast
+      // them as if they just boarded.
+      this.rebuildKnownPlayers();
+    }
+    const shouldEmit = changed || (opts.emitIfSame === true && this.lastEmittedRoomId !== sanitized);
+    if (!shouldEmit) return;
+    this.lastEmittedRoomId = sanitized;
     for (const listener of this.roomListeners) listener(this.roomId);
   }
 
