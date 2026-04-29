@@ -17,7 +17,10 @@ import { voiceStateZero } from './instruments';
 
 export const HAND_SYNTH_DEFS = {
   enabled:       { type: 'boolean', default: true,  label: 'enabled' },
-  volumeDb:      { default: -18,   min: -40, max: 6,    step: 0.5,  label: 'volume dB' },
+  // Driven by the mixer panel's persisted avPrefs.musicVolume (see main.ts).
+  // Persisting this separately lets the dB slider drift below the slider on
+  // reload, leaving the synth muted while the slider reads healthy.
+  volumeDb:      { default: -18,   min: -40, max: 6,    step: 0.5,  label: 'volume dB', persisted: false },
   filterMinHz:   { default: 260,   min: 80,  max: 2000, step: 10,   label: 'filter min Hz' },
   filterMaxHz:   { default: 6400,  min: 800, max: 9000, step: 50,   label: 'filter max Hz' },
   filterQ:       { default: 1.2,   min: 0.4, max: 8,    step: 0.1,  label: 'filter Q' },
@@ -1088,6 +1091,9 @@ export class HandSynthEngine {
         }
         orb.gestureActive = true;
       } else if (note !== orb.gestureNote) {
+        // Only retune on actual note change. Calling setNote every frame
+        // saturates the AudioParam event queue and eventually silences the
+        // voice — happens after long sessions of slow hover.
         try {
           orb.auraSynth.setNote(note);
           orb.subSynth.setNote(subNote);
@@ -1095,12 +1101,6 @@ export class HandSynthEngine {
         } catch (err) {
           console.warn('[handSynth] orb gesture retune failed', err);
         }
-      } else {
-        try {
-          orb.auraSynth.setNote(note);
-          orb.subSynth.setNote(subNote);
-          orb.shimmerSynth.setNote(shimmerNote);
-        } catch { /* best-effort continuous retune */ }
       }
 
       const fineBend = gesture.x * 8 + gesture.z * 4 + speed * 6;

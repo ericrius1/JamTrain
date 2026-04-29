@@ -6,7 +6,9 @@ import { clamp, distance } from './math';
 import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Data } from './types';
 
 export const AUDIO_DEFS = {
-  masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master' },
+  // Driven by the mixer panel's persisted avPrefs.backingVolume (see main.ts).
+  // Persisting separately lets the dev slider diverge from the mixer on reload.
+  masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master', persisted: false },
   chordCycleSeconds:  { default: 24,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
   attackSeconds:      { default: 3.2,  min: 0.2,  max: 8,    step: 0.1,  label: 'attack sec' },
   releaseSeconds:     { default: 7.5,  min: 1,    max: 14,   step: 0.1,  label: 'release sec' },
@@ -296,19 +298,26 @@ export class AudioEngine {
     const HAT    = [0.22, 0.10, 0.20, 0.10, 0.18, 0.10, 0.22, 0.10, 0.20, 0.10, 0.20, 0.12, 0.18, 0.10, 0.22, 0.16];
 
     this.drumSeq = new Tone.Sequence((time: number, step: number) => {
-      const kv = KICK[step];
-      const sv = SNARE[step];
-      const hv = HAT[step];
-      if (kv) {
-        this.kick?.triggerAttackRelease('C2', '8n', time, kv);
-        this.kickAt = this.elapsed;
-      }
-      if (sv) {
-        this.snare?.triggerAttackRelease('16n', time, sv);
-        this.snareAt = this.elapsed;
-      }
-      if (hv) {
-        this.hihat?.triggerAttackRelease('32n', time, hv);
+      // Wrap the body — a thrown trigger here (e.g. on resume from a long
+      // background, when scheduled events land in the past) would otherwise
+      // bubble out of Tone's internal timer and silently kill the Sequence.
+      try {
+        const kv = KICK[step];
+        const sv = SNARE[step];
+        const hv = HAT[step];
+        if (kv) {
+          this.kick?.triggerAttackRelease('C2', '8n', time, kv);
+          this.kickAt = this.elapsed;
+        }
+        if (sv) {
+          this.snare?.triggerAttackRelease('16n', time, sv);
+          this.snareAt = this.elapsed;
+        }
+        if (hv) {
+          this.hihat?.triggerAttackRelease('32n', time, hv);
+        }
+      } catch (err) {
+        console.warn('[audio] drumSeq step failed', err);
       }
     }, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], '16n');
     this.drumSeq.start(0);

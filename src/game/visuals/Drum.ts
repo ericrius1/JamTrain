@@ -96,6 +96,11 @@ type DrumOptions = {
 const MAX_RIPPLES = 24;
 const RIPPLE_MAX_AGE = 5.8;
 const DRUM_LAYOUT_TOP_ROWS = DRUM_DEFAULT_BASE_ROW;
+// NDC units per second. Pointer must be moving at least this fast over an orb
+// for the held drone synth to be considered active. Roughly "a hair of motion"
+// — high enough to ignore the few stray pixels of cursor jitter while a user
+// is reading the screen, low enough that gentle drags still drone.
+const POINTER_GESTURE_MOTION_NDC_PER_SEC = 0.05;
 
 type AnyNode = any;
 
@@ -791,7 +796,12 @@ export class Drum implements PlayerVisual {
     this.uniforms.gesture.value.set(_pointerLocal.x, _pointerLocal.y, _pointerLocal.z, this.pointerGlow);
     this.uniforms.gestureDepth.value += (depth - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 10));
     this.pointerInside = true;
-    this.emitGesture(true, _pointerLocal, depth, radial, speed);
+    // Held drone audio only when the pointer is actively moving over an orb (or
+    // on a click). Stationary hover keeps the visual lit spot but the synth
+    // gesture is gated off so auraSynth/subSynth/shimmerSynth don't ring
+    // forever on idle hover.
+    const moving = ndcSpeed > POINTER_GESTURE_MOTION_NDC_PER_SEC || clickQueued;
+    this.emitGesture(moving, _pointerLocal, depth, radial, speed);
   }
 
   private clearPointerVisualState(delta: number): void {

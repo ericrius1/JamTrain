@@ -66,9 +66,35 @@ export class JamAudioGraph {
     this.effectsBus = new Tone.Gain(0.85).connect(this.master);
 
     this.attachAnalyser();
+    this.attachStateRecovery();
 
     this.running = true;
     return Tone;
+  }
+
+  // Browsers can park an AudioContext in any of: 'running', 'suspended',
+  // 'interrupted' (Mobile Safari while backgrounded), or 'closed'. We listen
+  // for state changes and re-resume whenever the document is foreground+focused
+  // and the context isn't running. Without this hook, returning from a long
+  // background can leave audio permanently silent because setSuspended(false)
+  // only acted on the explicit 'suspended' state.
+  private attachStateRecovery(): void {
+    if (!this.tone) return;
+    const ctx = (this.tone.getContext() as unknown as { rawContext: AudioContext }).rawContext;
+    if (!ctx) return;
+    const tryResume = () => {
+      if (ctx.state === 'running') return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      ctx.resume().catch(err => {
+        console.warn('[audioGraph] auto-resume failed', err);
+      });
+    };
+    ctx.addEventListener('statechange', tryResume);
+    // Re-arm on the first user gesture after any drift — covers cases where
+    // the browser refuses programmatic resume() until a fresh gesture lands.
+    const onGesture = () => tryResume();
+    window.addEventListener('pointerdown', onGesture, { passive: true });
+    window.addEventListener('keydown', onGesture);
   }
 
   private attachAnalyser(): void {
@@ -190,9 +216,22 @@ export class JamAudioGraph {
     if (!this.tone) return;
     const ctx = (this.tone.getContext() as unknown as { rawContext: AudioContext }).rawContext;
     if (!ctx) return;
+    const transport = this.tone.getTransport();
     try {
-      if (suspended && ctx.state === 'running') await ctx.suspend();
-      else if (!suspended && ctx.state === 'suspended') await ctx.resume();
+      if (suspended) {
+        // Pause the Transport before suspending the context. Otherwise its
+        // internal scheduler keeps queuing events against a frozen clock and
+        // on resume those events fire in a burst (or throw inside the drum
+        // sequence callback, killing scheduling outright).
+        if (transport.state === 'started') transport.pause();
+        if (ctx.state === 'running') await ctx.suspend();
+      } else {
+        // resume() is idempotent — call it for any non-running state. Mobile
+        // Safari uses 'interrupted' rather than 'suspended' for background
+        // tabs and the old equality check would silently no-op there.
+        if (ctx.state !== 'running' && ctx.state !== 'closed') await ctx.resume();
+        if (transport.state !== 'started') transport.start('+0.05');
+      }
     } catch (e) {
       console.warn('audio suspend toggle failed', e);
     }

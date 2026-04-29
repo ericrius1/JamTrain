@@ -253,16 +253,24 @@ export class Game {
     this.roundDirector = new RoundDirector(this.paneDock);
     this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.renderer, this.paneDock);
     this.roundDirector.onPlayingStart(() => {
-      if (this.pendingPartnerInstrument && this.pendingPartnerInstrument !== this.playerInstruments.remote) {
-        if (this.introActive) {
-          this.installPlayerVisualImmediate('remote', this.pendingPartnerInstrument);
-        } else {
-          void this.swapPlayerVisual('remote', this.pendingPartnerInstrument).then(() => this.refreshArchetype());
-        }
-      }
-      this.pendingPartnerInstrument = null;
-      this.refreshArchetype();
+      // endDissolve must run first. If anything below throws (e.g. an instrument
+      // swap rejects), emit() would otherwise stay gated on dissolveMode > 0
+      // and every drum hit / pluck would silently produce no particles even
+      // though audio plays.
       this.sculptor.endDissolve();
+      try {
+        if (this.pendingPartnerInstrument && this.pendingPartnerInstrument !== this.playerInstruments.remote) {
+          if (this.introActive) {
+            this.installPlayerVisualImmediate('remote', this.pendingPartnerInstrument);
+          } else {
+            void this.swapPlayerVisual('remote', this.pendingPartnerInstrument).then(() => this.refreshArchetype());
+          }
+        }
+        this.pendingPartnerInstrument = null;
+        this.refreshArchetype();
+      } catch (err) {
+        console.warn('[Game] onPlayingStart listener failed', err);
+      }
     });
     this.roundDirector.onDissolvingStart(() => {
       this.sculptor.beginDissolve();

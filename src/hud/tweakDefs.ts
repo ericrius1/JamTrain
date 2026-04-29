@@ -11,6 +11,10 @@ import { FolderApi, Pane } from 'tweakpane';
    its in-code defaults.
    ================================================================ */
 
+// Setting `persisted: false` keeps the param in the tweakpane UI but skips
+// localStorage round-tripping. Useful for params that are derived from a
+// separate source-of-truth (e.g. volumeDb is driven by the mixer slider's
+// stored avPrefs.musicVolume, so persisting both diverges across sessions).
 export type NumberDef = {
   type?: 'number';
   default: number;
@@ -19,6 +23,7 @@ export type NumberDef = {
   step?: number;
   options?: Record<string, number>;
   hidden?: boolean;
+  persisted?: boolean;
   folder?: string;
   label?: string;
 };
@@ -27,6 +32,7 @@ export type BoolDef = {
   type: 'boolean';
   default: boolean;
   hidden?: boolean;
+  persisted?: boolean;
   folder?: string;
   label?: string;
 };
@@ -35,6 +41,7 @@ export type ColorDef = {
   type: 'color';
   default: string;
   hidden?: boolean;
+  persisted?: boolean;
   folder?: string;
   label?: string;
 };
@@ -44,6 +51,7 @@ export type SelectDef<V extends string = string> = {
   default: V;
   options: Record<string, V>;
   hidden?: boolean;
+  persisted?: boolean;
   folder?: string;
   label?: string;
 };
@@ -53,6 +61,7 @@ export type StringDef = {
   default: string;
   readonly?: boolean;
   hidden?: boolean;
+  persisted?: boolean;
   folder?: string;
   label?: string;
 };
@@ -162,13 +171,16 @@ export function registerTweaks<T extends Record<string, Def>>(
     for (const k in defs) (params as Record<string, unknown>)[k] = defs[k].default;
   }
 
-  // Apply persisted overrides (only known keys, only values of compatible primitive type).
+  // Apply persisted overrides (only known keys, only values of compatible
+  // primitive type). Skip params marked `persisted: false` — they are driven
+  // by some other source-of-truth and persisting them here can cause divergence.
   const overrides = readOverrides(key);
   if (overrides) {
     for (const k in defs) {
       if (!(k in overrides)) continue;
-      const v = overrides[k];
       const def = defs[k];
+      if (def.persisted === false) continue;
+      const v = overrides[k];
       if (typeOfDef(def) !== typeof v) continue;
       (params as Record<string, unknown>)[k] = v;
     }
@@ -187,11 +199,19 @@ export function registerTweaks<T extends Record<string, Def>>(
 
   let pane: Pane | undefined;
   let saveTimer: number | undefined;
+  const buildPersistedSnapshot = (): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const k in defs) {
+      if (defs[k].persisted === false) continue;
+      out[k] = (params as Record<string, unknown>)[k];
+    }
+    return out;
+  };
   const scheduleSave = () => {
     if (saveTimer !== undefined) return;
     saveTimer = window.setTimeout(() => {
       saveTimer = undefined;
-      writeOverrides(key, params as Record<string, unknown>);
+      writeOverrides(key, buildPersistedSnapshot());
     }, 120);
   };
 
@@ -257,7 +277,7 @@ export function registerTweaks<T extends Record<string, Def>>(
       resetRegistry.delete(entry);
       if (saveTimer !== undefined) {
         window.clearTimeout(saveTimer);
-        writeOverrides(key, params as Record<string, unknown>);
+        writeOverrides(key, buildPersistedSnapshot());
       }
       pane?.dispose();
     },
