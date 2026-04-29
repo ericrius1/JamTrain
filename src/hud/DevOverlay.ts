@@ -49,7 +49,7 @@ export class DevOverlay {
         this.onCameraCycle?.();
         return;
       }
-      if (this.visible && (e.key === 'r' || e.key === 'R')) {
+      if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
         resetAllTweaks();
       }

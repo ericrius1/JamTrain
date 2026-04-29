@@ -7,16 +7,17 @@ import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Dat
 
 export const AUDIO_DEFS = {
   masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master' },
-  chordCycleSeconds:  { default: 56,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
-  attackSeconds:      { default: 4.2,  min: 0.2,  max: 8,    step: 0.1,  label: 'attack sec' },
-  releaseSeconds:     { default: 9.8,  min: 1,    max: 14,   step: 0.1,  label: 'release sec' },
+  chordCycleSeconds:  { default: 24,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
+  attackSeconds:      { default: 3.2,  min: 0.2,  max: 8,    step: 0.1,  label: 'attack sec' },
+  releaseSeconds:     { default: 7.5,  min: 1,    max: 14,   step: 0.1,  label: 'release sec' },
   filterMaxHz:        { default: 2200, min: 1200, max: 8000, step: 50,   label: 'filter ceil' },
   reverbWetRange:     { default: 0.08, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
   shimmerMaxDb:       { default: -28,  min: -36,  max: 0,    step: 0.5,  label: 'shimmer dB' },
   muteHandModulation: { type: 'boolean', default: false, label: 'mute hands' },
-  drumLevelDb:        { default: -14,  min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
-  drumBpm:            { default: 62,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
-  drumEbbPeriod:      { default: 78,   min: 20,   max: 240,  step: 1,    label: 'drum ebb sec' },
+  drumLevelDb:        { default: -11,  min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
+  drumBpm:            { default: 78,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
+  drumEbbPeriod:      { default: 180,  min: 20,   max: 360,  step: 1,    label: 'drum ebb sec' },
+  drumEbbFloor:       { default: 0.55, min: 0,    max: 1,    step: 0.01, label: 'drum ebb floor' },
   muteDrums:          { type: 'boolean', default: false, label: 'mute drums' },
 } as const;
 
@@ -123,6 +124,7 @@ export class AudioEngine {
     drumLevelDb: AUDIO_DEFS.drumLevelDb.default,
     drumBpm: AUDIO_DEFS.drumBpm.default,
     drumEbbPeriod: AUDIO_DEFS.drumEbbPeriod.default,
+    drumEbbFloor: AUDIO_DEFS.drumEbbFloor.default,
     muteDrums: AUDIO_DEFS.muteDrums.default,
   };
 
@@ -284,11 +286,14 @@ export class AudioEngine {
     Tone.getTransport().swing = 0.18;
     Tone.getTransport().swingSubdivision = '16n';
 
-    // 16-step lofi pattern. Numbers are velocities (0 = rest).
-    //               1   e   &   a   2   e   &   a   3   e   &   a   4   e   &   a
-    const KICK   = [0.70,   0,   0,   0,    0,   0, 0.42,   0,    0,   0,   0,   0,    0,   0,   0,   0];
-    const SNARE  = [   0,   0,   0,   0, 0.38,   0,   0,   0,    0,   0,   0,   0, 0.32,   0,   0,   0];
-    const HAT    = [   0,   0,   0, 0.20,    0,   0,   0, 0.16,    0,   0,   0, 0.18,    0,   0,   0, 0.14];
+    // 16-step cozy lo-fi pattern. Boom-bap kick with a push into beat 3 and a
+    // soft pickup on the &-of-4. Snare on 2 and 4 with quiet ghost notes.
+    // Hat sits on steady 16ths with subtle velocity sway — the swing setting on
+    // the transport gives it the laid-back lo-fi shuffle.
+    //               1     e     &     a     2     e     &     a     3     e     &     a     4     e     &     a
+    const KICK   = [0.78,    0,    0,    0,    0,    0,    0, 0.36, 0.58,    0,    0,    0,    0,    0,    0, 0.24];
+    const SNARE  = [   0,    0,    0,    0, 0.55,    0,    0,    0,    0, 0.16,    0,    0, 0.55,    0, 0.20,    0];
+    const HAT    = [0.22, 0.10, 0.20, 0.10, 0.18, 0.10, 0.22, 0.10, 0.20, 0.10, 0.20, 0.12, 0.18, 0.10, 0.22, 0.16];
 
     this.drumSeq = new Tone.Sequence((time: number, step: number) => {
       const kv = KICK[step];
@@ -371,13 +376,14 @@ export class AudioEngine {
     const shimmerLinear = p * this.tone.dbToGain(this.params.shimmerMaxDb);
     this.shimmerGain.gain.rampTo(shimmerLinear, PARAM_RAMP);
 
-    // Drums ebb in and out over a slow cosine bell so the train moves through
-    // jam phases — quiet a while, then a soft groove builds and recedes.
+    // Drums breathe slowly between a floor and full volume — never silent, so
+    // the cozy lo-fi pocket is always there but the room still has dynamics.
     if (this.drumGain) {
       const period = Math.max(8, this.params.drumEbbPeriod);
       const t = (this.elapsed % period) / period;
       const bell = (1 - Math.cos(t * Math.PI * 2)) * 0.5; // 0..1..0 over period
-      const ebbT = Math.pow(bell, 1.4); // bias slightly toward quiet
+      const floor = clamp(this.params.drumEbbFloor, 0, 1);
+      const ebbT = floor + (1 - floor) * bell;
       const muted = this.params.muteDrums ? 0 : 1;
       const drumLinear = ebbT * muted * this.tone.dbToGain(this.params.drumLevelDb) * (1 - this.smoothedPlayerActivity * 0.35);
       this.drumGain.gain.rampTo(drumLinear, PARAM_RAMP * 4);
@@ -402,7 +408,9 @@ export class AudioEngine {
     const period = Math.max(8, this.params.drumEbbPeriod);
     const t = (this.elapsed % period) / period;
     const bell = (1 - Math.cos(t * Math.PI * 2)) * 0.5;
-    return this.params.muteDrums ? 0 : Math.pow(bell, 1.4);
+    if (this.params.muteDrums) return 0;
+    const floor = clamp(this.params.drumEbbFloor, 0, 1);
+    return floor + (1 - floor) * bell;
   }
 
   getChordProgress(): number {

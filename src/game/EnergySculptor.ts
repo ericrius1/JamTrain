@@ -172,13 +172,12 @@ export class EnergySculptor implements EnergySink {
   private particleOpacityUniform = uniform(0.85);
 
   // Per-band spectrum data — `instanceIndex % SPECTRUM_BAND_COUNT` picks
-  // which band a particle responds to. Levels are smoothed magnitudes, pulses
-  // are transient impulses (level minus its slow baseline). Visuals tap both
-  // so sustained content drives oscillation while attacks read as pops.
-  private spectrumLevelArray: number[] = new Array(SPECTRUM_BAND_COUNT).fill(0);
-  private spectrumPulseArray: number[] = new Array(SPECTRUM_BAND_COUNT).fill(0);
-  private spectrumLevelUniform!: THREE.UniformArrayNode<'float'>;
-  private spectrumPulseUniform!: THREE.UniformArrayNode<'float'>;
+  // which band a particle responds to. We pack (level, pulse, _, _) into a
+  // Vector4 array so we can reuse the same uniformArray-of-Vector4 pattern
+  // the spawn queue uses (mutation is auto-uploaded by three each frame).
+  // A plain number[] with type 'float' was uploading once and never again.
+  private spectrumBandArray: THREE.Vector4[] = [];
+  private spectrumBandUniform!: THREE.UniformArrayNode<'vec4'>;
   private spectrumOverallUniform = uniform(0);
   private spectrumFlowGainUniform = uniform(0.55);
   private spectrumPulseGainUniform = uniform(1.4);
@@ -335,14 +334,16 @@ export class EnergySculptor implements EnergySink {
     });
   }
 
-  // Push the latest FFT snapshot into the GPU-side band uniforms. The arrays
-  // themselves are reused; we just memcpy. Auto-uploaded by three's TSL on
-  // the next compute/render dispatch.
+  // Push the latest FFT snapshot into the GPU-side band uniforms. We mutate
+  // the existing Vector4 instances in place — three's UniformArrayNode reads
+  // their components on every dispatch, the same way it already does for
+  // the spawn-queue Vector3 array.
   setMusicSpectrum(spectrum: MusicSpectrum): void {
     const n = Math.min(SPECTRUM_BAND_COUNT, spectrum.levels.length);
     for (let i = 0; i < n; i += 1) {
-      this.spectrumLevelArray[i] = spectrum.levels[i];
-      this.spectrumPulseArray[i] = spectrum.pulses[i];
+      const band = this.spectrumBandArray[i];
+      band.x = spectrum.levels[i];
+      band.y = spectrum.pulses[i];
     }
     this.spectrumOverallUniform.value = spectrum.overall;
   }
@@ -473,8 +474,10 @@ export class EnergySculptor implements EnergySink {
   }
 
   private allocateSpectrumUniforms(): void {
-    this.spectrumLevelUniform = uniformArray(this.spectrumLevelArray, 'float');
-    this.spectrumPulseUniform = uniformArray(this.spectrumPulseArray, 'float');
+    for (let i = 0; i < SPECTRUM_BAND_COUNT; i += 1) {
+      this.spectrumBandArray.push(new THREE.Vector4(0, 0, 0, 0));
+    }
+    this.spectrumBandUniform = uniformArray(this.spectrumBandArray, 'vec4');
   }
 
   private buildComputePipelines(): void {
@@ -567,8 +570,9 @@ export class EnergySculptor implements EnergySink {
       // its motion belongs to one slice of the spectrum. instanceIndex is
       // uint; element() takes a uint, so the cast happens implicitly.
       const bandIdx = instanceIndex.mod(uint(SPECTRUM_BAND_COUNT));
-      const bandLevel = this.spectrumLevelUniform.element(bandIdx).toVar();
-      const bandPulse = this.spectrumPulseUniform.element(bandIdx).toVar();
+      const bandData = this.spectrumBandUniform.element(bandIdx);
+      const bandLevel = bandData.x.toVar();
+      const bandPulse = bandData.y.toVar();
       // Each band oscillates at its own rate so low frequencies wobble slowly
       // and high frequencies shimmer fast — gives the visible "different
       // frequencies behave differently" reading the user is after.
@@ -745,8 +749,9 @@ export class EnergySculptor implements EnergySink {
     // Per-particle band lookup for the render brightness term. Same band the
     // integrate pass used, so brightness and motion line up.
     const renderBandIdx = instanceIndex.mod(uint(SPECTRUM_BAND_COUNT));
-    const renderBandLevel = this.spectrumLevelUniform.element(renderBandIdx);
-    const renderBandPulse = this.spectrumPulseUniform.element(renderBandIdx);
+    const renderBand = this.spectrumBandUniform.element(renderBandIdx);
+    const renderBandLevel = renderBand.x;
+    const renderBandPulse = renderBand.y;
 
     // Color: base color, brightened by speed, music pulse, and per-band fft
     // energy. Multiplied by alphaLife so dead particles contribute nothing

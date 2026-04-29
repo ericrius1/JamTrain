@@ -79,10 +79,16 @@ export class JamAudioGraph {
     analyser.fftSize = 1024;
     analyser.smoothingTimeConstant = 0.6;
     // Tap the master sum (post bus mix, pre dynamics) so the spectrum doesn't
-    // get squashed flat by the limiter. Master is a Tone.Gain; its raw output
-    // node hangs off `.output`.
-    const masterOut = (this.master.output as AudioNode | undefined) ?? (this.master as unknown as AudioNode);
-    masterOut.connect(analyser);
+    // get squashed flat by the limiter. Tone's `connect()` accepts a raw
+    // AudioNode as the destination — we add the analyser as a parallel
+    // output of master, so signal continues flowing through compressor →
+    // limiter → speakers and we just observe it on the side.
+    try {
+      this.master.connect(analyser);
+    } catch (e) {
+      console.warn('analyser tap failed', e);
+      return;
+    }
     this.analyser = analyser;
     // Construct on a real ArrayBuffer (not ArrayBufferLike) so the resulting
     // Uint8Array is accepted by analyser.getByteFrequencyData under TS's

@@ -15,7 +15,7 @@ export type KeyChange = {
 };
 
 export const KEY_DIRECTOR_DEFS = {
-  chordCyclesPerKey: { default: 4, min: 1, max: 12, step: 1, label: 'chord cycles per key' },
+  chordCyclesPerKey: { default: 2, min: 1, max: 12, step: 1, label: 'chord cycles per key' },
 } as const;
 
 export type KeyDirectorParams = ParamsOf<typeof KEY_DIRECTOR_DEFS>;
