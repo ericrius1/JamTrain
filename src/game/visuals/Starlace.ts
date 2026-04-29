@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import {
-  float,
+  instancedBufferAttribute,
   normalView,
   screenUV,
   viewportMipTexture,
@@ -19,11 +19,16 @@ export const STARLACE_DEFS = {
   contactRadius:   { default: 0.085, min: 0.025, max: 0.18, step: 0.001, label: 'hand contact' },
   hitCooldown:     { default: 0.065, min: 0.02,  max: 0.35, step: 0.005, label: 'hit cooldown s' },
   pulseDecay:      { default: 4.8,   min: 1,     max: 14,   step: 0.1,   label: 'star fade' },
-  driftSpeed:      { default: 0.58,  min: 0,     max: 2.4,  step: 0.01,  label: 'drift speed' },
-  waveAmp:         { default: 0.042, min: 0,     max: 0.16, step: 0.001, label: 'web wave' },
+  driftSpeed:      { default: 0.20,  min: 0,     max: 2.4,  step: 0.01,  label: 'drift speed' },
+  waveAmp:         { default: 0.024, min: 0,     max: 0.16, step: 0.001, label: 'web wave' },
   linkOpacity:     { default: 0.42,  min: 0,     max: 0.9,  step: 0.01,  label: 'link opacity' },
   sparkSize:       { default: 0.030, min: 0.006, max: 0.08, step: 0.001, label: 'spark size' },
   anchorSmoothing: { default: 5.5,   min: 0.2,   max: 16,   step: 0.1,   label: 'anchor smoothing s' },
+  handSmoothing:   { default: 3.2,   min: 0.4,   max: 18,   step: 0.1,   label: 'hand smoothing' },
+  axisSmoothing:   { default: 2.0,   min: 0.2,   max: 12,   step: 0.1,   label: 'turn smoothing' },
+  maxTurnRate:     { default: 0.72,  min: 0.05,  max: 6,    step: 0.01,  label: 'max turn rad/s' },
+  danceAmount:     { default: 0.030, min: 0,     max: 0.16, step: 0.001, label: 'dance amount' },
+  danceSpeed:      { default: 0.14,  min: 0,     max: 1.2,  step: 0.01,  label: 'dance speed' },
   keyWalkInterval: { default: 0.34,  min: 0.18,  max: 0.75, step: 0.005, label: 'key walk step s' },
   coolColor:       { type: 'color', default: '#5fb6c4', label: 'cool stars' },
   warmColor:       { type: 'color', default: '#e56f67', label: 'warm stars' },
@@ -130,6 +135,9 @@ const STARLACE_DUSK_WARM = new THREE.Color('#8d4b83');
 const STARLACE_DUSK_GOLD = new THREE.Color('#b87835');
 const STARLACE_DUSK_HOT = new THREE.Color('#d9934d');
 const STARLACE_FROST_WHITE = new THREE.Color('#f3fbff');
+const STARLACE_GEM_VIOLET = new THREE.Color('#5d438d');
+const STARLACE_GEM_WINE = new THREE.Color('#7d435f');
+const STARLACE_GEM_TEAL = new THREE.Color('#2f7f84');
 
 const smoothstep01 = (x: number): number => {
   const t = clamp(x, 0, 1);
@@ -158,6 +166,7 @@ export class Starlace implements PlayerVisual {
   private nodeGeometry?: THREE.BufferGeometry;
   private nodeMesh?: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicNodeMaterial>;
   private nodeMaterial?: THREE.MeshBasicNodeMaterial;
+  private nodeGemParams?: THREE.InstancedBufferAttribute;
   private sparkMesh: THREE.InstancedMesh;
   private sparkMaterial: THREE.MeshBasicMaterial;
 
@@ -187,6 +196,7 @@ export class Starlace implements PlayerVisual {
   private right = new THREE.Vector3();
   private center = new THREE.Vector3();
   private axis = new THREE.Vector3(1, 0, 0);
+  private targetAxis = new THREE.Vector3(1, 0, 0);
   private fieldUp = new THREE.Vector3(0, 1, 0);
   private fieldSide = new THREE.Vector3(0, 0, 1);
   private smoothedEnergy = 0;
@@ -539,7 +549,7 @@ export class Starlace implements PlayerVisual {
       this.initialized = true;
     }
 
-    const palmAlpha = 1 - Math.exp(-delta * 16);
+    const palmAlpha = 1 - Math.exp(-delta * this.params.handSmoothing);
     this.left.lerp(leftPalm, palmAlpha);
     this.right.lerp(rightPalm, palmAlpha);
     if (this.fixedAnchor) {
@@ -552,13 +562,13 @@ export class Starlace implements PlayerVisual {
     }
     this.center.copy(this.anchor);
 
-    this.smoothedEnergy += ((voice.active ? voice.energy : 0) - this.smoothedEnergy) * (1 - Math.exp(-delta * 5));
-    this.smoothedPulse += (voice.pulse - this.smoothedPulse) * (1 - Math.exp(-delta * 12));
-    this.smoothedPitch += (voice.pitch - this.smoothedPitch) * (1 - Math.exp(-delta * 8));
-    this.smoothedExpression += (voice.expression - this.smoothedExpression) * (1 - Math.exp(-delta * 8));
-    this.smoothedTension += (voice.tension - this.smoothedTension) * (1 - Math.exp(-delta * 7));
+    this.smoothedEnergy += ((voice.active ? voice.energy : 0) - this.smoothedEnergy) * (1 - Math.exp(-delta * 3.8));
+    this.smoothedPulse += (voice.pulse - this.smoothedPulse) * (1 - Math.exp(-delta * 8));
+    this.smoothedPitch += (voice.pitch - this.smoothedPitch) * (1 - Math.exp(-delta * 4.5));
+    this.smoothedExpression += (voice.expression - this.smoothedExpression) * (1 - Math.exp(-delta * 4));
+    this.smoothedTension += (voice.tension - this.smoothedTension) * (1 - Math.exp(-delta * 3.6));
 
-    this.resolveAxes();
+    this.resolveAxes(delta);
     this.writeNodePositions();
     this.updateRevealValues();
     if (this.revealedFully && !this.revealActive) {
@@ -699,19 +709,35 @@ export class Starlace implements PlayerVisual {
   }
 
   private buildNodeMeshes(): void {
-    const refractedUv = screenUV.add(normalView.xy.mul(float(0.072)));
-    const frostedBackdrop = viewportMipTexture(refractedUv, float(1.85));
+    const gemParams = new THREE.InstancedBufferAttribute(new Float32Array(this.nodes.length * 3), 3);
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      const node = this.nodes[i];
+      const lateral = clamp(node.u + 0.5, 0, 1);
+      const vertical = clamp(node.v + 0.5, 0, 1);
+      const depth = clamp(node.z + 0.5, 0, 1);
+      const scatter = hash(node.seed * 37.1 + i * 0.73);
+      const refraction = 0.056 + lateral * 0.024 + scatter * 0.034;
+      const frost = 2.20 + vertical * 0.52 + depth * 0.30 + scatter * 0.58;
+      const backdropMix = 0.66 + scatter * 0.12 + (1 - vertical) * 0.07;
+      gemParams.setXYZ(i, refraction, frost, clamp(backdropMix, 0.64, 0.84));
+    }
+    gemParams.setUsage(THREE.StaticDrawUsage);
+    this.nodeGemParams = gemParams;
+
+    const gemParamsNode = instancedBufferAttribute<'vec3'>(gemParams, 'vec3');
+    const refractedUv = screenUV.add(normalView.xy.mul(gemParamsNode.x));
+    const frostedBackdrop = viewportMipTexture(refractedUv, gemParamsNode.y);
     const material = new THREE.MeshBasicNodeMaterial({
-      color: 0xf4fbff,
+      color: 0xf0f7ff,
       transparent: true,
-      opacity: 0.88,
+      opacity: 0.84,
       blending: THREE.NormalBlending,
       depthWrite: false,
       vertexColors: true,
       side: THREE.FrontSide,
     });
     material.backdropNode = frostedBackdrop;
-    material.backdropAlphaNode = float(0.98);
+    material.backdropAlphaNode = gemParamsNode.z;
     material.forceSinglePass = true;
 
     this.nodeGeometry = new THREE.IcosahedronGeometry(1, 0);
@@ -725,10 +751,22 @@ export class Starlace implements PlayerVisual {
     this.mesh.add(this.nodeMesh);
   }
 
-  private resolveAxes(): void {
-    this.axis.subVectors(this.right, this.left);
-    if (this.axis.lengthSq() < 0.0001) this.axis.set(1, 0, 0);
-    else this.axis.normalize();
+  private resolveAxes(delta: number): void {
+    this.targetAxis.subVectors(this.right, this.left);
+    if (this.targetAxis.lengthSq() < 0.0001) {
+      this.targetAxis.set(1, 0, 0);
+    } else {
+      this.targetAxis.normalize();
+    }
+
+    if (this.params.danceAmount > 0 && this.params.danceSpeed > 0) {
+      const phase = this.elapsed * this.params.danceSpeed * TAU + (this.palette === 'remote' ? 0.72 : 0);
+      const yaw = Math.sin(phase) * this.params.danceAmount;
+      this.targetAxis.applyAxisAngle(_worldUp, yaw);
+    }
+
+    const turnAlpha = 1 - Math.exp(-delta * this.params.axisSmoothing);
+    rotateVectorTowards(this.axis, this.targetAxis, turnAlpha, this.params.maxTurnRate * delta);
 
     this.fieldSide.crossVectors(this.axis, _worldUp);
     if (this.fieldSide.lengthSq() < 0.0001) this.fieldSide.set(0, 0, 1);
@@ -837,7 +875,6 @@ export class Starlace implements PlayerVisual {
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
       const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.10) * reveal;
       const drawSize = Math.max(size, 0.0001);
-      const flash = Math.pow(pulse, 1.55);
 
       _dummy.position.copy(node.world);
       _dummy.rotation.set(
@@ -849,14 +886,13 @@ export class Starlace implements PlayerVisual {
       _dummy.updateMatrix();
       mesh.setMatrixAt(i, _dummy.matrix);
 
-      this.nodeVisualColor(node, pulse, twinkle, _colorC);
-      _colorA.copy(_colorC).lerp(STARLACE_FROST_WHITE, 0.72 - flash * 0.12).multiplyScalar(0.90 + flash * 0.32);
+      this.nodeGemColor(node, pulse, twinkle, _colorA);
       mesh.setColorAt(i, _colorA);
     }
 
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-    material.opacity = clamp(0.78 + this.maxPulse * 0.08 + this.smoothedPulse * 0.05, 0.78, 0.92);
+    material.opacity = clamp(0.80 + this.maxPulse * 0.06 + this.smoothedPulse * 0.04, 0.80, 0.90);
   }
 
   private writeSparks(): void {
@@ -1367,7 +1403,7 @@ export class Starlace implements PlayerVisual {
     this.noteColors = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex).multiplyScalar(1.00));
     this.lineMaterial.color.setRGB(0.98, 0.97, 0.94);
     this.pulseLineMaterial.color.setRGB(1.00, 0.96, 0.92);
-    this.nodeMaterial?.color.setRGB(0.96, 0.99, 1.00);
+    this.nodeMaterial?.color.setRGB(0.94, 0.97, 1.00);
     this.sparkMaterial.color.setRGB(1.00, 0.97, 0.92);
   }
 
@@ -1387,6 +1423,32 @@ export class Starlace implements PlayerVisual {
     target.r = Math.min(target.r, 1.22);
     target.g = Math.min(target.g, 1.16);
     target.b = Math.min(target.b, 1.24);
+    return target;
+  }
+
+  private nodeGemColor(node: StarNode, pulse: number, twinkle: number, target: THREE.Color): THREE.Color {
+    const lateral = smoothstep01(node.u + 0.5);
+    const vertical = smoothstep01(node.v + 0.5);
+    const depth = smoothstep01(node.z + 0.5);
+    const flash = Math.pow(pulse, 1.55);
+    const jewel = hash(node.seed * 41.7 + node.noteIndex * 3.9);
+
+    this.noteColorForNode(node, target);
+    _colorB.copy(this.cool).lerp(this.warm, lateral);
+    _colorC.copy(STARLACE_GEM_VIOLET).lerp(STARLACE_GEM_TEAL, depth);
+    _colorC.lerp(STARLACE_GEM_WINE, 0.22 + vertical * 0.28);
+
+    target
+      .lerp(_colorB, 0.30 + jewel * 0.16)
+      .lerp(_colorC, 0.22 + (1 - vertical) * 0.10)
+      .lerp(this.gold, 0.06 + (1 - vertical) * 0.12 + (jewel > 0.78 ? 0.10 : 0));
+
+    target.multiplyScalar(0.70 + depth * 0.14 + twinkle * 0.11);
+    target.lerp(STARLACE_FROST_WHITE, 0.10 + (1 - pulse) * 0.045 + twinkle * 0.025);
+    target.lerp(this.hot, 0.04 + flash * 0.20).multiplyScalar(0.98 + flash * 0.46);
+    target.r = Math.min(target.r, 1.24);
+    target.g = Math.min(target.g, 1.18);
+    target.b = Math.min(target.b, 1.28);
     return target;
   }
 
@@ -1416,6 +1478,28 @@ function segmentPointDistance(from: THREE.Vector3, to: THREE.Vector3, point: THR
 function easeOutCubic(t: number): number {
   const inv = 1 - clamp(t, 0, 1);
   return 1 - inv * inv * inv;
+}
+
+function rotateVectorTowards(
+  current: THREE.Vector3,
+  target: THREE.Vector3,
+  amount: number,
+  maxRadians: number,
+): void {
+  if (target.lengthSq() < 1e-8) return;
+  if (current.lengthSq() < 1e-8) {
+    current.copy(target).normalize();
+    return;
+  }
+
+  const angle = current.angleTo(target);
+  if (!Number.isFinite(angle) || angle < 1e-5) {
+    current.copy(target).normalize();
+    return;
+  }
+
+  const capped = maxRadians > 0 ? Math.min(amount, maxRadians / angle) : amount;
+  current.lerp(target, clamp(capped, 0, 1)).normalize();
 }
 
 function applyPaletteDefaults(params: StarlaceParams, palette: StarlacePalette): void {

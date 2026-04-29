@@ -5,6 +5,15 @@ const MUSIC_SVG = `
   <circle cx="18" cy="16" r="3"/>
 </svg>`;
 
+const TRACK_SVG = `
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M7 20 10 4"/>
+  <path d="M17 20 14 4"/>
+  <path d="M8 9h8"/>
+  <path d="M7 14h10"/>
+  <path d="M5 20h14"/>
+</svg>`;
+
 const VOICE_SVG = `
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
   <rect x="9" y="3" width="6" height="12" rx="3"/>
@@ -16,13 +25,16 @@ const VOICE_SVG = `
 export class MixerPanel {
   readonly el: HTMLDivElement;
   private musicSlider: HTMLInputElement;
+  private backingSlider: HTMLInputElement;
   private voiceSlider: HTMLInputElement;
   private musicValueEl: HTMLSpanElement;
+  private backingValueEl: HTMLSpanElement;
   private voiceValueEl: HTMLSpanElement;
   private musicListeners = new Set<(value: number) => void>();
+  private backingListeners = new Set<(value: number) => void>();
   private voiceListeners = new Set<(value: number) => void>();
 
-  constructor(opts: { music: number; voice: number }) {
+  constructor(opts: { music: number; backing: number; voice: number }) {
     this.el = document.createElement('div');
     this.el.className = 'mixer-panel plaque';
 
@@ -45,6 +57,21 @@ export class MixerPanel {
     });
     this.el.appendChild(musicRow.row);
 
+    const backingRow = this.buildRow({
+      label: 'Track',
+      ariaLabel: 'Backing track volume',
+      icon: TRACK_SVG,
+      value: opts.backing,
+    });
+    this.backingSlider = backingRow.slider;
+    this.backingValueEl = backingRow.value;
+    this.backingSlider.addEventListener('input', () => {
+      const v = this.readSlider(this.backingSlider);
+      this.backingValueEl.textContent = formatPercent(v);
+      for (const l of this.backingListeners) l(v);
+    });
+    this.el.appendChild(backingRow.row);
+
     const voiceRow = this.buildRow({
       label: 'Voice',
       icon: VOICE_SVG,
@@ -65,6 +92,11 @@ export class MixerPanel {
     this.musicValueEl.textContent = formatPercent(value);
   }
 
+  setBackingVolume(value: number): void {
+    this.writeSlider(this.backingSlider, value);
+    this.backingValueEl.textContent = formatPercent(value);
+  }
+
   setVoiceVolume(value: number): void {
     this.writeSlider(this.voiceSlider, value);
     this.voiceValueEl.textContent = formatPercent(value);
@@ -74,11 +106,15 @@ export class MixerPanel {
     this.musicListeners.add(listener);
   }
 
+  onBackingChange(listener: (value: number) => void): void {
+    this.backingListeners.add(listener);
+  }
+
   onVoiceChange(listener: (value: number) => void): void {
     this.voiceListeners.add(listener);
   }
 
-  private buildRow(opts: { label: string; icon: string; value: number }): {
+  private buildRow(opts: { label: string; ariaLabel?: string; icon: string; value: number }): {
     row: HTMLDivElement;
     slider: HTMLInputElement;
     value: HTMLSpanElement;
@@ -97,7 +133,7 @@ export class MixerPanel {
     slider.max = '100';
     slider.step = '1';
     slider.className = 'mixer-panel-slider';
-    slider.setAttribute('aria-label', `${opts.label} volume`);
+    slider.setAttribute('aria-label', opts.ariaLabel ?? `${opts.label} volume`);
     slider.value = String(Math.round(clamp01(opts.value) * 100));
     row.appendChild(slider);
 

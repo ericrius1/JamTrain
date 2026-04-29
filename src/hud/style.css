@@ -964,13 +964,13 @@
 
 /* Mixer panel ----------------------------------------------------------- */
 /* Bottom-center floating plaque so it sits between the two video panels.
-   Two compact rows: Music (synth bed) and Voice (incoming partner audio). */
+   Three compact rows: Music (instruments), Track (backing), and Voice. */
 .mixer-panel {
   position: absolute;
   bottom: 30px;
   left: 50%;
   transform: translateX(-50%);
-  width: 280px;
+  width: 320px;
   padding: 12px 16px 10px;
   z-index: 11;
   pointer-events: auto;
@@ -1000,7 +1000,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  width: 88px;
+  width: 96px;
   font-family: 'IM Fell English SC', serif;
   font-size: 10px;
   letter-spacing: 0.18em;
@@ -1425,8 +1425,8 @@
   /* Controls panel: bottom-center between the instrument and creature pickers.
      Pinned to the viewport (position: fixed) so it doesn't fight the scaled
      stage. Default-closed on touch (see ControlsPanel.ts), so usually it shows
-     just a small "Controls — Drum" pill; expanding reveals the simplified
-     "Swipe — across the orbs" row. */
+     just a small "Controls — Piano Pads" pill; expanding reveals the simplified
+     "Swipe — across the pads" row. */
   .controls-panel {
     position: fixed;
     top: auto;

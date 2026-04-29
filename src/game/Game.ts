@@ -879,7 +879,7 @@ export class Game {
     } else {
       visual = new Drum(this.scene, paneDock, `drum-${player}`, {
         palette: player,
-        title: `Drum (${player === 'local' ? 'Local' : 'Partner'})`,
+        title: `Piano Pads (${player === 'local' ? 'Local' : 'Partner'})`,
         camera: player === 'local' ? this.camera : undefined,
         canvas: player === 'local' ? this.canvas : undefined,
         sculptor: this.sculptor,

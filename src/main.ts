@@ -1,15 +1,18 @@
 import './style.css';
 import { BeginGate } from './hud/components/BeginGate';
 import { registerHandposeCacheWorker } from './game/handposeCache';
+import { MidnightTrainStream } from './game/MidnightTrainStream';
 
 window.addEventListener('vite:preloadError', () => {
   window.location.reload();
 });
 
 const LOCAL_CREATURE_KEY = 'jam-train.local-creature';
+const midnightTrain = new MidnightTrainStream('/MidnightTrain.mp3');
 
 type AvPrefs = {
   musicVolume: number;
+  backingTrackVolume: number;
   voiceVolume: number;
 };
 
@@ -43,23 +46,34 @@ const criticalAssetsLoaded = preloadCriticalAssets();
 
 const beginGate = new BeginGate({
   onBegin: async conductorName => {
-    // Wait for runtime + critical assets so the world we're about to wake
-    // up is actually painted. The `await` here is what lets the BeginGate
-    // show its "Awakening…" state if the user clicks before the dim scene
-    // has appeared behind them.
-    const runtime = await loadRuntime();
-    await criticalAssetsLoaded;
-    runtime.setConductorName(conductorName);
-    // Visuals first — kick the dim → bright transition, fade in the HUD,
-    // and start the BeginGate crossfade by returning quickly. The audio
-    // and multiplayer connect run concurrently so the visuals don't have
-    // to wait on networking.
-    revealRuntimeSurface();
-    runtime.exitIntroMode();
-    uiEl?.classList.add('ui-active');
-    void runtime.begin(conductorName).catch(err => {
-      console.warn('[jam-train] begin failed', err);
+    // Start the streamed media before awaiting runtime work so the browser
+    // sees play() as part of the All Aboard click gesture.
+    void midnightTrain.playWithFadeIn().catch(err => {
+      console.warn('[jam-train] Midnight Train playback failed', err);
     });
+
+    try {
+      // Wait for runtime + critical assets so the world we're about to wake
+      // up is actually painted. The `await` here is what lets the BeginGate
+      // show its "Awakening…" state if the user clicks before the dim scene
+      // has appeared behind them.
+      const runtime = await loadRuntime();
+      await criticalAssetsLoaded;
+      runtime.setConductorName(conductorName);
+      // Visuals first — kick the dim → bright transition, fade in the HUD,
+      // and start the BeginGate crossfade by returning quickly. The audio
+      // and multiplayer connect run concurrently so the visuals don't have
+      // to wait on networking.
+      revealRuntimeSurface();
+      runtime.exitIntroMode();
+      uiEl?.classList.add('ui-active');
+      void runtime.begin(conductorName).catch(err => {
+        console.warn('[jam-train] begin failed', err);
+      });
+    } catch (err) {
+      midnightTrain.stop();
+      throw err;
+    }
   },
 });
 stageWrap.appendChild(beginGate.el);
@@ -164,6 +178,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     { Game },
     {
       Hud,
+      DEFAULT_BACKING_TRACK_VOLUME,
       DEFAULT_MUSIC_VOLUME,
       DEFAULT_VOICE_VOLUME,
     },
@@ -190,9 +205,11 @@ async function createRuntime(): Promise<RuntimeApi> {
 
   const defaultAvPrefs: AvPrefs = {
     musicVolume: DEFAULT_MUSIC_VOLUME,
+    backingTrackVolume: DEFAULT_BACKING_TRACK_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
   };
   const avPrefs: AvPrefs = { ...defaultAvPrefs };
+  midnightTrain.setVolume(avPrefs.backingTrackVolume);
 
   const canvas = document.querySelector<HTMLCanvasElement>('#scene');
   if (!canvas) {
@@ -391,6 +408,10 @@ async function createRuntime(): Promise<RuntimeApi> {
     game.setMusicVolume(value);
     avPrefs.musicVolume = value;
   });
+  hud.onBackingTrackVolumeChange(value => {
+    midnightTrain.setVolume(value);
+    avPrefs.backingTrackVolume = value;
+  });
   hud.onVoiceVolumeChange(value => {
     hud.setRemoteVolume(value);
     avPrefs.voiceVolume = value;
@@ -408,17 +429,19 @@ async function createRuntime(): Promise<RuntimeApi> {
   };
   window.addEventListener('keydown', handleRobotMuteKey);
 
-  hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
+  hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
   hud.setRemoteVolume(avPrefs.voiceVolume);
 
   // Pressing R in debug mode resets tweakpane params; piggyback on the same
   // registry to also restore the mixer panel to in-code defaults.
   registerResetHook('av-prefs', () => {
     avPrefs.musicVolume = defaultAvPrefs.musicVolume;
+    avPrefs.backingTrackVolume = defaultAvPrefs.backingTrackVolume;
     avPrefs.voiceVolume = defaultAvPrefs.voiceVolume;
     game.setMusicVolume(avPrefs.musicVolume);
+    midnightTrain.setVolume(avPrefs.backingTrackVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
-    hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
+    hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
   });
 
   await game.start();
@@ -443,8 +466,9 @@ async function createRuntime(): Promise<RuntimeApi> {
     hud.setShareVideoEnabled(false);
 
     game.setMusicVolume(avPrefs.musicVolume);
+    midnightTrain.setVolume(avPrefs.backingTrackVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
-    hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
+    hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
 
     started = true;
   }
@@ -458,6 +482,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     hud.dispose();
     dev.dispose();
     game.dispose();
+    midnightTrain.dispose();
   }
 
   return {

@@ -111,8 +111,8 @@ type AnyNode = any;
 
 function makeOrbOffsets(baseRow: number, columnSpacing: number, rowSpacing: number): THREE.Vector3[] {
   // Pyramid: bottom row has `baseRow` orbs, each row above has one fewer, until
-  // a single orb at the apex. Default-size drums stay centered around the
-  // anchor; larger drums grow downward so the apex does not climb into the
+  // a single orb at the apex. Default-size pad grids stay centered around the
+  // anchor; larger grids grow downward so the apex does not climb into the
   // top of the view. Index order is bottom-up, left-to-right.
   const rows = Math.max(1, Math.floor(baseRow));
   const offsets: THREE.Vector3[] = [];
@@ -297,7 +297,7 @@ export class Drum implements PlayerVisual {
     this.palette = opts.palette ?? 'local';
 
     this.mesh = new THREE.Group();
-    this.mesh.name = `orb-drums-${opts.palette ?? 'local'}`;
+    this.mesh.name = `piano-pads-${opts.palette ?? 'local'}`;
     scene.add(this.mesh);
 
     this.keyUnsubscribe = keyDirector.onChange(({ current }) => {
@@ -316,7 +316,7 @@ export class Drum implements PlayerVisual {
     // registerTweaks doesn't fire (no callback registered for that key).
 
     this.registered = registerTweaks(paneDock, paneKey, DRUM_DEFS, {
-      title: opts.title ?? 'Drum',
+      title: opts.title ?? 'Piano Pads',
       params: this.params,
       onChange: {
         baseColor:    () => this.uniforms.baseColor.value.set(this.params.baseColor),
@@ -1222,7 +1222,7 @@ function applyPaletteDefaults(params: DrumParams, palette: DrumPalette): void {
     params.hotColor = '#fff0fb';
     return;
   }
-  // local — cool blue steel drum
+  // local — cool blue piano pads
   params.baseColor = '#102947';
   params.rimColor = '#75f0ff';
   params.hotColor = '#fff4ca';

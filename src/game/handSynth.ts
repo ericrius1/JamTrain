@@ -31,9 +31,9 @@ export const HAND_SYNTH_DEFS = {
   pluckDb:       { default: -9,    min: -24, max: 4,    step: 0.5,  label: 'attack dB' },
   duetDb:        { default: -19,   min: -36, max: 0,    step: 0.5,  label: 'duet dB' },
   mouseEnabled:  { type: 'boolean', default: true,  label: 'mouse plays' },
-  orbDb:         { default: -2,    min: -30, max: 12,   step: 0.5,  label: 'orb dB' },
-  orbDecay:      { default: 3.2,   min: 0.4, max: 6,    step: 0.05, label: 'orb decay s' },
-  orbHarmonics:  { default: 0.38,  min: 0,   max: 1,    step: 0.01, label: 'orb partials' },
+  orbDb:         { default: -5,    min: -30, max: 12,   step: 0.5,  label: 'pad dB' },
+  orbDecay:      { default: 2.9,   min: 0.4, max: 6,    step: 0.05, label: 'pad release s' },
+  orbHarmonics:  { default: 0.24,  min: 0,   max: 1,    step: 0.01, label: 'tine color' },
   starlaceDb:         { default: -3,    min: -30,  max: 12,   step: 0.5,   folder: 'Starlace', label: 'level dB' },
   starlaceAttack:     { default: 0.018, min: 0.002, max: 0.20, step: 0.001, folder: 'Starlace', label: 'attack s' },
   starlaceHold:       { default: 0.34,  min: 0.10,  max: 3.5,  step: 0.01,  folder: 'Starlace', label: 'hold s' },
@@ -116,18 +116,19 @@ type Voice = {
 };
 
 type OrbVoice = {
-  // Hang-drum-style additive synth: fundamental FM voice for body/octave +
-  // a parallel sine voice at the compound-fifth partial for the
-  // characteristic ringing top end.
-  fund: any;        // Tone.PolySynth(Tone.FMSynth) — fundamental + octave
-  fifth: any;       // Tone.PolySynth(Tone.Synth) — compound fifth partial (1.5x octave)
-  auraSynth: any;   // held molten core voice
-  subSynth: any;    // deep center pressure
-  shimmerSynth: any;// fast-motion glass layer
+  // Analog-piano-pad voice: a mellow FM tine, a soft octave body, and held
+  // gesture pads. Field names stay stable because the visual still emits orb
+  // events and existing tweak storage uses the orb keys.
+  fund: any;        // Tone.PolySynth(Tone.FMSynth) — mellow piano tine
+  fifth: any;       // Tone.PolySynth(Tone.Synth) — soft octave/body partial
+  auraSynth: any;   // held piano pad voice
+  subSynth: any;    // quiet lower octave support
+  shimmerSynth: any;// gentle upper pad layer
+  chorus: any;
   auraGain: any;
   subGain: any;
   shimmerGain: any;
-  filter: any;      // gentle lowpass — keeps the metal warm, not glassy
+  filter: any;      // gentle lowpass — keeps the pad warm, not glassy
   panner: any;
   dryGain: any;
   wetSend: any;
@@ -278,7 +279,7 @@ export class HandSynthEngine {
   getProfileLabel(player: PlayerKey): string {
     const id = this.pendingInstruments[player];
     if (id === 'starlace') return 'Starlace';
-    return 'Drum';
+    return 'Piano Pads';
   }
 
   getInstrument(player: PlayerKey): InstrumentId {
@@ -453,9 +454,9 @@ export class HandSynthEngine {
         } catch { /* fallback to ramp */ }
         try {
           this.fireOrbHit(orb, 220, 0.7);
-          console.debug('[handSynth] orb test ping fired', { player });
+          console.debug('[handSynth] piano pad test ping fired', { player });
         } catch (err) {
-          console.warn('[handSynth] orb test ping failed', err);
+          console.warn('[handSynth] piano pad test ping failed', err);
         }
       }
     }
@@ -545,8 +546,8 @@ export class HandSynthEngine {
     };
   }
 
-  /** Called by the Drum visual when an orb is struck. Rings the
-   *  hang-drum voice for the given player. */
+  /** Called by the Piano Pads visual when an orb is struck. Rings the
+   *  analog-piano-pad voice for the given player. */
   triggerOrbHit(player: PlayerKey, frequency: number, velocity: number, orbIndex: number): void {
     if (!this.running || !this.tone) {
       this.queuePendingOrbHit(player, frequency, velocity, orbIndex);
@@ -797,42 +798,49 @@ export class HandSynthEngine {
     const Tone = this.tone!;
     const panner = new Tone.Panner(key === 'local' ? -0.15 : 0.15).connect(this.master);
     const dryGain = new Tone.Gain(0).connect(panner);
-    const reverbReturn = new Tone.Gain(0.74).connect(panner);
+    const reverbReturn = new Tone.Gain(0.58).connect(panner);
     const reverb = new Tone.Reverb({
-      decay: 6.8,
-      preDelay: 0.032,
+      decay: 4.6,
+      preDelay: 0.026,
       wet: 1,
     }).connect(reverbReturn);
     const wetSend = new Tone.Gain(0).connect(reverb);
     const filter = new Tone.Filter({
-      frequency: 4700,
+      frequency: 3400,
       type: 'lowpass',
       rolloff: -12,
-      Q: 0.42,
+      Q: 0.68,
     });
-    filter.connect(dryGain);
+    const chorus = new Tone.Chorus(0.72, 2.8, 0.28).connect(dryGain);
+    chorus.wet.value = 0.24;
+    chorus.start();
+    filter.connect(chorus);
     filter.connect(wetSend);
 
-    // Fundamental + octave partial (FM with harmonicity=2 gives strong octave).
-    // Fast attack + medium-long exponential decay = handpan body.
+    // Mellow electric/analog-piano tine: low FM index, quick modulation decay,
+    // and a long release so the orb grid reads as pads instead of percussion.
     const fund = new Tone.PolySynth(Tone.FMSynth, {
-      harmonicity: 2,
-      modulationIndex: 4.5,
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.004, decay: this.params.orbDecay, sustain: 0, release: this.params.orbDecay * 0.8 },
+      harmonicity: 1.48,
+      modulationIndex: 1.12,
+      oscillator: { type: 'triangle' },
+      envelope: {
+        attack: 0.010,
+        decay: 1.15,
+        sustain: 0.08,
+        release: this.params.orbDecay,
+      },
       modulation: { type: 'sine' },
-      modulationEnvelope: { attack: 0.002, decay: 0.5, sustain: 0, release: 0.55 },
+      modulationEnvelope: { attack: 0.002, decay: 0.32, sustain: 0, release: 0.18 },
       volume: this.params.orbDb,
     }).connect(filter);
     fund.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
 
-    // Compound-fifth partial — sine voice +19 semitones (octave + perfect
-    // fifth) at lower volume, scaled by the harmonics knob. This is the
-    // classic shimmer that distinguishes a hang from a plain bell.
+    // Soft octave/body partial. The harmonics knob now acts like piano tine
+    // color rather than a metallic fifth.
     const fifth = new Tone.PolySynth(Tone.Synth, {
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.003, decay: this.params.orbDecay * 0.7, sustain: 0, release: this.params.orbDecay * 0.4 },
-      volume: this.params.orbDb - 18,
+      oscillator: { type: 'fatsine4', count: 2, spread: 11 } as any,
+      envelope: { attack: 0.018, decay: 1.35, sustain: 0.04, release: this.params.orbDecay * 0.9 },
+      volume: this.params.orbDb - 17,
     }).connect(filter);
     fifth.maxPolyphony = ORB_MAX_ACTIVE_VOICES;
 
@@ -841,24 +849,24 @@ export class HandSynthEngine {
     const shimmerGain = new Tone.Gain(0).connect(filter);
 
     const auraSynth = new Tone.Synth({
-      oscillator: { type: 'fatsine4', count: 3, spread: 16 } as any,
-      envelope: { attack: 0.22, decay: 0.38, sustain: 0.78, release: 1.8 },
-      portamento: 0.09,
-      volume: this.params.orbDb - 10,
+      oscillator: { type: 'fatsine4', count: 4, spread: 18 } as any,
+      envelope: { attack: 0.18, decay: 0.54, sustain: 0.72, release: 2.35 },
+      portamento: 0.12,
+      volume: this.params.orbDb - 8,
     }).connect(auraGain);
 
     const subSynth = new Tone.Synth({
       oscillator: { type: 'sine' },
-      envelope: { attack: 0.30, decay: 0.28, sustain: 0.74, release: 1.8 },
-      portamento: 0.12,
-      volume: this.params.orbDb - 16,
+      envelope: { attack: 0.34, decay: 0.32, sustain: 0.56, release: 2.2 },
+      portamento: 0.14,
+      volume: this.params.orbDb - 20,
     }).connect(subGain);
 
     const shimmerSynth = new Tone.Synth({
-      oscillator: { type: 'triangle8' } as any,
-      envelope: { attack: 0.055, decay: 0.22, sustain: 0.42, release: 0.85 },
-      portamento: 0.045,
-      volume: this.params.orbDb - 22,
+      oscillator: { type: 'triangle4' } as any,
+      envelope: { attack: 0.12, decay: 0.48, sustain: 0.34, release: 1.6 },
+      portamento: 0.08,
+      volume: this.params.orbDb - 24,
     }).connect(shimmerGain);
 
     return {
@@ -867,6 +875,7 @@ export class HandSynthEngine {
       auraSynth,
       subSynth,
       shimmerSynth,
+      chorus,
       auraGain,
       subGain,
       shimmerGain,
@@ -909,7 +918,7 @@ export class HandSynthEngine {
       const noteIndex = pickNoteIndex(pitchT, orb.lastNoteIdx, this.orbGestureNotes.length);
       const note = this.orbGestureNotes[noteIndex];
       const subNote = transposeInterval(note, -12);
-      const shimmerNote = transposeInterval(note, speed > 0.62 ? 19 : 12);
+      const shimmerNote = transposeInterval(note, 12);
 
       if (!orb.gestureActive) {
         try {
@@ -933,33 +942,33 @@ export class HandSynthEngine {
         }
       }
 
-      const fineBend = gesture.x * 8 + gesture.z * 4 + speed * 6;
+      const fineBend = gesture.x * 3.5 + gesture.z * 2 + speed * 2.5;
       try {
         orb.auraSynth.detune?.rampTo?.(fineBend, PARAM_RAMP);
         orb.subSynth.detune?.rampTo?.(fineBend * 0.35, PARAM_RAMP * 1.5);
-        orb.shimmerSynth.detune?.rampTo?.(fineBend * 1.8, PARAM_RAMP);
+        orb.shimmerSynth.detune?.rampTo?.(fineBend * 1.15, PARAM_RAMP);
       } catch { /* detune is optional on Tone nodes */ }
 
-      const aura = clamp(0.06 + depth * 0.34 + speed * 0.14 + gesture.intensity * 0.10, 0, 0.62);
-      const sub = clamp(depth * depth * 0.30 + (1 - radial) * 0.08, 0, 0.38);
-      const shimmer = clamp(speed * 0.24 + Math.max(0, gesture.y) * 0.08, 0, 0.34);
+      const aura = clamp(0.08 + depth * 0.30 + speed * 0.08 + gesture.intensity * 0.08, 0, 0.50);
+      const sub = clamp(depth * depth * 0.18 + (1 - radial) * 0.05, 0, 0.24);
+      const shimmer = clamp(speed * 0.12 + Math.max(0, gesture.y) * 0.05 + gesture.intensity * 0.05, 0, 0.18);
       orb.auraGain.gain.rampTo(aura, PARAM_RAMP);
       orb.subGain.gain.rampTo(sub, PARAM_RAMP * 1.4);
       orb.shimmerGain.gain.rampTo(shimmer, PARAM_RAMP);
 
-      const filterHz = 360 + depth * 1500 + speed * 4300 + heightN * 1050;
-      orb.filter.frequency.rampTo(clamp(filterHz, 220, 7800), PARAM_RAMP);
-      orb.filter.Q.rampTo(0.40 + depth * 0.75 + speed * 1.8, PARAM_RAMP);
+      const filterHz = 520 + depth * 1150 + speed * 2400 + heightN * 820;
+      orb.filter.frequency.rampTo(clamp(filterHz, 420, 5600), PARAM_RAMP);
+      orb.filter.Q.rampTo(0.62 + depth * 0.42 + speed * 0.75, PARAM_RAMP);
       orb.panner.pan.rampTo(clamp((player === 'local' ? -0.10 : 0.10) + gesture.x * 0.36, -0.85, 0.85), PARAM_RAMP);
 
-      const sparkGap = 0.16 - speed * 0.085;
+      const sparkGap = 0.22 - speed * 0.09;
       if (speed > 0.58 && this.elapsed - orb.lastSparkAt > sparkGap) {
         try {
           const sparkVel = clamp(0.18 + speed * 0.72 + depth * 0.12, 0, 1);
-          orb.fifth.triggerAttackRelease(shimmerNote, '16n', undefined, sparkVel * 0.42);
+          orb.fifth.triggerAttackRelease(shimmerNote, '8n', undefined, sparkVel * 0.22);
         } catch { /* spark is ornamental */ }
         orb.lastSparkAt = this.elapsed;
-        orb.pulse = Math.max(orb.pulse, clamp(0.35 + speed * 0.5, 0, 1));
+        orb.pulse = Math.max(orb.pulse, clamp(0.26 + speed * 0.42, 0, 1));
       }
 
       orb.gestureNote = note;
@@ -978,9 +987,9 @@ export class HandSynthEngine {
     }
 
     // Wet send rises with energy — more reverb tail when actively playing.
-    const wet = clamp(0.30 + orb.energy * 0.52 + (gestureActive ? gesture.depth * 0.12 : 0), 0, 1);
+    const wet = clamp(0.22 + orb.energy * 0.42 + (gestureActive ? gesture.depth * 0.10 : 0), 0, 0.82);
     orb.wetSend.gain.rampTo(wet * this.params.reverbWetMax, PARAM_RAMP * 2);
-    orb.dryGain.gain.rampTo(0.78, PARAM_RAMP);
+    orb.dryGain.gain.rampTo(0.82, PARAM_RAMP);
   }
 
   private silenceOrb(player: PlayerKey): void {
@@ -1031,6 +1040,7 @@ export class HandSynthEngine {
     orb.auraSynth?.dispose?.();
     orb.subSynth?.dispose?.();
     orb.shimmerSynth?.dispose?.();
+    orb.chorus?.dispose?.();
     orb.auraGain?.dispose?.();
     orb.subGain?.dispose?.();
     orb.shimmerGain?.dispose?.();
@@ -1044,13 +1054,14 @@ export class HandSynthEngine {
 
   private fireOrbHit(orb: OrbVoice, frequency: number, velocity: number): void {
     // Velocity floor at 0.35 so a soft tap still rings audibly.
-    const synthVel = 0.35 + velocity * 0.65;
-    const fifthHz = frequency * 3.0; // octave + fifth (3x fundamental)
+    const synthVel = 0.30 + velocity * 0.58;
+    const octaveHz = frequency * 2.01;
     const harmonics = clamp(this.params.orbHarmonics, 0, 1);
     try {
-      orb.fund.triggerAttackRelease(frequency, this.params.orbDecay, undefined, synthVel);
+      const duration = Math.max(0.75, this.params.orbDecay * 0.62);
+      orb.fund.triggerAttackRelease(frequency, duration, undefined, synthVel);
       if (harmonics > 0.02) {
-        orb.fifth.triggerAttackRelease(fifthHz, this.params.orbDecay * 0.7, undefined, synthVel * harmonics * 0.42);
+        orb.fifth.triggerAttackRelease(octaveHz, duration * 0.92, undefined, synthVel * harmonics * 0.34);
       }
     } catch (err) {
       console.warn('[handSynth] orb trigger failed', err);
@@ -1606,10 +1617,10 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const o = this.orbVoices[key];
       if (o?.fund?.volume) o.fund.volume.rampTo(this.params.orbDb, PARAM_RAMP);
-      if (o?.fifth?.volume) o.fifth.volume.rampTo(this.params.orbDb - 18, PARAM_RAMP);
-      if (o?.auraSynth?.volume) o.auraSynth.volume.rampTo(this.params.orbDb - 10, PARAM_RAMP);
-      if (o?.subSynth?.volume) o.subSynth.volume.rampTo(this.params.orbDb - 16, PARAM_RAMP);
-      if (o?.shimmerSynth?.volume) o.shimmerSynth.volume.rampTo(this.params.orbDb - 22, PARAM_RAMP);
+      if (o?.fifth?.volume) o.fifth.volume.rampTo(this.params.orbDb - 17, PARAM_RAMP);
+      if (o?.auraSynth?.volume) o.auraSynth.volume.rampTo(this.params.orbDb - 8, PARAM_RAMP);
+      if (o?.subSynth?.volume) o.subSynth.volume.rampTo(this.params.orbDb - 20, PARAM_RAMP);
+      if (o?.shimmerSynth?.volume) o.shimmerSynth.volume.rampTo(this.params.orbDb - 24, PARAM_RAMP);
     }
   }
 

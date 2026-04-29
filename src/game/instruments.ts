@@ -79,10 +79,10 @@ export type InstrumentMeta = {
 export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
   drum: {
     id: 'drum',
-    label: 'Drum',
-    subtitle: 'rhythm · pulse · spark',
-    color: '#ff9a3c',
-    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="9" rx="8" ry="2.4"/><path d="M4 9v6c0 1.32 3.6 2.4 8 2.4s8-1.08 8-2.4V9"/><path d="M8.5 11.4l1.4 2.6M15.5 11.4l-1.4 2.6"/></svg>`,
+    label: 'Piano Pads',
+    subtitle: 'analog piano · warm pads',
+    color: '#7ad9ff',
+    iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="6" width="17" height="12" rx="1.8"/><path d="M3.5 11h17M7 11v7M10.3 11v7M13.7 11v7M17 11v7"/><path d="M6.8 6v4M10.2 6v4M15.4 6v4"/></svg>`,
   },
   starlace: {
     id: 'starlace',

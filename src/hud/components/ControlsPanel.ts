@@ -36,9 +36,9 @@ const STARLACE_TOUCH_CONTROLS: ControlsContent = {
 };
 
 function drumTouchControls(orbCount: number): ControlsContent {
-  const hint = orbCount === 1 ? 'across the orb' : `across the ${orbCount} orbs`;
+  const hint = orbCount === 1 ? 'across the pad' : `across the ${orbCount} pads`;
   return {
-    blurb: 'Swipe across the orbs to play.',
+    blurb: 'Swipe across the piano pads to play.',
     rows: [{ keys: ['Swipe'], hint }],
   };
 }
@@ -140,15 +140,15 @@ function drumControlsForOrbCount(orbCount: number): ControlsContent {
   const keys = drumKeyLabelsForOrbCount(orbCount);
   const keyCount = keys.length;
   const hint = keyCount >= orbCount
-    ? (orbCount === 1 ? 'play the orb' : `play all ${orbCount} orbs`)
-    : `play ${keyCount} of ${orbCount} orbs`;
+    ? (orbCount === 1 ? 'play the pad' : `play all ${orbCount} pads`)
+    : `play ${keyCount} of ${orbCount} pads`;
 
   return {
-    blurb: 'Strike the orbs to play.',
+    blurb: 'Strike the piano pads to play.',
     rows: [
       { keys, hint },
-      { keys: ['Mouse'], hint: 'click or drag through an orb' },
-      { keys: ['Hands'], hint: 'reach forward through any orb' },
+      { keys: ['Mouse'], hint: 'click or drag through a pad' },
+      { keys: ['Hands'], hint: 'reach forward through any pad' },
     ],
   };
 }
@@ -176,7 +176,7 @@ function buildRow(entry: ControlEntry): HTMLDivElement {
 }
 
 function labelFor(id: InstrumentId): string {
-  return id === 'drum' ? 'Drum' : 'Starlace';
+  return id === 'drum' ? 'Piano Pads' : 'Starlace';
 }
 
 function readCollapsedState(): boolean {
