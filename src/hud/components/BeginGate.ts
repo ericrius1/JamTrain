@@ -232,7 +232,7 @@ export class BeginGate {
     this.btn.disabled = true;
     this.input.disabled = true;
     this.rerollBtn.disabled = true;
-    this.btn.textContent = 'Awakening…';
+    this.btn.textContent = 'Boarding...';
     this.errEl.textContent = '';
     try {
       await onBegin(name);

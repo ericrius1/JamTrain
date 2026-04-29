@@ -32,7 +32,7 @@ export const STARLACE_DEFS = {
   danceAmount:     { default: 0.030, min: 0,     max: 0.16, step: 0.001, label: 'dance amount' },
   danceSpeed:      { default: 0.14,  min: 0,     max: 1.2,  step: 0.01,  label: 'dance speed' },
   keyWalkInterval: { default: 0.34,  min: 0.18,  max: 0.75, step: 0.005, label: 'key walk step s' },
-  keyPhraseJumps:  { default: 4,     min: 0,     max: 12,   step: 1,     label: 'held jumps' },
+  keyPhraseJumps:  { default: 5,     min: 0,     max: 12,   step: 1,     label: 'held jumps' },
   keyChordMaxNotes:{ default: 3,     min: 1,     max: 3,    step: 1,     label: 'held chord notes' },
   coolColor:       { type: 'color', default: '#5fb6c4', label: 'cool stars' },
   warmColor:       { type: 'color', default: '#e56f67', label: 'warm stars' },
@@ -203,6 +203,8 @@ export class Starlace implements PlayerVisual {
   private static readonly REVEAL_DURATION_IN = 1.55;
   private static readonly REVEAL_DURATION_OUT = 0.85;
   private static readonly REVEAL_FRONT_SOFTNESS = 0.85;
+  private static readonly KEYBOARD_ECHO_DELAY_FACTORS = [1.20, 0.48, 1.06, 0.50, 0.42] as const;
+  private static readonly KEYBOARD_ECHO_VELOCITY_OFFSETS = [0.10, -0.03, 0.07, -0.02, -0.06] as const;
   private anchor = new THREE.Vector3();
   private left = new THREE.Vector3();
   private right = new THREE.Vector3();
@@ -1512,15 +1514,23 @@ export class Starlace implements PlayerVisual {
 
   private keyboardStepDelay(state: KeyboardPathState): number {
     const base = clamp(this.params.keyWalkInterval, 0.18, 0.75);
-    const swing = Math.sin((state.step + 1) * 1.73 + state.phraseSeed * TAU) * 0.035;
-    const breath = state.step % 7 === 6 ? 0.045 : 0;
-    return clamp(base + swing + breath, 0.22, 0.82);
+    const stageIndex = Math.max(0, state.step - 1);
+    const patternIndex = stageIndex % Starlace.KEYBOARD_ECHO_DELAY_FACTORS.length;
+    const repeats = Math.floor(stageIndex / Starlace.KEYBOARD_ECHO_DELAY_FACTORS.length);
+    const tighten = Math.max(0.84, 1 - repeats * 0.06);
+    const humanize = (hash(state.phraseSeed * 13.71 + state.step * 19.37) - 0.5) * base * 0.10;
+    return clamp(base * Starlace.KEYBOARD_ECHO_DELAY_FACTORS[patternIndex] * tighten + humanize, 0.12, 0.86);
   }
 
   private keyboardPathVelocity(state: KeyboardPathState): number {
-    const accent = state.step % 4 === 1 ? 0.11 : 0;
+    const patternIndex = state.step <= 0
+      ? -1
+      : (state.step - 1) % Starlace.KEYBOARD_ECHO_VELOCITY_OFFSETS.length;
+    const accent = state.step <= 0
+      ? 0.12
+      : Starlace.KEYBOARD_ECHO_VELOCITY_OFFSETS[patternIndex] ?? 0;
     const base = 0.38 + state.velocity * 0.38;
-    return clamp(base + accent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.18, 0.34, 0.92);
+    return clamp(base + accent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.14, 0.34, 0.95);
   }
 
   private emitStreak(node: StarNode, velocity: number): void {

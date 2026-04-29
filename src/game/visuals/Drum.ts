@@ -46,7 +46,7 @@ export const DRUM_DEFS = {
   orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
   pyramidRowSpacing: { default: 0.105, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
-  heldStreamAmount:  { default: 1.0, min: 0, max: 4, step: 0.05, folder: 'Emission', label: 'held stream amount' },
+  heldStreamAmount:  { default: 10, min: 0, max: 100, step: 0.05, folder: 'Emission', label: 'emission rate' },
 } as const;
 
 export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
@@ -137,6 +137,13 @@ const HELD_STREAM_MAX_PER_FRAME = 10;
 // — high enough to ignore the few stray pixels of cursor jitter while a user
 // is reading the screen, low enough that gentle drags still drone.
 const POINTER_GESTURE_MOTION_NDC_PER_SEC = 0.05;
+const POINTER_SPEED_RESPONSE_NDC_PER_SEC = 7.5;
+const POINTER_GESTURE_SPEED_MAX = 0.55;
+const POINTER_HIT_VELOCITY_BASE = 0.28;
+const POINTER_HIT_VELOCITY_MOTION_RANGE = 0.24;
+const POINTER_HIT_VELOCITY_DOWN_BOOST = 0.08;
+const POINTER_HIT_VELOCITY_CLICK_BOOST = 0.16;
+const POINTER_HIT_VELOCITY_MAX = 0.68;
 
 type AnyNode = any;
 
@@ -1107,7 +1114,7 @@ export class Drum implements PlayerVisual {
 
     const radial = clamp(_pointerLocal.distanceTo(orb.mesh.position) / Math.max(this.params.orbRadius, 1e-4), 0, 1);
     const depth = clamp(1 - radial, 0, 1);
-    const speed = clamp(ndcSpeed / 7.5, 0, 1);
+    const speed = this.pointerSpeedResponse(ndcSpeed) * POINTER_GESTURE_SPEED_MAX;
     const intensity = clamp(0.18 + speed * 0.58 + depth * 0.34 + (this.pointerDown ? 0.18 : 0), 0, 1);
     this.pointerGlow += (intensity - this.pointerGlow) * (1 - Math.exp(-delta * 12));
     this.uniforms.gesture.value.set(_pointerLocal.x, _pointerLocal.y, _pointerLocal.z, this.pointerGlow);
@@ -1158,9 +1165,19 @@ export class Drum implements PlayerVisual {
   }
 
   private pointerVelocity(ndcSpeed: number, clickQueued: boolean): number {
-    const motion = clamp(ndcSpeed / 7.5, 0, 1);
-    const contactBoost = clickQueued ? 0.24 : (this.pointerDown ? 0.12 : 0);
-    return clamp(0.22 + contactBoost + motion * 0.64, 0.18, 1);
+    const motion = this.pointerSpeedResponse(ndcSpeed);
+    const contactBoost = clickQueued
+      ? POINTER_HIT_VELOCITY_CLICK_BOOST
+      : (this.pointerDown ? POINTER_HIT_VELOCITY_DOWN_BOOST : 0);
+    return clamp(
+      POINTER_HIT_VELOCITY_BASE + contactBoost + motion * POINTER_HIT_VELOCITY_MOTION_RANGE,
+      0.18,
+      POINTER_HIT_VELOCITY_MAX,
+    );
+  }
+
+  private pointerSpeedResponse(ndcSpeed: number): number {
+    return clamp(ndcSpeed / POINTER_SPEED_RESPONSE_NDC_PER_SEC, 0, 1);
   }
 
   private firePointerHit(orbIndex: number, velocity: number, worldPoint: THREE.Vector3): boolean {

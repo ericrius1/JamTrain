@@ -71,7 +71,7 @@ const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 export const SCULPTOR_DEFS = {
   particleCount:      { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
   maxSpawnsPerFrame:  { default: DEFAULT_MAX_SPAWNS_PER_FRAME, min: MIN_CONFIGURABLE_SPAWNS_PER_FRAME, max: MAX_CONFIGURABLE_SPAWNS_PER_FRAME, step: 16, folder: 'Particles', label: 'stream cap / frame' },
-  particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
+  particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'opacity fade starts at life' },
@@ -699,9 +699,9 @@ export class EnergySculptor implements EnergySink {
     const spawnQueueCapacity = this.spawnQueueCapacity;
     const spawnSearchSteps = Math.ceil(this.count / spawnQueueCapacity);
 
-    // Emit pass: prefer dead slots, but fall back to the ring cursor when the
-    // pool is full. Fresh instrument hits should always show up; older
-    // particles are the right thing to sacrifice under pressure.
+    // Emit pass: only write into dead slots. Dropping overflow is preferable to
+    // replacing live particles, because replacement bypasses lifetime fade-out
+    // and reads as popping.
     const emitFn = Fn(() => {
       const i = instanceIndex;
       const spawnCountU = this.spawnCountUniform.toUint();
@@ -713,14 +713,12 @@ export class EnergySculptor implements EnergySink {
       const spawnVel = this.spawnVelUniform.element(i);
       const spawnColor = this.spawnColorUniform.element(i);
       const spawnMeta = this.spawnMetaUniform.element(i);
-      const wrote = uint(0).toVar();
       const writeSpawn = (slot: any) => {
         positions.element(slot).assign(spawnPos);
         velocities.element(slot).assign(spawnVel);
         colors.element(slot).assign(spawnColor);
         // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
         meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
-        wrote.assign(uint(1));
       };
       Loop(spawnSearchSteps, ({ i: scan }) => {
         const slot = spawnCursorU
@@ -733,10 +731,6 @@ export class EnergySculptor implements EnergySink {
           writeSpawn(slot);
           Break();
         });
-      });
-      If(wrote.equal(uint(0)), () => {
-        const fallbackSlot = spawnCursorU.add(i).mod(uint(this.count));
-        writeSpawn(fallbackSlot);
       });
     });
     this.emitCompute = emitFn().compute(spawnQueueCapacity);
@@ -892,7 +886,7 @@ export class EnergySculptor implements EnergySink {
       // not blooming into existence already mid-flight. Fade-out is opacity-only
       // from the configured normalized lifetime point to death.
       const born = newAge.div(0.04).clamp(0, 1);
-      const fadeOut = float(1).sub(smoothstep(fadeStart, 1.0, newLifeT));
+      const fadeOut = float(1).sub(newLifeT).div(float(1).sub(fadeStart).max(0.0001)).clamp(0, 1);
       const alphaLife = born.mul(fadeOut);
 
       // Signed acceleration along the path, low-passed across frames so the

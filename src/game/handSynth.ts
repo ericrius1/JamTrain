@@ -807,7 +807,9 @@ export class HandSynthEngine {
     this.absorbStarlaceGesture(starlace, v, x, y);
 
     const robotFill = this.isRobotPartner(player);
-    const noteGap = Math.max(0.04, this.params.starlaceNoteGap * (robotFill ? 1.65 : 1));
+    const heldPhrase = Number.isFinite(options.phraseStep);
+    const noteGapScale = robotFill ? 1.65 : (heldPhrase ? 0.50 : 1);
+    const noteGap = Math.max(0.04, this.params.starlaceNoteGap * noteGapScale);
     if (this.elapsed - starlace.lastAudioAt < noteGap) return;
 
     const playableChord = this.starlacePlayableChord(chord, v, requestedChordSize);
