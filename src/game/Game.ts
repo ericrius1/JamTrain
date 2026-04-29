@@ -215,7 +215,7 @@ export class Game {
     this.poseSession = new PoseSession(
       [webrtcTransport, this.broadcastTransport],
       {
-        localId: this.multiplayer.localId,
+        getLocalId: () => this.multiplayer.localId,
         getRoomId: () => this.multiplayer.getRoom(),
         getPartnerSeatIndex: () => this.multiplayer.partnerSeatIndex,
       }

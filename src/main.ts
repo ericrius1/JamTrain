@@ -276,9 +276,12 @@ async function createRuntime(): Promise<RuntimeApi> {
   game.onLocalDrumOrbCountChange(count => hud.setDrumOrbCount(count));
 
   game.onAssignedRoom(room => {
+    // Don't resetShareAndMic here — onAssignedRoom fires on every server
+    // confirmation including the initial connect, which would silently wipe
+    // the user's mic/share-video preferences set during the BeginGate.
+    // resetShareAndMic stays on the explicit room-change paths below.
     writeRoomToUrl(room);
     hud.setRoom(room);
-    resetShareAndMic();
   });
 
   function resetShareAndMic(): void {

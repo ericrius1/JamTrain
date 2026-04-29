@@ -39,6 +39,7 @@ import LeaveRoomReducer from "./leave_room_reducer";
 import RequestSeatReducer from "./request_seat_reducer";
 import SendWebrtcSignalReducer from "./send_webrtc_signal_reducer";
 import UpdateCreatureReducer from "./update_creature_reducer";
+import UpdateDisplayNameReducer from "./update_display_name_reducer";
 import UpdateInstrumentReducer from "./update_instrument_reducer";
 
 // Import all procedure arg schemas
@@ -88,6 +89,7 @@ const reducersSchema = __reducers(
   __reducerSchema("request_seat", RequestSeatReducer),
   __reducerSchema("send_webrtc_signal", SendWebrtcSignalReducer),
   __reducerSchema("update_creature", UpdateCreatureReducer),
+  __reducerSchema("update_display_name", UpdateDisplayNameReducer),
   __reducerSchema("update_instrument", UpdateInstrumentReducer),
 );
 

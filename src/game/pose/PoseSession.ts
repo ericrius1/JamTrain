@@ -2,8 +2,10 @@ import type { PlayerPose } from '../types';
 import type { PoseTransport } from './PoseTransport';
 
 export type PoseSessionConfig = {
-  /** Stable identity of the local player, included on every outbound pose. */
-  localId: string;
+  /** Source of the local player's identity. Read fresh on every send so that
+   *  the SpacetimeDB-issued identity, which arrives async after construction,
+   *  replaces the boot-time placeholder before any pose is stamped. */
+  getLocalId: () => string;
   /** Source of the current room id (read fresh on every send). */
   getRoomId: () => string;
   /** Source of the partner's seat index (used to stamp inbound poses). */
@@ -38,7 +40,7 @@ export class PoseSession {
   sendLocalPose(pose: PlayerPose, time: number): boolean {
     if (time - this.lastSendAt < this.intervalSec) return false;
     this.lastSendAt = time;
-    const stamped: PlayerPose = { ...pose, id: this.config.localId, roomId: this.config.getRoomId() };
+    const stamped: PlayerPose = { ...pose, id: this.config.getLocalId(), roomId: this.config.getRoomId() };
     this.localPose = stamped;
     for (const t of this.transports) t.send(stamped);
     return true;
@@ -62,7 +64,7 @@ export class PoseSession {
   }
 
   private acceptInbound(pose: PlayerPose): void {
-    if (pose.id === this.config.localId) return;
+    if (pose.id === this.config.getLocalId()) return;
     this.remotePose = {
       ...pose,
       roomId: this.config.getRoomId(),

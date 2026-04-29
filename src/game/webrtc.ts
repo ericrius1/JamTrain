@@ -200,7 +200,19 @@ export class WebRTCClient {
     pc.oniceconnectionstatechange = () => {
       console.info('[webrtc] iceConnectionState', pc.iceConnectionState);
       if (pc.iceConnectionState === 'failed') {
-        console.error('[webrtc] connection failed; common cause is symmetric NAT (no TURN configured)');
+        console.warn('[webrtc] ICE failed; attempting restart');
+        try {
+          pc.restartIce();
+          // restartIce flips signaling state — drive negotiation now so a new
+          // offer goes out with fresh ICE credentials.
+          if (this.partnerIdentity && this.isOfferer()) {
+            void this.createAndSendOffer('ice restart');
+          }
+        } catch (err) {
+          console.error('[webrtc] restartIce failed; falling back to teardown', err);
+          this.teardownPeer();
+          this.maybeStartNegotiation();
+        }
       }
     };
 
@@ -258,6 +270,23 @@ export class WebRTCClient {
           console.warn('[webrtc] addTrack failed', track.kind, err);
         }
       }
+    }
+
+    // If we previously attached a mic track but it has since ended (OS killed
+    // it, permission revoked, hot-swap), drop the cached reference so the
+    // block below can attach a fresh one. Without this, the sender holds a
+    // dead track and partner audio silently disappears after a mic restart.
+    if (this.audioSenderTrack && this.audioSenderTrack.readyState === 'ended') {
+      const sender = pc.getSenders().find(s => s.track === this.audioSenderTrack);
+      if (sender) {
+        try {
+          pc.removeTrack(sender);
+          changed = true;
+        } catch (err) {
+          console.warn('[webrtc] removeTrack (ended mic) failed', err);
+        }
+      }
+      this.audioSenderTrack = undefined;
     }
 
     if (micStream) {

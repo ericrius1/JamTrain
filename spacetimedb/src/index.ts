@@ -250,6 +250,24 @@ export const update_creature = spacetimedb.reducer(
   }
 );
 
+// Dedicated display-name update so renames don't run through request_seat,
+// which would also recompute seat index and could even bounce the user to a
+// different room if their current cabin was full at that exact moment.
+export const update_display_name = spacetimedb.reducer(
+  { displayName: t.string() },
+  (ctx, { displayName }) => {
+    const cleanName = displayName.trim().slice(0, 32) || 'Player';
+    const row = ctx.db.player.identity.find(ctx.sender);
+    if (!row) return;
+    if (row.displayName === cleanName) return;
+    ctx.db.player.identity.update({
+      ...row,
+      displayName: cleanName,
+      updatedAt: ctx.timestamp,
+    });
+  }
+);
+
 export const leave_room = spacetimedb.reducer(ctx => {
   ctx.db.player.identity.delete(ctx.sender);
 });

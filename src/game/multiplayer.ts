@@ -61,6 +61,11 @@ export class MultiplayerClient {
   private localCreatureListeners = new Set<CreatureListener>();
   private partnerCreatureListeners = new Set<CreatureListener>();
   private subscriptionApplied = false;
+  // Wall-clock ms set on each successful connect. Signals with createdAt
+  // older than this are stale (left over from a previous session that didn't
+  // get a clean disconnect-cleanup) and we drop them rather than feed them
+  // to the WebRTC state machine where they cause peer-connection thrash.
+  private connectedAtMs = 0;
   private roomId: string;
   private lastEmittedRoomId: string | null = null;
   private displayName: string;
@@ -269,8 +274,11 @@ export class MultiplayerClient {
     if (next === this.displayName) return;
     this.displayName = next;
     if (this.connection?.isActive) {
-      // Re-issue request_seat so the server picks up the new name.
-      this.requestSeat(this.roomId);
+      // Use a dedicated reducer rather than re-issuing request_seat — the
+      // latter recomputes seat index and could even bounce the user to a
+      // different room if the current cabin was full at that exact moment.
+      void this.connection.reducers.updateDisplayName({ displayName: next })
+        .catch(err => console.warn('[jam-train] update_display_name failed', err));
     }
   }
 
@@ -292,6 +300,7 @@ export class MultiplayerClient {
         .withToken(sessionStorage.getItem(TOKEN_STORAGE_KEY) || undefined)
         .onConnect((conn, identity, token) => {
           this.localId = identity.toHexString();
+          this.connectedAtMs = Date.now();
           sessionStorage.setItem(TOKEN_STORAGE_KEY, token);
           const isReconnect = this.reconnectAttempts > 0;
           this.reconnectAttempts = 0;
@@ -363,11 +372,12 @@ export class MultiplayerClient {
   dispose(): void {
     this.disposed = true;
     window.clearTimeout(this.reconnectTimer);
-    if (this.connection?.isActive) {
-      void this.connection.reducers.leaveRoom({}).finally(() => this.connection?.disconnect());
-    } else {
-      this.connection?.disconnect();
-    }
+    // Just disconnect — don't call leave_room. The server's on_disconnect
+    // hook intentionally keeps the player row alive (marking it offline) so
+    // a brief disconnect/reconnect doesn't show the partner a leave + rejoin
+    // toast on every page reload. leave_room stays reserved for an explicit
+    // user action (the future Disembark button).
+    this.connection?.disconnect();
   }
 
   private scheduleReconnect(): void {
@@ -437,10 +447,17 @@ export class MultiplayerClient {
         this.ensureInitialLocalLoadout();
         // Now sync the partner plaque with whoever's actually online here.
         this.updatePartner();
-        // Push any local choice made before the subscription came up,
-        // including the initial client-side auto-pick.
-        if (this.localInstrumentDirty) void this.pushLocalInstrument();
-        if (this.localCreatureDirty) void this.pushLocalCreature();
+        // Only push when the user explicitly chose. request_seat already
+        // accepted the auto-pick (and possibly corrected it to pair against
+        // the partner) — pushing the pre-correction value here would clobber
+        // the server's pairing and both players could land on the same
+        // instrument until further updates settle.
+        if (this.localInstrumentDirty && this.localInstrumentExplicit) {
+          void this.pushLocalInstrument();
+        }
+        if (this.localCreatureDirty && this.localCreatureExplicit) {
+          void this.pushLocalCreature();
+        }
         console.info('[jam-train] subscription applied; room', this.roomId, 'partners', this.knownPlayers.size);
       })
       .onError(ctx => {
@@ -599,6 +616,19 @@ export class MultiplayerClient {
     const recipientHex = row.recipientId.toHexString();
     if (recipientHex !== this.localId) return;
     if (row.roomId !== this.roomId) return;
+    // Stale-signal guard: anything stamped before our current session began
+    // is a leftover from a prior client session whose disconnect didn't get
+    // a chance to clean up. Replaying it would point our fresh peer
+    // connection at a state that no longer exists, so consume + drop.
+    // Allow a small clock-skew slack (5s) for SpacetimeDB / browser drift.
+    if (this.connectedAtMs > 0) {
+      const createdMs = Number(row.createdAt.toMillis());
+      if (Number.isFinite(createdMs) && createdMs < this.connectedAtMs - 5000) {
+        console.info('[webrtc] dropping stale signal', row.kind, 'from prior session');
+        void this.consumeWebrtcSignal(row.id);
+        return;
+      }
+    }
     const senderHex = row.senderId.toHexString();
     console.debug('[webrtc] recv', row.kind, 'from', senderHex.slice(0, 10));
     for (const listener of this.signalListeners) {

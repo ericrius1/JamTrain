@@ -11,6 +11,7 @@ import LeaveRoomReducer from "../leave_room_reducer";
 import RequestSeatReducer from "../request_seat_reducer";
 import SendWebrtcSignalReducer from "../send_webrtc_signal_reducer";
 import UpdateCreatureReducer from "../update_creature_reducer";
+import UpdateDisplayNameReducer from "../update_display_name_reducer";
 import UpdateInstrumentReducer from "../update_instrument_reducer";
 
 export type ConsumeWebrtcSignalParams = __Infer<typeof ConsumeWebrtcSignalReducer>;
@@ -18,5 +19,6 @@ export type LeaveRoomParams = __Infer<typeof LeaveRoomReducer>;
 export type RequestSeatParams = __Infer<typeof RequestSeatReducer>;
 export type SendWebrtcSignalParams = __Infer<typeof SendWebrtcSignalReducer>;
 export type UpdateCreatureParams = __Infer<typeof UpdateCreatureReducer>;
+export type UpdateDisplayNameParams = __Infer<typeof UpdateDisplayNameReducer>;
 export type UpdateInstrumentParams = __Infer<typeof UpdateInstrumentReducer>;
 
