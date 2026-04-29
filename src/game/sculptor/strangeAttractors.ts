@@ -89,7 +89,39 @@ export function halvorsenFlow(p: N, a: N): N {
   );
 }
 
-export type AttractorKind = 'thomas' | 'lorenz' | 'aizawa' | 'halvorsen';
+// Rössler — single-band spiral that breaks loose into a stretched fold; the
+// canonical "simplest" 3D chaotic system.
+//   dx = -y - z
+//   dy = x + a*y
+//   dz = b + z*(x - c)
+export function rosslerFlow(p: N, a: N, b: N, c: N): N {
+  const x = p.x;
+  const y = p.y;
+  const z = p.z;
+  return vec3(
+    y.negate().sub(z),
+    x.add(a.mul(y)),
+    b.add(z.mul(x.sub(c))),
+  );
+}
+
+// Dadras — woven asymmetric ribbons; quasi-period that drifts through a
+// large bowl-shaped region.
+//   dx = y - p*x + o*y*z
+//   dy = r*y - x*z + z
+//   dz = c*x*y - e*z
+export function dadrasFlow(p: N, pp: N, o: N, r: N, c: N, e: N): N {
+  const x = p.x;
+  const y = p.y;
+  const z = p.z;
+  return vec3(
+    y.sub(pp.mul(x)).add(o.mul(y).mul(z)),
+    r.mul(y).sub(x.mul(z)).add(z),
+    c.mul(x).mul(y).sub(e.mul(z)),
+  );
+}
+
+export type AttractorKind = 'thomas' | 'lorenz' | 'aizawa' | 'halvorsen' | 'rossler' | 'dadras';
 
 export type AttractorPreset = {
   kind: AttractorKind;
@@ -127,5 +159,19 @@ export const ATTRACTOR_PRESETS: Record<AttractorKind, AttractorPreset> = {
     dt: 0.35,
     velocityBlend: 0.86,
     containmentRadius: 9,
+  },
+  rossler: {
+    kind: 'rossler',
+    worldScale: 0.022,
+    dt: 0.55,
+    velocityBlend: 0.88,
+    containmentRadius: 22,
+  },
+  dadras: {
+    kind: 'dadras',
+    worldScale: 0.025,
+    dt: 0.45,
+    velocityBlend: 0.86,
+    containmentRadius: 18,
   },
 };

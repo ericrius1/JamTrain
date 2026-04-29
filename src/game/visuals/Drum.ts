@@ -1028,7 +1028,6 @@ export class Drum implements PlayerVisual {
       direction: dir.clone(),
       color: this.palette === 'local' ? Drum.SPARK_COLOR_LOCAL : Drum.SPARK_COLOR_REMOTE,
       count: Math.round(40 + velocity * 40),
-      intensity: 0.6 + velocity * 0.4,
       speed: 0.9 + velocity * 1.4,
     });
   }

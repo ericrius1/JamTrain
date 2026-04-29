@@ -184,6 +184,12 @@ export class Game {
     this.handTracker.setPointerInputEnabled(false);
     this.handSynth.setMouseInputEnabled(false);
     this.multiplayer = new MultiplayerClient(urlRoom, 'Player');
+    // MultiplayerClient already rolled a random local instrument in its ctor.
+    // Sync now so installPlayerVisuals() (in start()) builds the correct one
+    // — otherwise the listeners registered in main.ts replay the MP-chosen
+    // values and swap the visuals before the user does anything.
+    this.playerInstruments.local = normalizeInstrumentId(this.multiplayer.getLocalInstrument());
+    this.playerInstruments.remote = normalizeInstrumentId(this.multiplayer.getPartnerInstrument());
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
     keyDirector.setRoomSeed(this.roomSeed);
@@ -422,6 +428,10 @@ export class Game {
 
   getCameraMode(): CameraMode {
     return this.cameraMode;
+  }
+
+  setDebugVisible(visible: boolean): void {
+    this.sculptor?.setDebugVisible(visible);
   }
 
   setCameraMode(mode: CameraMode): void {

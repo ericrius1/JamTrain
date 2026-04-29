@@ -334,6 +334,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     game.paneDock,
     visible => {
       if (!visible) game.setCameraMode('game');
+      game.setDebugVisible(visible);
     },
     () => {
       game.setCameraMode(game.getCameraMode() === 'game' ? 'orbit' : 'game');
@@ -432,6 +433,11 @@ async function createRuntime(): Promise<RuntimeApi> {
 
   await game.start();
   schedulePostSceneWarmup();
+  // Connect now (not in begin()) so the server's instrument/seat row
+  // reconciles while introActive is still true — otherwise the visual
+  // swap from random pick to server-stored value happens after the
+  // instrument has already animated in.
+  game.connectMultiplayer();
 
   async function begin(conductorName: string): Promise<void> {
     hud.setConductorName(conductorName);
@@ -440,7 +446,6 @@ async function createRuntime(): Promise<RuntimeApi> {
       console.warn('[jam-train] handpose preload failed', err);
     });
 
-    game.connectMultiplayer();
     await game.startAudio();
 
     hud.setCameraEnabled(false);

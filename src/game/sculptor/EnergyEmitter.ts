@@ -12,7 +12,6 @@ export type EmitRequest = {
   direction: THREE.Vector3;
   color: { r: number; g: number; b: number };
   count: number;
-  intensity: number;
   speed: number;
 };
 

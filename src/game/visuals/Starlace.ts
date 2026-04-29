@@ -1315,7 +1315,6 @@ export class Starlace implements PlayerVisual {
       direction: dir.clone(),
       color: { r: _colorA.r, g: _colorA.g, b: _colorA.b },
       count: Math.round(52 + velocity * 58),
-      intensity: 0.72 + velocity * 0.48,
       speed: 1.85 + velocity * 1.05,
     });
   }
