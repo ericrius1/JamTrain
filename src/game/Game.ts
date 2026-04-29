@@ -2,7 +2,6 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { JamAudioGraph } from './audioGraph';
-import { AudioEngine } from './audio';
 import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
@@ -53,7 +52,19 @@ const CABIN_DEFS = {
   bevelSegments:  { default: 4,    min: 1, max: 8,    step: 1,     label: 'bevel smoothness' },
 } as const;
 
-const ILLUSTRATED_CABIN_TEXTURE = '/cabin/illustrated-cabin-plate-v2-color.webp';
+const CABIN_LIGHTING_DEFS = {
+  nightBlend:       { default: 0.34, min: 0, max: 2,    step: 0.01, label: 'night blend' },
+  driftRate:        { default: 0.07, min: 0, max: 0.5,  step: 0.01, label: 'drift rate' },
+  flickerRate:      { default: 1.85, min: 0, max: 8,    step: 0.05, label: 'flicker rate' },
+  flickerAmplitude: { default: 0.14, min: 0, max: 0.65, step: 0.01, label: 'flicker amp' },
+  flutter:          { default: 0.04, min: 0, max: 0.25, step: 0.01, label: 'flutter' },
+} as const;
+
+const ILLUSTRATED_CABIN_TEXTURES = [
+  '/cabin/illustrated-cabin-plate-v2-color.webp',
+  '/cabin/illustrated-cabin-plate-v2-medium.webp',
+  '/cabin/illustrated-cabin-plate-v2-dark.webp',
+] as const;
 const ILLUSTRATED_CABIN_MASK_TEXTURE = '/cabin/illustrated-cabin-plate-v2-alpha.webp';
 const ILLUSTRATED_CABIN_ASPECT = 1672 / 941;
 const ILLUSTRATED_CABIN_DISTANCE = 3.35;
@@ -62,11 +73,15 @@ const ILLUSTRATED_CABIN_OVERSCAN = 1.015;
 type GameUi = {
   connectionStatus: HTMLElement;
   inputStatus: HTMLElement;
-  musicStatus: HTMLElement;
 };
 
 export type CameraMode = 'game' | 'orbit';
 type PlayerSlot = 'local' | 'remote';
+type CabinPlateLayer = {
+  mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
+  material: THREE.MeshBasicMaterial;
+  texture: THREE.Texture;
+};
 
 function makeHandContactPoints(): HandContactPoint[] {
   const contacts: HandContactPoint[] = [];
@@ -109,7 +124,6 @@ export class Game {
   private lastFrameAt = this.startedAt;
   readonly handTracker: HandTracker;
   private audioGraph: JamAudioGraph;
-  private audio: AudioEngine;
   private handSynth: HandSynthEngine;
   readonly multiplayer: MultiplayerClient;
   private webrtc: WebRTCClient;
@@ -145,11 +159,14 @@ export class Game {
   private introActive = true;
   private swapsInFlight: Record<PlayerSlot, number> = { local: 0, remote: 0 };
   private cabinTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_DEFS>>;
+  private cabinLightingTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_LIGHTING_DEFS>>;
   private cabinGroup?: THREE.Group;
-  private cabinPlate?: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
-  private cabinPlateTexture?: THREE.Texture;
+  private cabinPlate?: THREE.Group;
+  private cabinPlateLayers: CabinPlateLayer[] = [];
   private cabinPlateMaskTexture?: THREE.Texture;
   private readonly cabinParams = makeParams(CABIN_DEFS);
+  private readonly cabinLightingParams = makeParams(CABIN_LIGHTING_DEFS);
+  private cabinLightingBlend = CABIN_LIGHTING_DEFS.nightBlend.default;
   private introSceneTweaks?: ReturnType<typeof registerTweaks<typeof INTRO_SCENE_DEFS>>;
   private readonly introSceneParams = makeParams(INTRO_SCENE_DEFS);
   private playersTweaks?: ReturnType<typeof registerTweaks<typeof PLAYERS_DEFS>>;
@@ -176,9 +193,9 @@ export class Game {
     this.renderer.setPixelRatio(1)
     this.paneDock = this.createPaneDock();
     this.setupIntroScenePane();
+    this.setupCabinLightingPane();
     this.handTracker = new HandTracker(ui.inputStatus);
     this.audioGraph = new JamAudioGraph();
-    this.audio = new AudioEngine(this.audioGraph, ui.musicStatus, this.paneDock);
     this.handSynth = new HandSynthEngine(this.audioGraph, canvas, this.paneDock);
     this.handTracker.setPointerInputEnabled(false);
     this.handSynth.setMouseInputEnabled(false);
@@ -315,7 +332,6 @@ export class Game {
 
   async startAudio(): Promise<void> {
     await this.audioGraph.start();
-    await this.audio.start();
     await this.handSynth.start();
   }
 
@@ -395,11 +411,6 @@ export class Game {
     return this.webrtc.getShareVideo();
   }
 
-  // Bed + drums backing track.
-  setBackingVolume(value: number): void {
-    this.audio.setMasterGain(value);
-  }
-
   // Player synth (Aurora Loom).
   setMusicVolume(value: number): void {
     this.handSynth.setMasterGain(value);
@@ -464,11 +475,11 @@ export class Game {
     this.sculptor?.dispose();
     this.roundDirector?.dispose();
     this.disposePlayerVisuals();
-    this.audio.dispose();
     this.handSynth.dispose();
     this.audioGraph.dispose();
     this.cameraTweaks?.dispose();
     this.cabinTweaks?.dispose();
+    this.cabinLightingTweaks?.dispose();
     this.introSceneTweaks?.dispose();
     this.playersTweaks?.dispose();
     this.disposeCabinPlate();
@@ -543,20 +554,22 @@ export class Game {
   private createCabin(): void {
     this.scenery.build();
     this.buildIllustratedCabinPlate();
-    this.scenery.setThunderHandler(delay => this.audio.playThunder(delay));
   }
 
   private buildIllustratedCabinPlate(): void {
     this.disposeCabinPlate();
-    const texture = new THREE.TextureLoader().load(ILLUSTRATED_CABIN_TEXTURE, tex => {
-      tex.colorSpace = THREE.SRGBColorSpace;
-      tex.needsUpdate = true;
+    const loader = new THREE.TextureLoader();
+    const textures = ILLUSTRATED_CABIN_TEXTURES.map(url => {
+      const texture = loader.load(url, tex => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        tex.needsUpdate = true;
+      });
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.generateMipmaps = true;
+      return texture;
     });
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.generateMipmaps = true;
-    this.cabinPlateTexture = texture;
 
-    const maskTexture = new THREE.TextureLoader().load(ILLUSTRATED_CABIN_MASK_TEXTURE, tex => {
+    const maskTexture = loader.load(ILLUSTRATED_CABIN_MASK_TEXTURE, tex => {
       tex.colorSpace = THREE.NoColorSpace;
       tex.needsUpdate = true;
     });
@@ -564,23 +577,32 @@ export class Game {
     maskTexture.generateMipmaps = true;
     this.cabinPlateMaskTexture = maskTexture;
 
-    const material = new THREE.MeshBasicMaterial({
-      map: texture,
-      alphaMap: maskTexture,
-      transparent: true,
-      alphaTest: 0.5,
-      blending: THREE.NoBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-      toneMapped: false,
+    const group = new THREE.Group();
+    group.name = 'illustrated-cabin-plate';
+    const geometry = new THREE.PlaneGeometry(1, 1);
+    this.cabinPlateLayers = textures.map((texture, index) => {
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        alphaMap: maskTexture,
+        transparent: true,
+        opacity: index === 0 ? 1 : 0,
+        alphaTest: 0.5,
+        blending: index === 0 ? THREE.NoBlending : THREE.NormalBlending,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        toneMapped: false,
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.name = `illustrated-cabin-plate-${index === 0 ? 'light' : index === 1 ? 'medium' : 'dark'}`;
+      mesh.frustumCulled = false;
+      mesh.renderOrder = -6 + index;
+      group.add(mesh);
+      return { mesh, material, texture };
     });
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
-    mesh.name = 'illustrated-cabin-plate';
-    mesh.frustumCulled = false;
-    mesh.renderOrder = -6;
-    this.cabinPlate = mesh;
-    this.scene.add(mesh);
+    this.cabinPlate = group;
+    this.scene.add(group);
     this.updateCabinPlateTransform();
+    this.updateCabinLighting(0, true);
   }
 
   private updateCabinPlateTransform(): void {
@@ -605,12 +627,18 @@ export class Game {
   private disposeCabinPlate(): void {
     if (!this.cabinPlate) return;
     this.scene.remove(this.cabinPlate);
-    this.cabinPlate.geometry.dispose();
-    this.cabinPlate.material.dispose();
-    this.cabinPlateTexture?.dispose();
+    const disposedGeometries = new Set<THREE.BufferGeometry>();
+    for (const layer of this.cabinPlateLayers) {
+      if (!disposedGeometries.has(layer.mesh.geometry)) {
+        layer.mesh.geometry.dispose();
+        disposedGeometries.add(layer.mesh.geometry);
+      }
+      layer.material.dispose();
+      layer.texture.dispose();
+    }
     this.cabinPlateMaskTexture?.dispose();
     this.cabinPlate = undefined;
-    this.cabinPlateTexture = undefined;
+    this.cabinPlateLayers = [];
     this.cabinPlateMaskTexture = undefined;
   }
 
@@ -1031,6 +1059,14 @@ export class Game {
     });
   }
 
+  private setupCabinLightingPane(): void {
+    if (this.cabinLightingTweaks) return;
+    this.cabinLightingTweaks = registerTweaks(this.paneDock, 'cabin-lighting', CABIN_LIGHTING_DEFS, {
+      title: 'Cabin Lighting',
+      params: this.cabinLightingParams,
+    });
+  }
+
   getSceneVertexCount(): number {
     let total = 0;
     this.scene.traverse(obj => {
@@ -1077,9 +1113,8 @@ export class Game {
     this.sculptor.update(delta);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
-    this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
+    this.updateCabinLighting(elapsed);
     this.handSynth.update(localPose, remotePose, delta);
-    this.audio.setPlayerActivity(this.handSynth.getActivity());
     this.poseSession.sendLocalPose(localPose, elapsed);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
@@ -1142,6 +1177,28 @@ export class Game {
   private updateAtmosphere(atmosphere: { background: THREE.Color; daylight: number; night: number; underwater?: number }): void {
     this.scene.background = atmosphere.background;
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(atmosphere.background);
+  }
+
+  private updateCabinLighting(elapsed: number, snap = false): void {
+    if (this.cabinPlateLayers.length < 3) return;
+    const p = this.cabinLightingParams;
+    const drift = p.driftRate > 0 ? Math.sin(elapsed * p.driftRate * Math.PI * 2) * 0.55 : 0;
+    const flickerPhase = elapsed * p.flickerRate * Math.PI * 2;
+    const flicker = p.flickerRate > 0
+      ? Math.sin(flickerPhase + 1.7) * 0.25 + Math.sin(flickerPhase * 1.73 + 4.2) * 0.20
+      : 0;
+    const flutter = p.flutter > 0 && p.flickerRate > 0
+      ? Math.pow(Math.max(0, Math.sin(flickerPhase * 3.7 + 0.4)), 8) * p.flutter
+      : 0;
+    const target = clamp(p.nightBlend + (drift + flicker) * p.flickerAmplitude + flutter, 0, 2);
+    this.cabinLightingBlend = snap ? target : this.cabinLightingBlend + (target - this.cabinLightingBlend) * 0.12;
+
+    const mediumOpacity = clamp(this.cabinLightingBlend, 0, 1);
+    const darkOpacity = clamp(this.cabinLightingBlend - 1, 0, 1);
+    this.cabinPlateLayers[1].material.opacity = mediumOpacity;
+    this.cabinPlateLayers[2].material.opacity = darkOpacity;
+    this.cabinPlateLayers[1].mesh.visible = mediumOpacity > 0.001;
+    this.cabinPlateLayers[2].mesh.visible = darkOpacity > 0.001;
   }
 
   private resize(): void {

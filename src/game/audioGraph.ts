@@ -1,6 +1,6 @@
 export type ToneModule = typeof import('tone');
 
-type AudioBusName = 'backing' | 'instruments' | 'effects';
+type AudioBusName = 'instruments' | 'effects';
 
 /**
  * Owns the one graph that is allowed to touch Tone's destination. Feature
@@ -10,7 +10,6 @@ export class JamAudioGraph {
   private tone?: ToneModule;
   private running = false;
 
-  private backingBus?: any;
   private instrumentBus?: any;
   private effectsBus?: any;
   private master?: any;
@@ -40,7 +39,6 @@ export class JamAudioGraph {
     }).connect(this.limiter);
     this.master = new Tone.Gain(0.92).connect(this.compressor);
 
-    this.backingBus = new Tone.Gain(1).connect(this.master);
     this.instrumentBus = new Tone.Gain(1).connect(this.master);
     this.effectsBus = new Tone.Gain(0.85).connect(this.master);
 
@@ -76,11 +74,7 @@ export class JamAudioGraph {
   }
 
   getBus(name: AudioBusName): any {
-    const bus = name === 'backing'
-      ? this.backingBus
-      : name === 'instruments'
-        ? this.instrumentBus
-        : this.effectsBus;
+    const bus = name === 'instruments' ? this.instrumentBus : this.effectsBus;
     if (!bus) throw new Error(`JamAudioGraph: ${name} bus requested before start()`);
     return bus;
   }
@@ -96,18 +90,14 @@ export class JamAudioGraph {
     const transport = this.tone.getTransport();
     try {
       if (suspended) {
-        // Hard-mute the master bus first so already-attacked pad/drone notes
-        // go silent instantly. ctx.suspend() doesn't reliably stop sustaining
-        // notes across all browsers, but a gain of 0 always does.
+        // Hard-mute the master bus first so already-attacked notes go silent
+        // instantly. ctx.suspend() doesn't reliably stop sustaining notes
+        // across all browsers, but a gain of 0 always does.
         if (this.master && this.masterGainBeforeMute === undefined) {
           this.masterGainBeforeMute = this.master.gain.value;
           this.master.gain.cancelScheduledValues(0);
           this.master.gain.value = 0;
         }
-        // Pause the Transport before suspending the context. Otherwise its
-        // internal scheduler keeps queuing events against a frozen clock and
-        // on resume those events fire in a burst (or throw inside the drum
-        // sequence callback, killing scheduling outright).
         if (transport.state === 'started') transport.pause();
         if (ctx.state === 'running') await ctx.suspend();
       } else {
@@ -133,13 +123,11 @@ export class JamAudioGraph {
   dispose(): void {
     if (!this.running) return;
     this.running = false;
-    this.backingBus?.dispose?.();
     this.instrumentBus?.dispose?.();
     this.effectsBus?.dispose?.();
     this.master?.dispose?.();
     this.compressor?.dispose?.();
     this.limiter?.dispose?.();
-    this.backingBus = undefined;
     this.instrumentBus = undefined;
     this.effectsBus = undefined;
     this.master = undefined;

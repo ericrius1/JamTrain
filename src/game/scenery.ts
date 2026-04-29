@@ -175,10 +175,6 @@ export class ScenerySystem {
     this.scene.add(this.root);
   }
 
-  setThunderHandler(handler: (delaySeconds: number) => void): void {
-    this.onThunder = handler;
-  }
-
   // Defaults to false so the world doesn't sprout flocks while the user is
   // still on the intro screen — Game flips this on after All Aboard so the
   // sky comes alive at the same moment the lights come up.

@@ -9,7 +9,6 @@ window.addEventListener('vite:preloadError', () => {
 const LOCAL_CREATURE_KEY = 'jam-train.local-creature';
 
 type AvPrefs = {
-  backingVolume: number;
   musicVolume: number;
   voiceVolume: number;
 };
@@ -91,6 +90,8 @@ function preloadCriticalAssets(): Promise<void> {
 
   const urls: string[] = [
     '/cabin/illustrated-cabin-plate-v2-color.webp',
+    '/cabin/illustrated-cabin-plate-v2-medium.webp',
+    '/cabin/illustrated-cabin-plate-v2-dark.webp',
     '/cabin/illustrated-cabin-plate-v2-alpha.webp',
     '/scenery/far-terrain-chunk-01-alpine-lake.webp',
     '/scenery/far-terrain-chunk-02-fog-forest.webp',
@@ -163,7 +164,6 @@ async function createRuntime(): Promise<RuntimeApi> {
     { Game },
     {
       Hud,
-      DEFAULT_BACKING_VOLUME,
       DEFAULT_MUSIC_VOLUME,
       DEFAULT_VOICE_VOLUME,
     },
@@ -189,7 +189,6 @@ async function createRuntime(): Promise<RuntimeApi> {
   ]);
 
   const defaultAvPrefs: AvPrefs = {
-    backingVolume: DEFAULT_BACKING_VOLUME,
     musicVolume: DEFAULT_MUSIC_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
   };
@@ -211,12 +210,10 @@ async function createRuntime(): Promise<RuntimeApi> {
   };
   const connectionSink = sink('hud-connection-sink');
   const inputSink = sink('hud-input-sink');
-  const musicSink = sink('hud-music-sink');
 
   const game = new Game(canvas, urlRoom, {
     connectionStatus: connectionSink,
     inputStatus: inputSink,
-    musicStatus: musicSink,
   });
 
   const initialDisplayRoom = game.getRoom();
@@ -327,7 +324,6 @@ async function createRuntime(): Promise<RuntimeApi> {
   const observers = [
     observe(connectionSink, text => hud.setConnection(text)),
     observe(inputSink, text => hud.setInputStatus(text)),
-    observe(musicSink, text => hud.setMusicStatus(text)),
   ];
 
   const dev = new DevOverlay(
@@ -391,10 +387,6 @@ async function createRuntime(): Promise<RuntimeApi> {
       hud.setMicEnabled(game.getMicEnabled());
     });
   });
-  hud.onBackingVolumeChange(value => {
-    game.setBackingVolume(value);
-    avPrefs.backingVolume = value;
-  });
   hud.onMusicVolumeChange(value => {
     game.setMusicVolume(value);
     avPrefs.musicVolume = value;
@@ -416,19 +408,17 @@ async function createRuntime(): Promise<RuntimeApi> {
   };
   window.addEventListener('keydown', handleRobotMuteKey);
 
-  hud.setMixerValues(avPrefs.backingVolume, avPrefs.musicVolume, avPrefs.voiceVolume);
+  hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
   hud.setRemoteVolume(avPrefs.voiceVolume);
 
   // Pressing R in debug mode resets tweakpane params; piggyback on the same
   // registry to also restore the mixer panel to in-code defaults.
   registerResetHook('av-prefs', () => {
-    avPrefs.backingVolume = defaultAvPrefs.backingVolume;
     avPrefs.musicVolume = defaultAvPrefs.musicVolume;
     avPrefs.voiceVolume = defaultAvPrefs.voiceVolume;
-    game.setBackingVolume(avPrefs.backingVolume);
     game.setMusicVolume(avPrefs.musicVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
-    hud.setMixerValues(avPrefs.backingVolume, avPrefs.musicVolume, avPrefs.voiceVolume);
+    hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
   });
 
   await game.start();
@@ -452,10 +442,9 @@ async function createRuntime(): Promise<RuntimeApi> {
     hud.setMicEnabled(false);
     hud.setShareVideoEnabled(false);
 
-    game.setBackingVolume(avPrefs.backingVolume);
     game.setMusicVolume(avPrefs.musicVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
-    hud.setMixerValues(avPrefs.backingVolume, avPrefs.musicVolume, avPrefs.voiceVolume);
+    hud.setMixerValues(avPrefs.musicVolume, avPrefs.voiceVolume);
 
     started = true;
   }
@@ -466,7 +455,6 @@ async function createRuntime(): Promise<RuntimeApi> {
     for (const obs of observers) obs.disconnect();
     connectionSink.remove();
     inputSink.remove();
-    musicSink.remove();
     hud.dispose();
     dev.dispose();
     game.dispose();

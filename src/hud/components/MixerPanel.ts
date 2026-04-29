@@ -5,11 +5,6 @@ const MUSIC_SVG = `
   <circle cx="18" cy="16" r="3"/>
 </svg>`;
 
-const BACKING_SVG = `
-<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-  <path d="M3 12h2l2-7 4 14 3-9 2 6 1-3h4"/>
-</svg>`;
-
 const VOICE_SVG = `
 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
   <rect x="9" y="3" width="6" height="12" rx="3"/>
@@ -20,17 +15,14 @@ const VOICE_SVG = `
 
 export class MixerPanel {
   readonly el: HTMLDivElement;
-  private backingSlider: HTMLInputElement;
   private musicSlider: HTMLInputElement;
   private voiceSlider: HTMLInputElement;
-  private backingValueEl: HTMLSpanElement;
   private musicValueEl: HTMLSpanElement;
   private voiceValueEl: HTMLSpanElement;
-  private backingListeners = new Set<(value: number) => void>();
   private musicListeners = new Set<(value: number) => void>();
   private voiceListeners = new Set<(value: number) => void>();
 
-  constructor(opts: { backing: number; music: number; voice: number }) {
+  constructor(opts: { music: number; voice: number }) {
     this.el = document.createElement('div');
     this.el.className = 'mixer-panel plaque';
 
@@ -38,20 +30,6 @@ export class MixerPanel {
     title.className = 'mixer-panel-title';
     title.textContent = 'Mix';
     this.el.appendChild(title);
-
-    const backingRow = this.buildRow({
-      label: 'Backing',
-      icon: BACKING_SVG,
-      value: opts.backing,
-    });
-    this.backingSlider = backingRow.slider;
-    this.backingValueEl = backingRow.value;
-    this.backingSlider.addEventListener('input', () => {
-      const v = this.readSlider(this.backingSlider);
-      this.backingValueEl.textContent = formatPercent(v);
-      for (const l of this.backingListeners) l(v);
-    });
-    this.el.appendChild(backingRow.row);
 
     const musicRow = this.buildRow({
       label: 'Music',
@@ -82,11 +60,6 @@ export class MixerPanel {
     this.el.appendChild(voiceRow.row);
   }
 
-  setBackingVolume(value: number): void {
-    this.writeSlider(this.backingSlider, value);
-    this.backingValueEl.textContent = formatPercent(value);
-  }
-
   setMusicVolume(value: number): void {
     this.writeSlider(this.musicSlider, value);
     this.musicValueEl.textContent = formatPercent(value);
@@ -95,10 +68,6 @@ export class MixerPanel {
   setVoiceVolume(value: number): void {
     this.writeSlider(this.voiceSlider, value);
     this.voiceValueEl.textContent = formatPercent(value);
-  }
-
-  onBackingChange(listener: (value: number) => void): void {
-    this.backingListeners.add(listener);
   }
 
   onMusicChange(listener: (value: number) => void): void {
