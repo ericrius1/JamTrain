@@ -29,6 +29,12 @@ export class JamAudioGraph {
   private compressor?: any;
   private limiter?: any;
 
+  // Snapshot of the master gain at the moment we mute for backgrounding, so
+  // we can restore the same value on resume regardless of whether anything
+  // else was modulating it. Some browsers don't promptly silence already-
+  // attacked notes when the AudioContext is suspended, so we hard-mute too.
+  private masterGainBeforeMute?: number;
+
   // Mix-tap analyser. Sees backing + instruments + effects (everything that
   // routes through the master gain), so the spectrum reflects the full song
   // including whatever the players are doing.
@@ -219,6 +225,14 @@ export class JamAudioGraph {
     const transport = this.tone.getTransport();
     try {
       if (suspended) {
+        // Hard-mute the master bus first so already-attacked pad/drone notes
+        // go silent instantly. ctx.suspend() doesn't reliably stop sustaining
+        // notes across all browsers, but a gain of 0 always does.
+        if (this.master && this.masterGainBeforeMute === undefined) {
+          this.masterGainBeforeMute = this.master.gain.value;
+          this.master.gain.cancelScheduledValues(0);
+          this.master.gain.value = 0;
+        }
         // Pause the Transport before suspending the context. Otherwise its
         // internal scheduler keeps queuing events against a frozen clock and
         // on resume those events fire in a burst (or throw inside the drum
@@ -231,6 +245,14 @@ export class JamAudioGraph {
         // tabs and the old equality check would silently no-op there.
         if (ctx.state !== 'running' && ctx.state !== 'closed') await ctx.resume();
         if (transport.state !== 'started') transport.start('+0.05');
+        // Restore master gain after the context is running again. Short ramp
+        // so we don't get a click on resume.
+        if (this.master && this.masterGainBeforeMute !== undefined) {
+          const target = this.masterGainBeforeMute;
+          this.masterGainBeforeMute = undefined;
+          this.master.gain.cancelScheduledValues(0);
+          this.master.gain.rampTo(target, 0.04);
+        }
       }
     } catch (e) {
       console.warn('audio suspend toggle failed', e);

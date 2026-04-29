@@ -9,17 +9,17 @@ export const AUDIO_DEFS = {
   // Driven by the mixer panel's persisted avPrefs.backingVolume (see main.ts).
   // Persisting separately lets the dev slider diverge from the mixer on reload.
   masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master', persisted: false },
-  chordCycleSeconds:  { default: 24,   min: 8,    max: 120,  step: 1,    label: 'chord seconds' },
-  attackSeconds:      { default: 3.2,  min: 0.2,  max: 8,    step: 0.1,  label: 'attack sec' },
-  releaseSeconds:     { default: 7.5,  min: 1,    max: 14,   step: 0.1,  label: 'release sec' },
+  chordCycleSeconds:  { default: 12,   min: 4,    max: 120,  step: 1,    label: 'chord seconds' },
+  attackSeconds:      { default: 1.4,  min: 0.2,  max: 8,    step: 0.1,  label: 'attack sec' },
+  releaseSeconds:     { default: 4.0,  min: 1,    max: 14,   step: 0.1,  label: 'release sec' },
   filterMaxHz:        { default: 2200, min: 1200, max: 8000, step: 50,   label: 'filter ceil' },
   reverbWetRange:     { default: 0.08, min: 0,    max: 0.6,  step: 0.01, label: 'verb mod' },
-  shimmerMaxDb:       { default: -28,  min: -36,  max: 0,    step: 0.5,  label: 'shimmer dB' },
+  padLevelDb:         { default: -6,   min: -40,  max: 6,    step: 0.5,  label: 'pad dB' },
   muteHandModulation: { type: 'boolean', default: false, label: 'mute hands' },
-  drumLevelDb:        { default: -11,  min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
+  drumLevelDb:        { default: -7,   min: -40,  max: 6,    step: 0.5,  label: 'drums dB' },
   drumBpm:            { default: 78,   min: 50,   max: 110,  step: 1,    label: 'drums BPM' },
-  drumEbbPeriod:      { default: 180,  min: 20,   max: 360,  step: 1,    label: 'drum ebb sec' },
-  drumEbbFloor:       { default: 0.55, min: 0,    max: 1,    step: 0.01, label: 'drum ebb floor' },
+  drumEbbPeriod:      { default: 90,   min: 20,   max: 360,  step: 1,    label: 'drum ebb sec' },
+  drumEbbFloor:       { default: 0.85, min: 0,    max: 1,    step: 0.01, label: 'drum ebb floor' },
   muteDrums:          { type: 'boolean', default: false, label: 'mute drums' },
 } as const;
 
@@ -51,12 +51,11 @@ export class AudioEngine {
   private droneBBanks: any[] = [];
   private subABanks: any[] = [];
   private subBBanks: any[] = [];
-  private shimmerBanks: any[] = [];
   private bankIndex = 0;
 
   private bedAGain?: any;
   private bedBGain?: any;
-  private shimmerGain?: any;
+  private padGain?: any;
   private master?: any;
 
   private filter?: any;
@@ -121,7 +120,7 @@ export class AudioEngine {
     releaseSeconds: AUDIO_DEFS.releaseSeconds.default,
     filterMaxHz: AUDIO_DEFS.filterMaxHz.default,
     reverbWetRange: AUDIO_DEFS.reverbWetRange.default,
-    shimmerMaxDb: AUDIO_DEFS.shimmerMaxDb.default,
+    padLevelDb: AUDIO_DEFS.padLevelDb.default,
     muteHandModulation: AUDIO_DEFS.muteHandModulation.default,
     drumLevelDb: AUDIO_DEFS.drumLevelDb.default,
     drumBpm: AUDIO_DEFS.drumBpm.default,
@@ -167,18 +166,23 @@ export class AudioEngine {
       .connect(this.delay);
     this.filter = new Tone.Filter({ frequency: BASE_FILTER_HZ, type: 'lowpass', rolloff: -24 }).connect(this.chorus);
 
-    this.bedAGain = new Tone.Gain(1).connect(this.filter);
-    this.bedBGain = new Tone.Gain(0).connect(this.filter);
-    this.shimmerGain = new Tone.Gain(0).connect(this.filter);
+    // padGain is the user-facing backing-synth attenuator. Day/night crossfade
+    // still happens at bedA/bedBGain; padGain sits downstream so one knob
+    // governs the whole backing bed.
+    this.padGain = new Tone.Gain(this.tone.dbToGain(this.params.padLevelDb)).connect(this.filter);
+    this.bedAGain = new Tone.Gain(1).connect(this.padGain);
+    this.bedBGain = new Tone.Gain(0).connect(this.padGain);
 
     const padOptions = {
       oscillator: { type: 'fatsine', count: 2, spread: 5 } as any,
       envelope: { attack: this.params.attackSeconds, decay: 0.8, sustain: 0.86, release: this.params.releaseSeconds },
       volume: -18,
     };
-    // Per-voice attenuation: top of each chord (voices[2]) sits well below the
-    // lower two so the music doesn't fight speech-band frequencies.
-    const padVoiceVolumesDb = [-17, -19, -28];
+    // Single low pad voice — voices[1] and voices[2] were dropped along with
+    // the octave-up shimmer to keep the backing in the warm low register.
+    // Chord movement still comes through the drone + bass, with voices[0]
+    // adding a soft pent-step color on top.
+    const padVoiceVolumesDb = [-17];
     const subOptions = {
       oscillator: { type: 'sine' } as any,
       envelope: { attack: this.params.attackSeconds * 1.35, decay: 0.8, sustain: 0.74, release: this.params.releaseSeconds * 1.15 },
@@ -188,11 +192,6 @@ export class AudioEngine {
       oscillator: { type: 'sine' } as any,
       envelope: { attack: this.params.attackSeconds * 1.6, decay: 0.8, sustain: 0.82, release: this.params.releaseSeconds * 1.25 },
       volume: -18,
-    };
-    const shimmerOptions = {
-      oscillator: { type: 'sine' } as any,
-      envelope: { attack: this.params.attackSeconds * 2, decay: 0.8, sustain: 0.58, release: this.params.releaseSeconds },
-      volume: -28,
     };
 
     for (let bank = 0; bank < 2; bank++) {
@@ -206,7 +205,6 @@ export class AudioEngine {
       this.droneBBanks[bank] = new Tone.Synth(droneOptions).connect(this.bedBGain);
       this.subABanks[bank] = new Tone.Synth(subOptions).connect(this.bedAGain);
       this.subBBanks[bank] = new Tone.Synth(subOptions).connect(this.bedBGain);
-      this.shimmerBanks[bank] = new Tone.Synth(shimmerOptions).connect(this.shimmerGain);
     }
 
     // Soft felt-key bloom on each chord change. Kept deliberately quiet so it
@@ -220,10 +218,10 @@ export class AudioEngine {
       modulationEnvelope: { attack: 0.018, decay: 1.1, sustain: 0, release: 0.6 },
     };
     this.epA = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
-    this.epA.volume.value = -26;
+    this.epA.volume.value = -18;
     this.epA.connect(this.bedAGain);
     this.epB = new Tone.PolySynth({ maxPolyphony: 24, voice: Tone.FMSynth, options: epOptions } as any);
-    this.epB.volume.value = -26;
+    this.epB.volume.value = -18;
     this.epB.connect(this.bedBGain);
 
     // Vinyl crackle — bandpassed pink noise, sits well below the music. Skips
@@ -237,15 +235,16 @@ export class AudioEngine {
 
     const initial = this.currentChord();
     const b = this.bankIndex;
-    initial.a.voices.forEach((note, i) => this.bedABanks[b][i].triggerAttack(note));
-    initial.b.voices.forEach((note, i) => this.bedBBanks[b][i].triggerAttack(note));
+    this.bedABanks[b].forEach((synth, i) => synth.triggerAttack(initial.a.voices[i]));
+    this.bedBBanks[b].forEach((synth, i) => synth.triggerAttack(initial.b.voices[i]));
     this.droneABanks[b].triggerAttack(initial.a.drone);
     this.droneBBanks[b].triggerAttack(initial.b.drone);
     this.subABanks[b].triggerAttack(initial.a.bass);
     this.subBBanks[b].triggerAttack(initial.b.bass);
-    this.shimmerBanks[b].triggerAttack(this.shimmerNote());
-    this.epA.triggerAttackRelease(initial.a.voices, '9m', undefined, 0.30);
-    this.epB.triggerAttackRelease(initial.b.voices, '9m', undefined, 0.30);
+    const epNotesA = initial.a.voices.slice(0, this.bedABanks[b].length);
+    const epNotesB = initial.b.voices.slice(0, this.bedBBanks[b].length);
+    this.epA.triggerAttackRelease(epNotesA, '9m', undefined, 0.30);
+    this.epB.triggerAttackRelease(epNotesB, '9m', undefined, 0.30);
 
     this.setupDrums(Tone);
 
@@ -285,17 +284,17 @@ export class AudioEngine {
     }).connect(this.hatFilter);
 
     Tone.getTransport().bpm.value = this.params.drumBpm;
-    Tone.getTransport().swing = 0.18;
+    Tone.getTransport().swing = 0.24;
     Tone.getTransport().swingSubdivision = '16n';
 
-    // 16-step cozy lo-fi pattern. Boom-bap kick with a push into beat 3 and a
-    // soft pickup on the &-of-4. Snare on 2 and 4 with quiet ghost notes.
-    // Hat sits on steady 16ths with subtle velocity sway — the swing setting on
-    // the transport gives it the laid-back lo-fi shuffle.
+    // 16-step lo-fi boom-bap. Strong kick on 1 + push into 3, snare on 2 & 4
+    // with ghost notes around them, and hi-hat with accented "&"s on every
+    // beat to give it that open-hat offbeat lift. Swing on the transport
+    // pulls the e/a 16ths back for the laid-back lo-fi shuffle.
     //               1     e     &     a     2     e     &     a     3     e     &     a     4     e     &     a
-    const KICK   = [0.78,    0,    0,    0,    0,    0,    0, 0.36, 0.58,    0,    0,    0,    0,    0,    0, 0.24];
-    const SNARE  = [   0,    0,    0,    0, 0.55,    0,    0,    0,    0, 0.16,    0,    0, 0.55,    0, 0.20,    0];
-    const HAT    = [0.22, 0.10, 0.20, 0.10, 0.18, 0.10, 0.22, 0.10, 0.20, 0.10, 0.20, 0.12, 0.18, 0.10, 0.22, 0.16];
+    const KICK   = [0.85,    0,    0,    0,    0,    0,    0, 0.42, 0.62,    0,    0,    0,    0,    0,    0, 0.30];
+    const SNARE  = [   0,    0,    0,    0, 0.62,    0,    0,    0,    0, 0.18,    0,    0, 0.62,    0, 0.28,    0];
+    const HAT    = [0.26, 0.10, 0.34, 0.10, 0.22, 0.10, 0.34, 0.12, 0.26, 0.10, 0.34, 0.12, 0.22, 0.10, 0.34, 0.20];
 
     this.drumSeq = new Tone.Sequence((time: number, step: number) => {
       // Wrap the body — a thrown trigger here (e.g. on resume from a long
@@ -381,9 +380,6 @@ export class AudioEngine {
     const activityDuck = 1 - this.smoothedPlayerActivity * 0.18;
     this.master.gain.rampTo(this.params.masterGain * (0.84 + swellAdd) * activityDuck, PARAM_RAMP);
     this.chorus.wet.rampTo(BASE_CHORUS_WET + this.smoothed.spread * 0.16 * p, PARAM_RAMP);
-
-    const shimmerLinear = p * this.tone.dbToGain(this.params.shimmerMaxDb);
-    this.shimmerGain.gain.rampTo(shimmerLinear, PARAM_RAMP);
 
     // Drums breathe slowly between a floor and full volume — never silent, so
     // the cozy lo-fi pocket is always there but the room still has dynamics.
@@ -493,12 +489,11 @@ export class AudioEngine {
       ...this.droneBBanks,
       ...this.subABanks,
       ...this.subBBanks,
-      ...this.shimmerBanks,
     ];
     for (const v of all) v?.dispose?.();
     this.bedAGain?.dispose?.();
     this.bedBGain?.dispose?.();
-    this.shimmerGain?.dispose?.();
+    this.padGain?.dispose?.();
     this.filter?.dispose?.();
     this.chorus?.dispose?.();
     this.delay?.dispose?.();
@@ -536,17 +531,17 @@ export class AudioEngine {
     this.droneBBanks[oldBank]?.triggerRelease();
     this.subABanks[oldBank]?.triggerRelease();
     this.subBBanks[oldBank]?.triggerRelease();
-    this.shimmerBanks[oldBank]?.triggerRelease();
 
-    a.voices.forEach((note, i) => this.bedABanks[newBank][i].triggerAttack(note));
-    b.voices.forEach((note, i) => this.bedBBanks[newBank][i].triggerAttack(note));
+    this.bedABanks[newBank].forEach((synth, i) => synth.triggerAttack(a.voices[i]));
+    this.bedBBanks[newBank].forEach((synth, i) => synth.triggerAttack(b.voices[i]));
     this.droneABanks[newBank]?.triggerAttack(a.drone);
     this.droneBBanks[newBank]?.triggerAttack(b.drone);
     this.subABanks[newBank]?.triggerAttack(a.bass);
     this.subBBanks[newBank]?.triggerAttack(b.bass);
-    this.shimmerBanks[newBank]?.triggerAttack(this.shimmerNote());
-    this.epA?.triggerAttackRelease(a.voices, '9m', undefined, 0.28);
-    this.epB?.triggerAttackRelease(b.voices, '9m', undefined, 0.28);
+    const epNotesA = a.voices.slice(0, this.bedABanks[newBank].length);
+    const epNotesB = b.voices.slice(0, this.bedBBanks[newBank].length);
+    this.epA?.triggerAttackRelease(epNotesA, '9m', undefined, 0.28);
+    this.epB?.triggerAttackRelease(epNotesB, '9m', undefined, 0.28);
 
     this.bankIndex = newBank;
   }
@@ -567,19 +562,10 @@ export class AudioEngine {
       v.envelope.attack = a * 1.35;
       v.envelope.release = r * 1.15;
     }
-    for (const v of this.shimmerBanks) {
-      v.envelope.attack = a * 1.8;
-      v.envelope.release = r * 0.7;
-    }
   }
 
   private currentChord(): { a: JamChordVoicing; b: JamChordVoicing } {
     return { a: this.nightVoicings[this.chordIndex], b: this.dayVoicings[this.chordIndex] };
-  }
-
-  private shimmerNote(): string {
-    const top = this.dayVoicings[this.chordIndex].voices[2];
-    return transposeOctaveUp(top);
   }
 
   private computeHandStats(local: PlayerPose, remote: PlayerPose) {
@@ -625,6 +611,7 @@ export class AudioEngine {
         attackSeconds:  () => this.applyEnvelopeUpdate(),
         releaseSeconds: () => this.applyEnvelopeUpdate(),
         drumBpm:        v => { this.tone?.getTransport().bpm.rampTo(v, 1); },
+        padLevelDb:     v => { this.padGain?.gain.rampTo(this.tone?.dbToGain(v) ?? 1, 0.2); },
       },
     });
   }
@@ -648,13 +635,6 @@ function handCentroid(player: PlayerPose): Vec3Data | null {
     { x: 0, y: 0, z: 0 }
   );
   return { x: sum.x / hands.length, y: sum.y / hands.length, z: sum.z / hands.length };
-}
-
-function transposeOctaveUp(note: string): string {
-  const match = note.match(/^([A-G]#?)(-?\d+)$/);
-  if (!match) return note;
-  const [, name, octave] = match;
-  return `${name}${Number(octave) + 1}`;
 }
 
 function makeImpulseResponse(ctx: AudioContext, duration: number, decay: number): AudioBuffer {
