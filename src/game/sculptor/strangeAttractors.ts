@@ -127,8 +127,6 @@ export type AttractorPreset = {
   kind: AttractorKind;
   worldScale: number;
   dt: number;
-  velocityBlend: number;
-  containmentRadius: number;
 };
 
 export const ATTRACTOR_PRESETS: Record<AttractorKind, AttractorPreset> = {
@@ -136,42 +134,30 @@ export const ATTRACTOR_PRESETS: Record<AttractorKind, AttractorPreset> = {
     kind: 'thomas',
     worldScale: 0.115,
     dt: 1.4,
-    velocityBlend: 0.92,
-    containmentRadius: 5.5,
   },
   lorenz: {
     kind: 'lorenz',
     worldScale: 0.014,
     dt: 0.5,
-    velocityBlend: 0.85,
-    containmentRadius: 36,
   },
   aizawa: {
     kind: 'aizawa',
     worldScale: 0.32,
     dt: 1.8,
-    velocityBlend: 0.92,
-    containmentRadius: 2.0,
   },
   halvorsen: {
     kind: 'halvorsen',
     worldScale: 0.055,
     dt: 0.35,
-    velocityBlend: 0.86,
-    containmentRadius: 9,
   },
   rossler: {
     kind: 'rossler',
     worldScale: 0.022,
     dt: 0.55,
-    velocityBlend: 0.88,
-    containmentRadius: 22,
   },
   dadras: {
     kind: 'dadras',
     worldScale: 0.025,
     dt: 0.45,
-    velocityBlend: 0.86,
-    containmentRadius: 18,
   },
 };
