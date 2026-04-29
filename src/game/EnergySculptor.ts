@@ -133,6 +133,7 @@ export class EnergySculptor implements EnergySink {
 
   // Integration uniforms.
   private dtUniform = uniform(1 / 60);
+  private ageDtUniform = uniform(1 / 60);
   private flowSpeedUniform = uniform(1);
   private worldScaleUniform = uniform(0.014);
   private lifeMaxUniform = uniform(28);
@@ -385,6 +386,7 @@ export class EnergySculptor implements EnergySink {
     if (delta <= 0) return;
     const dt = Math.min(delta, 1 / 30);
     this.dtUniform.value = dt;
+    this.ageDtUniform.value = dt;
     this.elapsed += delta;
 
     // Synchrony only drives the decorative ring. Particle motion is governed
@@ -405,6 +407,19 @@ export class EnergySculptor implements EnergySink {
       this.renderer.compute(this.emitCompute);
     }
     this.renderer.compute(this.integrateCompute);
+  }
+
+  // Used after a hidden-tab pause: expire particle lifetimes without applying
+  // a huge physics step that would fling the sculpture when rendering resumes.
+  advanceLifecycle(seconds: number): void {
+    if (!Number.isFinite(seconds) || seconds <= 0) return;
+    const previousDt = this.dtUniform.value;
+    const previousAgeDt = this.ageDtUniform.value;
+    this.dtUniform.value = 0;
+    this.ageDtUniform.value = seconds;
+    this.renderer.compute(this.integrateCompute);
+    this.dtUniform.value = previousDt;
+    this.ageDtUniform.value = previousAgeDt;
   }
 
   dispose(): void {
@@ -629,7 +644,7 @@ export class EnergySculptor implements EnergySink {
       });
 
       // Age + alpha.
-      const ageStep = this.dtUniform.mul(float(1).add(dm.mul(2.0)));
+      const ageStep = this.ageDtUniform.mul(float(1).add(dm.mul(2.0)));
       const newAge = m.x.add(ageStep);
       const lifeMax = m.y;
       const newLifeT = newAge.div(lifeMax.max(0.0001)).clamp(0, 1);

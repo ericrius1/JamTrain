@@ -11,6 +11,12 @@ export const POSE_DEFS = {
   centerYRange: { default: 1.10, min: 0,    max: 2,   step: 0.01, label: 'Y range' },
   centerYMin:   { default: 0.0,  min: -1,   max: 2,   step: 0.01, label: 'Y min' },
   centerYMax:   { default: 2.2,  min: 0,    max: 3,   step: 0.01, label: 'Y max' },
+  // The illustrated puppet (rendered arm) has its own per-creature palm-Y clamp
+  // sitting on top of the skeleton reach. These extend each puppet's spec range
+  // (added to ceiling, subtracted from floor) so the rendered arm can actually
+  // follow the skeleton up/down to the new pose limits.
+  puppetYExtendUp:   { default: 0.6, min: 0, max: 2, step: 0.01, label: 'puppet extend up' },
+  puppetYExtendDown: { default: 0.2, min: 0, max: 2, step: 0.01, label: 'puppet extend down' },
 } as const;
 
 export type PoseParams = ParamsOf<typeof POSE_DEFS>;

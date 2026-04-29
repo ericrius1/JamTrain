@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { mousePoseConfig } from '../pose';
 import type { Handedness, PlayerPose } from '../types';
 import type { Skeleton } from './skeleton';
 
@@ -304,8 +305,8 @@ export class IllustratedPuppetAvatar {
       cfg.cameraDepth + targetOffset[0],
       THREE.MathUtils.clamp(
         this.targetLocal.y * target.yScale + target.yOffset + targetOffset[1],
-        target.yRange[0],
-        target.yRange[1],
+        target.yRange[0] - mousePoseConfig.puppetYExtendDown,
+        target.yRange[1] + mousePoseConfig.puppetYExtendUp,
       ),
       THREE.MathUtils.clamp(
         this.targetLocal.z * target.zScale + target.zOffset + targetOffset[2],

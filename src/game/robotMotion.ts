@@ -1,4 +1,5 @@
 import { makeParams, registerTweaks, type ParamsOf } from '../hud/tweakDefs';
+import type { InstrumentId } from './instruments';
 import { clamp, cloneVec, hash, lerp, lerpVec, vec } from './math';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PlayerPose, type Vec3Data } from './types';
 
@@ -20,6 +21,31 @@ type RobotStrikeCue = {
   velocity: number;
 };
 
+export type RobotPerformanceContext = {
+  instrument: InstrumentId;
+  targets: Partial<Record<Handedness, readonly Vec3Data[]>>;
+};
+
+type RobotPerformanceGesture = {
+  startedAt: number;
+  duration: number;
+  seed: number;
+  index: number;
+  targetIndex: number;
+  from: Vec3Data;
+  to: Vec3Data;
+};
+
+type RobotPerformanceIntent = {
+  instrument: InstrumentId;
+  aim: Vec3Data;
+  palm: Vec3Data;
+  amount: number;
+  contactAmount: number;
+  progress: number;
+  seed: number;
+};
+
 export const ROBOT_MOTION_DEFS = {
   mode:            { type: 'select',  default: 'auto', options: { auto: 'auto', still: 'still', solo: 'solo', mirror: 'mirror', complement: 'complement', opposite: 'opposite' }, folder: 'Behavior' },
   stillness:       { default: 0.34,   min: 0,    max: 0.9,  step: 0.01, folder: 'Behavior', label: 'stillness' },
@@ -27,18 +53,18 @@ export const ROBOT_MOTION_DEFS = {
   playerInfluence: { default: 0.56,   min: 0,    max: 1,    step: 0.01, folder: 'Behavior', label: 'player follow' },
 
   motionScale:    { default: 0.78,  min: 0, max: 1.6,  step: 0.01,  folder: 'Gesture', label: 'motion scale' },
-  idleMotion:     { default: 0.12,  min: 0, max: 0.5,  step: 0.01,  folder: 'Gesture', label: 'idle motion' },
+  idleMotion:     { default: 0.08,  min: 0, max: 0.5,  step: 0.01,  folder: 'Gesture', label: 'idle motion' },
   handLift:       { default: 0.12,  min: 0, max: 0.28, step: 0.005, folder: 'Gesture', label: 'hand lift' },
-  handDrift:      { default: 0.075, min: 0, max: 0.2,  step: 0.005, folder: 'Gesture', label: 'hand drift' },
-  fingerActivity: { default: 0.46,  min: 0, max: 1.1,  step: 0.01,  folder: 'Gesture', label: 'fingers' },
+  handDrift:      { default: 0.055, min: 0, max: 0.2,  step: 0.005, folder: 'Gesture', label: 'hand drift' },
+  fingerActivity: { default: 0.34,  min: 0, max: 1.1,  step: 0.01,  folder: 'Gesture', label: 'fingers' },
 
   holdMinSeconds: { default: 1.25, min: 0.2, max: 6,  step: 0.05, folder: 'Timing', label: 'hold min' },
   holdMaxSeconds: { default: 3.1,  min: 0.2, max: 8,  step: 0.05, folder: 'Timing', label: 'hold max' },
   moveMinSeconds: { default: 2.4,  min: 0.5, max: 8,  step: 0.05, folder: 'Timing', label: 'move min' },
   moveMaxSeconds: { default: 5.2,  min: 0.5, max: 10, step: 0.05, folder: 'Timing', label: 'move max' },
 
-  handSmooth:   { default: 0.68, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'hand smooth' },
-  fingerSmooth: { default: 0.76, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'finger smooth' },
+  handSmooth:   { default: 0.72, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'hand smooth' },
+  fingerSmooth: { default: 0.84, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'finger smooth' },
 } as const;
 
 export type RobotMotionParams = ParamsOf<typeof ROBOT_MOTION_DEFS> & { mode: RobotMotionMode };
@@ -64,6 +90,7 @@ export class RobotMotionController {
   private registered?: ReturnType<typeof registerTweaks<typeof ROBOT_MOTION_DEFS>>;
   private previousHands?: Record<Handedness, HandPose>;
   private strikeCues: Partial<Record<Handedness, RobotStrikeCue>> = {};
+  private performanceGestures: Partial<Record<Handedness, RobotPerformanceGesture>> = {};
   private manualKind?: RobotMotionKind;
   private phase: RobotMotionPhase = {
     kind: 'still',
@@ -80,12 +107,17 @@ export class RobotMotionController {
     });
   }
 
-  update(elapsed: number, delta: number, playerPose?: PlayerPose): Record<Handedness, HandPose> {
+  update(
+    elapsed: number,
+    delta: number,
+    playerPose?: PlayerPose,
+    performance?: RobotPerformanceContext
+  ): Record<Handedness, HandPose> {
     const kind = this.resolveKind(elapsed);
     const phaseProgress = clamp((elapsed - this.phase.startedAt) / Math.max(this.phase.duration, 0.001), 0, 1);
     const manualMode = this.params.mode !== 'auto';
     const moveEnvelope = kind === 'still' ? 0 : manualMode ? 1 : Math.sin(phaseProgress * Math.PI);
-    const target = this.makeTargetHands(elapsed, kind, moveEnvelope, playerPose);
+    const target = this.makeTargetHands(elapsed, kind, moveEnvelope, playerPose, performance);
     const smoothed = this.smoothHands(target, delta);
     this.previousHands = smoothed;
     return smoothed;
@@ -154,14 +186,23 @@ export class RobotMotionController {
     elapsed: number,
     kind: RobotMotionKind,
     moveEnvelope: number,
-    playerPose?: PlayerPose
+    playerPose?: PlayerPose,
+    performance?: RobotPerformanceContext
   ): Record<Handedness, HandPose> {
     const hands = {} as Record<Handedness, HandPose>;
     const stillnessAlive = kind === 'still' ? this.params.idleMotion : 0.22;
     const motionAmount = this.params.motionScale * (stillnessAlive + moveEnvelope * (1 - stillnessAlive));
 
     for (const handedness of handednesses) {
-      hands[handedness] = this.makeTargetHand(handedness, elapsed, kind, motionAmount, moveEnvelope, playerPose);
+      hands[handedness] = this.makeTargetHand(
+        handedness,
+        elapsed,
+        kind,
+        motionAmount,
+        moveEnvelope,
+        playerPose,
+        performance,
+      );
     }
 
     return hands;
@@ -173,7 +214,8 @@ export class RobotMotionController {
     kind: RobotMotionKind,
     motionAmount: number,
     moveEnvelope: number,
-    playerPose?: PlayerPose
+    playerPose?: PlayerPose,
+    performance?: RobotPerformanceContext
   ): HandPose {
     const side = handedness === 'left' ? -1 : 1;
     const handIndex = handedness === 'left' ? 0 : 1;
@@ -204,9 +246,197 @@ export class RobotMotionController {
     }
 
     this.applyPlayerInfluence(kind, handedness, playerPose, wrist, curls, moveEnvelope);
+    const performanceIntent = this.applyPerformanceGesture(
+      handedness,
+      elapsed,
+      performance,
+      wrist,
+      curls,
+    );
     const hand = this.buildHand(handedness, wrist, curls);
+    if (performanceIntent) this.applyPerformanceHandShape(hand, performanceIntent);
     this.applyStrikeCue(hand, elapsed);
     return hand;
+  }
+
+  private applyPerformanceGesture(
+    handedness: Handedness,
+    elapsed: number,
+    performance: RobotPerformanceContext | undefined,
+    wrist: Vec3Data,
+    curls: Record<FingerName, number>,
+  ): RobotPerformanceIntent | undefined {
+    const targets = performance?.targets[handedness];
+    if (!performance || !targets?.length) {
+      this.performanceGestures[handedness] = undefined;
+      return undefined;
+    }
+
+    const gesture = this.ensurePerformanceGesture(handedness, elapsed, performance.instrument, targets);
+    const progress = clamp((elapsed - gesture.startedAt) / Math.max(gesture.duration, 0.001), 0, 1);
+    const isDrum = performance.instrument === 'drum';
+    const side = handedness === 'left' ? -1 : 1;
+    const approachEnd = isDrum ? 0.68 : 0.86;
+    const approach = easeInOutCubic(smoothstepScalar(0, approachEnd, progress));
+    const release = isDrum
+      ? smoothstepScalar(0.70, 1, progress)
+      : smoothstepScalar(0.88, 1, progress);
+    const contactAmount = isDrum
+      ? smoothstepScalar(0.42, 0.62, progress) * (1 - smoothstepScalar(0.84, 1, progress))
+      : smoothstepScalar(0.18, 0.58, progress) * (1 - smoothstepScalar(0.94, 1, progress));
+    const path = lerpVec(gesture.from, gesture.to, approach);
+    const arc = Math.sin(approach * Math.PI) * (1 - release * 0.8);
+    const phraseSway = Math.sin(progress * Math.PI * 2 + gesture.seed * 5.7) * (isDrum ? 0.018 : 0.04);
+    const depthSway = Math.sin(progress * Math.PI + gesture.seed * 7.1) * (isDrum ? 0.035 : 0.055);
+    const palmTarget = vec(
+      clamp(path.x + side * phraseSway, -0.96, 0.96),
+      clamp(path.y + arc * (isDrum ? 0.15 : 0.065) + release * (isDrum ? 0.05 : 0.015), 0.10, 1.62),
+      clamp(path.z + depthSway * (1 - contactAmount * 0.65) + release * (isDrum ? 0.035 : 0.02), -0.42, 1.02),
+    );
+    const wristTarget = vec(
+      clamp(palmTarget.x - side * (0.065 + contactAmount * (isDrum ? 0.015 : 0.005)), -1.0, 1.0),
+      clamp(palmTarget.y - 0.17 - contactAmount * (isDrum ? 0.025 : 0.005), 0.02, 1.35),
+      clamp(palmTarget.z + 0.055 + release * (isDrum ? 0.055 : 0.025), -0.42, 1.04),
+    );
+    const amount = isDrum ? 0.86 : 0.78;
+    wrist.x = lerp(wrist.x, wristTarget.x, amount);
+    wrist.y = lerp(wrist.y, wristTarget.y, amount);
+    wrist.z = lerp(wrist.z, wristTarget.z, amount);
+
+    for (const finger of fingerNames) {
+      const index = fingerNames.indexOf(finger);
+      const lead = finger === 'index' || finger === 'middle' ? 1 : finger === 'ring' ? 0.62 : finger === 'thumb' ? 0.46 : 0.38;
+      const targetCurl = isDrum
+        ? 0.18 + (1 - lead) * 0.24 + contactAmount * 0.08
+        : 0.08 + (1 - lead) * 0.16 + Math.sin(progress * Math.PI + index) * 0.035;
+      curls[finger] = lerp(curls[finger], clamp(targetCurl, 0.04, 0.58), amount * (0.48 + lead * 0.32));
+    }
+
+    return {
+      instrument: performance.instrument,
+      aim: cloneVec(gesture.to),
+      palm: palmTarget,
+      amount,
+      contactAmount,
+      progress,
+      seed: gesture.seed,
+    };
+  }
+
+  private ensurePerformanceGesture(
+    handedness: Handedness,
+    elapsed: number,
+    instrument: InstrumentId,
+    targets: readonly Vec3Data[],
+  ): RobotPerformanceGesture {
+    const current = this.performanceGestures[handedness];
+    if (
+      current &&
+      current.targetIndex < targets.length &&
+      elapsed - current.startedAt < current.duration
+    ) {
+      copyVecData(current.to, this.clampPerformanceTarget(targets[current.targetIndex]));
+      return current;
+    }
+
+    const index = (current?.index ?? 0) + 1;
+    const seed = this.phase.seed * 97.3 + index * 13.37 + (handedness === 'left' ? 4.2 : 9.6);
+    const targetIndex = this.pickPerformanceTargetIndex(handedness, targets, current?.targetIndex ?? -1, seed);
+    const from = this.previousHands
+      ? cloneVec(this.previousHands[handedness].palm)
+      : this.defaultPerformancePalm(handedness);
+    const to = this.clampPerformanceTarget(targets[targetIndex]);
+    const duration = instrument === 'drum'
+      ? lerp(0.58, 0.96, hash(seed + 1.1))
+      : lerp(0.92, 1.58, hash(seed + 1.1));
+    const initialDelay = current ? 0 : (handedness === 'left' ? duration * 0.34 : 0);
+    const gesture: RobotPerformanceGesture = {
+      startedAt: elapsed + initialDelay,
+      duration,
+      seed,
+      index,
+      targetIndex,
+      from,
+      to,
+    };
+    this.performanceGestures[handedness] = gesture;
+    return gesture;
+  }
+
+  private pickPerformanceTargetIndex(
+    handedness: Handedness,
+    targets: readonly Vec3Data[],
+    previousIndex: number,
+    seed: number,
+  ): number {
+    const side = handedness === 'left' ? -1 : 1;
+    let bestIndex = 0;
+    let bestScore = -Infinity;
+    for (let i = 0; i < targets.length; i += 1) {
+      const target = targets[i];
+      const lateralPreference = clamp(target.x * side, -1, 1) * 0.22;
+      const novelty = i === previousIndex ? -0.45 : 0;
+      const score = hash(seed + i * 17.19) + lateralPreference + novelty;
+      if (score > bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+    return bestIndex;
+  }
+
+  private defaultPerformancePalm(handedness: Handedness): Vec3Data {
+    const side = handedness === 'left' ? -1 : 1;
+    return vec(side * 0.44, 0.72, 0.14);
+  }
+
+  private clampPerformanceTarget(target: Vec3Data): Vec3Data {
+    return vec(
+      clamp(target.x, -0.94, 0.94),
+      clamp(target.y, 0.16, 1.56),
+      clamp(target.z, -0.38, 0.96),
+    );
+  }
+
+  private applyPerformanceHandShape(hand: HandPose, intent: RobotPerformanceIntent): void {
+    const isDrum = intent.instrument === 'drum';
+    const side = hand.handedness === 'left' ? -1 : 1;
+    const palmAmount = intent.amount * (isDrum ? 0.34 : 0.42);
+    hand.palm = lerpVec(hand.palm, intent.palm, palmAmount);
+
+    for (const finger of fingerNames) {
+      const index = fingerNames.indexOf(finger);
+      const lead = finger === 'index' || finger === 'middle' ? 1 : finger === 'ring' ? 0.62 : finger === 'thumb' ? 0.48 : 0.36;
+      const spread = fingerSpread[finger] * side;
+      const fingerAmount = clamp(intent.amount * (0.30 + intent.contactAmount * 0.70) * (0.52 + lead * 0.48), 0, 1);
+      const glide = isDrum
+        ? 0
+        : Math.sin(intent.progress * Math.PI * 2 + intent.seed + index * 0.61) * 0.026;
+      const tipTarget = vec(
+        clamp(intent.aim.x + spread * (isDrum ? 0.045 : 0.080) + glide * side, -0.98, 0.98),
+        clamp(intent.aim.y + (isDrum ? (1 - lead) * 0.032 : lead * 0.024 + glide * 0.35), 0.12, 1.58),
+        clamp(intent.aim.z + (isDrum ? (1 - lead) * 0.052 : Math.cos(intent.progress * Math.PI + index) * 0.028), -0.40, 1.0),
+      );
+      const baseTarget = vec(
+        hand.palm.x + spread * (isDrum ? 0.26 : 0.35),
+        hand.palm.y + 0.028 + index * 0.004,
+        hand.palm.z + (isDrum ? 0.010 : 0.006),
+      );
+      const midTarget = vec(
+        baseTarget.x + (tipTarget.x - baseTarget.x) * (isDrum ? 0.48 : 0.56),
+        baseTarget.y + (tipTarget.y - baseTarget.y) * (isDrum ? 0.52 : 0.58) + lead * (isDrum ? 0.026 : 0.016),
+        baseTarget.z + (tipTarget.z - baseTarget.z) * (isDrum ? 0.50 : 0.58),
+      );
+      const pose = hand.fingers[finger];
+      pose.base = lerpVec(pose.base, baseTarget, fingerAmount);
+      pose.mid = lerpVec(pose.mid, midTarget, fingerAmount);
+      pose.tip = lerpVec(pose.tip, tipTarget, fingerAmount);
+      pose.curl = lerp(
+        pose.curl,
+        clamp(isDrum ? 0.08 + (1 - lead) * 0.24 : 0.05 + (1 - lead) * 0.16, 0.04, 0.42),
+        fingerAmount,
+      );
+    }
   }
 
   private applyStrikeCue(hand: HandPose, elapsed: number): void {
@@ -397,6 +627,20 @@ function cloneHands(hands: Record<Handedness, HandPose>): Record<Handedness, Han
 
 function oppositeHand(handedness: Handedness): Handedness {
   return handedness === 'left' ? 'right' : 'left';
+}
+
+function copyVecData(target: Vec3Data, source: Vec3Data): Vec3Data {
+  target.x = source.x;
+  target.y = source.y;
+  target.z = source.z;
+  return target;
+}
+
+function easeInOutCubic(value: number): number {
+  const t = clamp(value, 0, 1);
+  return t < 0.5
+    ? 4 * t * t * t
+    : 1 - Math.pow(-2 * t + 2, 3) / 2;
 }
 
 function smoothingAmount(smoothness: number, delta: number): number {

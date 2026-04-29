@@ -20,11 +20,11 @@ import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransp
 import { PoseSession } from './pose/PoseSession';
 import { WebRtcPoseTransport } from './pose/WebRtcPoseTransport';
 import { HumanoidRig } from './rig/HumanoidRig';
-import { RobotMotionController } from './robotMotion';
+import { RobotMotionController, type RobotPerformanceContext } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { keyDirector } from './keyDirector';
 import { hashString } from './seedRandom';
-import { fingerJointNames, fingerNames, handednesses, type Handedness, type PlayerPose } from './types';
+import { fingerJointNames, fingerNames, handednesses, type Handedness, type PlayerPose, type Vec3Data } from './types';
 import { WebRTCClient } from './webrtc';
 import { makeParams, registerTweaks } from '../hud/tweakDefs';
 
@@ -53,11 +53,11 @@ const CABIN_DEFS = {
 } as const;
 
 const CABIN_LIGHTING_DEFS = {
-  nightBlend:       { default: 0.34, min: 0, max: 2,    step: 0.01, label: 'night blend' },
+  nightBlend:       { default: 0.74, min: 0, max: 2,    step: 0.01, label: 'lamp dim' },
   driftRate:        { default: 0.07, min: 0, max: 0.5,  step: 0.01, label: 'drift rate' },
   flickerRate:      { default: 1.85, min: 0, max: 8,    step: 0.05, label: 'flicker rate' },
-  flickerAmplitude: { default: 0.14, min: 0, max: 0.65, step: 0.01, label: 'flicker amp' },
-  flutter:          { default: 0.04, min: 0, max: 0.25, step: 0.01, label: 'flutter' },
+  flickerAmplitude: { default: 0.20, min: 0, max: 0.65, step: 0.01, label: 'lamp amp' },
+  flutter:          { default: 0.05, min: 0, max: 0.25, step: 0.01, label: 'flutter' },
 } as const;
 
 const ILLUSTRATED_CABIN_TEXTURES = [
@@ -184,6 +184,8 @@ export class Game {
   private readonly localRightPalm = new THREE.Vector3();
   private readonly remoteLeftPalm = new THREE.Vector3();
   private readonly remoteRightPalm = new THREE.Vector3();
+  private readonly robotInstrumentTargets: Record<Handedness, Vec3Data[]> = { left: [], right: [] };
+  private hiddenStartedAt: number | null = null;
   constructor(
     private canvas: HTMLCanvasElement,
     urlRoom: string,
@@ -320,8 +322,20 @@ export class Game {
   // (e.g. while thinking in an editor) starts playing notes. Releases held
   // synth voices first so the user doesn't return to a stuck note.
   private handleVisibilityChange = (): void => {
-    const inactive = document.hidden || !document.hasFocus();
-    if (inactive) this.handSynth.silenceAll();
+    const hidden = document.hidden;
+    const inactive = hidden || !document.hasFocus();
+    const now = performance.now();
+    if (hidden) {
+      this.hiddenStartedAt ??= now;
+    } else if (this.hiddenStartedAt !== null) {
+      this.sculptor?.advanceLifecycle((now - this.hiddenStartedAt) / 1000);
+      this.hiddenStartedAt = null;
+      this.lastFrameAt = now;
+    }
+
+    if (inactive) {
+      this.handSynth.silenceAll();
+    }
     void this.audioGraph.setSuspended(inactive);
   };
 
@@ -503,7 +517,7 @@ export class Game {
     this.orbitControls.enabled = false;
     this.orbitControls.enableDamping = true;
     this.orbitControls.dampingFactor = 0.08;
-    this.orbitControls.minDistance = 1.8;
+    this.orbitControls.minDistance = 0.1;
     this.orbitControls.maxDistance = 5.2;
     this.orbitControls.minPolarAngle = Math.PI * 0.18;
     this.orbitControls.maxPolarAngle = Math.PI * 0.48;
@@ -1061,7 +1075,7 @@ export class Game {
 
   private setupCabinLightingPane(): void {
     if (this.cabinLightingTweaks) return;
-    this.cabinLightingTweaks = registerTweaks(this.paneDock, 'cabin-lighting', CABIN_LIGHTING_DEFS, {
+    this.cabinLightingTweaks = registerTweaks(this.paneDock, 'cabin-local-lighting', CABIN_LIGHTING_DEFS, {
       title: 'Cabin Lighting',
       params: this.cabinLightingParams,
     });
@@ -1093,7 +1107,8 @@ export class Game {
     const hands = this.handTracker.update(elapsed, localSeat);
     const localPose = makePlayerPose(this.multiplayer.localId, 'Player', this.roomId, localSeat, hands, false);
     const remoteFromNetwork = this.poseSession.getRemotePose();
-    const robotHands = this.robotMotion.update(elapsed, delta, localPose);
+    const robotPerformance = this.partnerPresent ? undefined : this.updateRobotInstrumentTargets();
+    const robotHands = this.robotMotion.update(elapsed, delta, localPose, robotPerformance);
     const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, true);
     // Presence (player row in our cabin) drives form. Pose freshness only
     // drives hand articulation. If partner is here but no pose has arrived
@@ -1138,6 +1153,28 @@ export class Game {
 
     this.playerVisuals.local?.update(localLeft, localRight, localVoice, delta, localContacts);
     this.playerVisuals.remote?.update(remoteLeft, remoteRight, remoteVoice, delta, remoteContacts);
+  }
+
+  private updateRobotInstrumentTargets(): RobotPerformanceContext | undefined {
+    const worldTargets = this.playerVisuals.remote?.getPerformanceTargets?.();
+    if (!worldTargets?.length) return undefined;
+
+    const count = Math.min(worldTargets.length, 32);
+    for (const hand of handednesses) {
+      const targets = this.robotInstrumentTargets[hand];
+      targets.length = 0;
+      for (let i = 0; i < count; i += 1) {
+        const out = targets[i] ?? { x: 0, y: 0, z: 0 };
+        this.remoteRig.worldToPosePoint(hand, worldTargets[i], out);
+        targets[i] = out;
+      }
+      targets.length = count;
+    }
+
+    return {
+      instrument: this.playerInstruments.remote,
+      targets: this.robotInstrumentTargets,
+    };
   }
 
   private updateVisualContacts(

@@ -112,6 +112,12 @@ export function normalizeInstrumentId(value: string | undefined | null): Instrum
  */
 export interface PlayerVisual {
   readonly mesh: THREE.Object3D;
+  /**
+   * World-space points the robot stand-in can play against. Visuals that expose
+   * this let the procedural partner move toward the actual instrument geometry
+   * instead of drifting near it and hoping contact happens.
+   */
+  getPerformanceTargets?(target?: THREE.Vector3[]): readonly THREE.Vector3[];
   update(
     leftPalm: THREE.Vector3,
     rightPalm: THREE.Vector3,

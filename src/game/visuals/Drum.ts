@@ -201,6 +201,7 @@ export class Drum implements PlayerVisual {
   readonly params: DrumParams;
 
   private orbs: Orb[] = [];
+  private performanceTargets: THREE.Vector3[] = [];
   private elapsed = 0;
   private active = true;
   private initialized = false;
@@ -447,6 +448,19 @@ export class Drum implements PlayerVisual {
 
   isInteractive(): boolean {
     return this.revealedFully && !this.revealActive;
+  }
+
+  getPerformanceTargets(targets = this.performanceTargets): readonly THREE.Vector3[] {
+    targets.length = 0;
+    if (!this.active || !this.mesh.visible || !this.revealedFully || this.revealActive) return targets;
+
+    for (let i = 0; i < this.orbs.length; i += 1) {
+      const out = targets[i] ?? new THREE.Vector3();
+      out.copy(this.mesh.position).add(this.orbs[i].mesh.position);
+      targets[i] = out;
+    }
+    targets.length = this.orbs.length;
+    return targets;
   }
 
   // Per-orb reveal envelope. Stagger keeps neighbours from rising together

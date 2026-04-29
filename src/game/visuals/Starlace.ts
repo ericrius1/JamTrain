@@ -1,4 +1,10 @@
 import * as THREE from 'three/webgpu';
+import {
+  float,
+  normalView,
+  screenUV,
+  viewportMipTexture,
+} from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import { getStarlaceHz } from '../harmony';
 import { keyDirector } from '../keyDirector';
@@ -123,6 +129,7 @@ const STARLACE_DUSK_COOL = new THREE.Color('#376f8e');
 const STARLACE_DUSK_WARM = new THREE.Color('#8d4b83');
 const STARLACE_DUSK_GOLD = new THREE.Color('#b87835');
 const STARLACE_DUSK_HOT = new THREE.Color('#d9934d');
+const STARLACE_FROST_WHITE = new THREE.Color('#f3fbff');
 
 const smoothstep01 = (x: number): number => {
   const t = clamp(x, 0, 1);
@@ -134,6 +141,7 @@ export class Starlace implements PlayerVisual {
   readonly params: StarlaceParams;
 
   private nodes: StarNode[] = [];
+  private performanceTargets: THREE.Vector3[] = [];
   private edges: [number, number][] = [];
   private edgeDistances: number[] = [];
   private adjacency: number[][] = [];
@@ -147,9 +155,9 @@ export class Starlace implements PlayerVisual {
   private pulseLineMaterial: THREE.LineBasicMaterial;
   private lineSegments: THREE.LineSegments;
   private pulseLineSegments: THREE.LineSegments;
-  private nodeGeometries: THREE.BufferGeometry[] = [];
-  private nodeMeshes: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>[] = [];
-  private nodeMaterials: THREE.MeshStandardMaterial[] = [];
+  private nodeGeometry?: THREE.BufferGeometry;
+  private nodeMesh?: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicNodeMaterial>;
+  private nodeMaterial?: THREE.MeshBasicNodeMaterial;
   private sparkMesh: THREE.InstancedMesh;
   private sparkMaterial: THREE.MeshBasicMaterial;
 
@@ -294,12 +302,6 @@ export class Starlace implements PlayerVisual {
     this.pulseLineSegments.renderOrder = 17;
     this.mesh.add(this.lineSegments, this.pulseLineSegments);
 
-    this.nodeGeometries = [
-      new THREE.TetrahedronGeometry(1, 0),
-      new THREE.OctahedronGeometry(1, 0),
-      new THREE.IcosahedronGeometry(1, 0),
-      new THREE.DodecahedronGeometry(1, 0),
-    ];
     this.buildNodeMeshes();
 
     this.sparkMaterial = new THREE.MeshBasicMaterial({
@@ -391,6 +393,22 @@ export class Starlace implements PlayerVisual {
 
   isInteractive(): boolean {
     return this.revealedFully && !this.revealActive;
+  }
+
+  getPerformanceTargets(targets = this.performanceTargets): readonly THREE.Vector3[] {
+    targets.length = 0;
+    if (!this.active || !this.mesh.visible || !this.revealedFully || this.revealActive) return targets;
+
+    let cursor = 0;
+    for (let i = 0; i < this.nodes.length; i += 1) {
+      if ((this.nodeRevealT[i] ?? 1) < 0.45) continue;
+      const out = targets[cursor] ?? new THREE.Vector3();
+      out.copy(this.nodes[i].world);
+      targets[cursor] = out;
+      cursor += 1;
+    }
+    targets.length = cursor;
+    return targets;
   }
 
   private pickRevealOrigin(): void {
@@ -567,8 +585,8 @@ export class Starlace implements PlayerVisual {
     this.pulseLineGeometry.dispose();
     this.lineMaterial.dispose();
     this.pulseLineMaterial.dispose();
-    for (const geometry of this.nodeGeometries) geometry.dispose();
-    for (const material of this.nodeMaterials) material?.dispose();
+    this.nodeGeometry?.dispose();
+    this.nodeMaterial?.dispose();
     this.sparkMesh.geometry.dispose();
     this.sparkMaterial.dispose();
     this.mesh.removeFromParent();
@@ -681,29 +699,30 @@ export class Starlace implements PlayerVisual {
   }
 
   private buildNodeMeshes(): void {
-    for (let i = 0; i < this.nodes.length; i += 1) {
-      const node = this.nodes[i];
-      const paletteIndex = this.notePaletteIndexForNode(node);
-      const shapeIndex = Math.floor(hash(node.seed * 61.7 + i * 0.37) * this.nodeGeometries.length) % this.nodeGeometries.length;
-      const material = new THREE.MeshStandardMaterial({
-        color: STARLACE_NOTE_PALETTE[paletteIndex],
-        emissive: STARLACE_NOTE_PALETTE[paletteIndex],
-        emissiveIntensity: 0.26,
-        flatShading: true,
-        roughness: 0.44,
-        metalness: 0.06,
-        transparent: true,
-        opacity: 0.96,
-        blending: THREE.NormalBlending,
-        depthWrite: false,
-      });
-      const mesh = new THREE.Mesh(this.nodeGeometries[shapeIndex], material);
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 20;
-      this.nodeMeshes[i] = mesh;
-      this.nodeMaterials[i] = material;
-      this.mesh.add(mesh);
-    }
+    const refractedUv = screenUV.add(normalView.xy.mul(float(0.072)));
+    const frostedBackdrop = viewportMipTexture(refractedUv, float(1.85));
+    const material = new THREE.MeshBasicNodeMaterial({
+      color: 0xf4fbff,
+      transparent: true,
+      opacity: 0.88,
+      blending: THREE.NormalBlending,
+      depthWrite: false,
+      vertexColors: true,
+      side: THREE.FrontSide,
+    });
+    material.backdropNode = frostedBackdrop;
+    material.backdropAlphaNode = float(0.98);
+    material.forceSinglePass = true;
+
+    this.nodeGeometry = new THREE.IcosahedronGeometry(1, 0);
+    this.nodeGeometry.computeVertexNormals();
+    this.nodeMesh = new THREE.InstancedMesh(this.nodeGeometry, material, this.nodes.length);
+    this.nodeMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.nodeMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.nodes.length * 3), 3);
+    this.nodeMesh.frustumCulled = false;
+    this.nodeMesh.renderOrder = 20;
+    this.nodeMaterial = material;
+    this.mesh.add(this.nodeMesh);
   }
 
   private resolveAxes(): void {
@@ -806,6 +825,10 @@ export class Starlace implements PlayerVisual {
   }
 
   private writeNodes(): void {
+    const mesh = this.nodeMesh;
+    const material = this.nodeMaterial;
+    if (!mesh || !material) return;
+
     for (let i = 0; i < this.nodes.length; i += 1) {
       const node = this.nodes[i];
       const twinkle = 0.5 + Math.sin(this.elapsed * (1.2 + node.seed * 1.7) + node.seed * TAU) * 0.5;
@@ -813,25 +836,27 @@ export class Starlace implements PlayerVisual {
       const pulse = clamp(node.pulse + pitchGlow * this.smoothedEnergy * 0.18 + twinkle * 0.07, 0, 1);
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
       const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.10) * reveal;
+      const drawSize = Math.max(size, 0.0001);
+      const flash = Math.pow(pulse, 1.55);
 
-      const mesh = this.nodeMeshes[i];
-      if (!mesh) continue;
-      mesh.position.copy(node.world);
-      mesh.rotation.set(
+      _dummy.position.copy(node.world);
+      _dummy.rotation.set(
         this.elapsed * (0.18 + node.seed * 0.18) + node.seed * TAU,
         this.elapsed * (0.14 + node.seed * 0.16) + node.u * 2.1,
         this.elapsed * (0.10 + node.seed * 0.12) + node.v * 2.4,
       );
-      mesh.scale.setScalar(size);
+      _dummy.scale.setScalar(drawSize);
+      _dummy.updateMatrix();
+      mesh.setMatrixAt(i, _dummy.matrix);
 
-      const material = this.nodeMaterials[i];
-      if (!material) continue;
-      const flash = Math.pow(pulse, 1.55);
       this.nodeVisualColor(node, pulse, twinkle, _colorC);
-      material.color.copy(_colorC);
-      material.emissive.copy(_colorC);
-      material.emissiveIntensity = 0.24 + flash * 1.02;
+      _colorA.copy(_colorC).lerp(STARLACE_FROST_WHITE, 0.72 - flash * 0.12).multiplyScalar(0.90 + flash * 0.32);
+      mesh.setColorAt(i, _colorA);
     }
+
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    material.opacity = clamp(0.78 + this.maxPulse * 0.08 + this.smoothedPulse * 0.05, 0.78, 0.92);
   }
 
   private writeSparks(): void {
@@ -1342,13 +1367,7 @@ export class Starlace implements PlayerVisual {
     this.noteColors = STARLACE_NOTE_PALETTE.map(hex => new THREE.Color(hex).multiplyScalar(1.00));
     this.lineMaterial.color.setRGB(0.98, 0.97, 0.94);
     this.pulseLineMaterial.color.setRGB(1.00, 0.96, 0.92);
-    for (let i = 0; i < this.nodeMaterials.length; i += 1) {
-      const material = this.nodeMaterials[i];
-      if (!material) continue;
-      const node = this.nodes[i];
-      if (!node) continue;
-      material.color.copy(this.noteColors[this.notePaletteIndexForNode(node)]).lerp(this.gold, i % 4 === 0 ? 0.10 : 0.025);
-    }
+    this.nodeMaterial?.color.setRGB(0.96, 0.99, 1.00);
     this.sparkMaterial.color.setRGB(1.00, 0.97, 0.92);
   }
 
