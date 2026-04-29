@@ -63,6 +63,7 @@ const NOTE_HYSTERESIS = 0.18;
 const HIT_BUDGET_WINDOW = 0.2;
 const ORB_MAX_HITS_PER_WINDOW = 12;
 const ORB_MAX_ACTIVE_VOICES = 24;
+const ORB_OUTPUT_LIMITER_DB = -9;
 const STARLACE_MAX_HITS_PER_WINDOW = 5;
 const STARLACE_MAX_ACTIVE_VOICES = 40;
 const STARLACE_GLINT_MAX_ACTIVE_VOICES = 10;
@@ -148,6 +149,7 @@ type OrbVoice = {
   shimmerGain: any;
   filter: any;      // gentle lowpass — keeps the pad warm, not glassy
   panner: any;
+  limiter: any;
   dryGain: any;
   wetSend: any;
   reverb: any;
@@ -997,8 +999,9 @@ export class HandSynthEngine {
   private createOrbVoice(key: PlayerKey): OrbVoice {
     const Tone = this.tone!;
     const panner = new Tone.Panner(key === 'local' ? -0.15 : 0.15).connect(this.master);
-    const dryGain = new Tone.Gain(0).connect(panner);
-    const reverbReturn = new Tone.Gain(0.58).connect(panner);
+    const limiter = new Tone.Limiter(ORB_OUTPUT_LIMITER_DB).connect(panner);
+    const dryGain = new Tone.Gain(0).connect(limiter);
+    const reverbReturn = new Tone.Gain(0.58).connect(limiter);
     const reverb = new Tone.Reverb({
       decay: 4.6,
       preDelay: 0.026,
@@ -1086,6 +1089,7 @@ export class HandSynthEngine {
       shimmerGain,
       filter,
       panner,
+      limiter,
       dryGain,
       wetSend,
       reverb,
@@ -1253,6 +1257,7 @@ export class HandSynthEngine {
     orb.shimmerGain?.dispose?.();
     orb.filter?.dispose?.();
     orb.panner?.dispose?.();
+    orb.limiter?.dispose?.();
     orb.dryGain?.dispose?.();
     orb.wetSend?.dispose?.();
     orb.reverb?.dispose?.();
