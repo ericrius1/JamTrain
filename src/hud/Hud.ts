@@ -15,8 +15,8 @@ import { type CreatureId } from '../game/creatures';
 import { ControlsPanel } from './components/ControlsPanel';
 
 // Default mix balance. Plenty of slider headroom on either side.
-export const DEFAULT_MUSIC_VOLUME = 0.75;
-export const DEFAULT_BACKING_TRACK_VOLUME = 0.25;
+export const DEFAULT_MUSIC_VOLUME = .9;
+export const DEFAULT_BACKING_TRACK_VOLUME = 0.15;
 export const DEFAULT_VOICE_VOLUME = 0.7;
 
 export type HudCallbacks = {
