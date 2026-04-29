@@ -67,6 +67,7 @@ const STARLACE_MAX_HITS_PER_WINDOW = 5;
 const STARLACE_MAX_ACTIVE_VOICES = 40;
 const STARLACE_GLINT_MAX_ACTIVE_VOICES = 10;
 const MAX_PENDING_ORB_HITS = 12;
+const ORB_OCTAVE_MULTIPLIER = 2;
 
 type PlayerKey = 'local' | 'remote';
 const PLAYER_KEYS: PlayerKey[] = ['local', 'remote'];
@@ -608,7 +609,7 @@ export class HandSynthEngine {
     this.fireOrbNoteAttack(orb, frequency, v);
     this.orbHeldNotes[player].set(sourceId, {
       frequency,
-      octaveHz: frequency * 2.01,
+      octaveHz: frequency * ORB_OCTAVE_MULTIPLIER,
       orbIndex,
     });
     orb.pulse = Math.min(1, orb.pulse + 0.55 + v * 0.45);
@@ -1125,7 +1126,7 @@ export class HandSynthEngine {
   ): void {
     // Velocity floor at 0.35 so a soft tap still rings audibly.
     const synthVel = 0.30 + velocity * 0.58;
-    const octaveHz = frequency * 2.01;
+    const octaveHz = frequency * ORB_OCTAVE_MULTIPLIER;
     const harmonics = clamp(this.params.orbHarmonics, 0, 1);
     try {
       this.applyOrbEnvelope(orb, envelope);
@@ -1141,7 +1142,7 @@ export class HandSynthEngine {
 
   private fireOrbNoteAttack(orb: OrbVoice, frequency: number, velocity: number): void {
     const synthVel = 0.30 + velocity * 0.58;
-    const octaveHz = frequency * 2.01;
+    const octaveHz = frequency * ORB_OCTAVE_MULTIPLIER;
     const harmonics = clamp(this.params.orbHarmonics, 0, 1);
     try {
       orb.fund.triggerAttack(frequency, undefined, synthVel);

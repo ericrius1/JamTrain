@@ -4,24 +4,24 @@ export type JamStarlaceChord = readonly [string, string] | readonly [string, str
 
 const PITCH_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
-// Pentatonic scale semitones from the root.
+// Diatonic scale semitones from the root. The KeyDirector is currently locked
+// to C major so both instruments stay in tune with the backing track.
 const SCALE_SEMIS: Record<Mode, readonly number[]> = {
-  majorPent: [0, 2, 4, 7, 9],
-  minorPent: [0, 3, 5, 7, 10],
+  major: [0, 2, 4, 5, 7, 9, 11],
 };
 
-// Reference octaves anchored to the original D-major-pentatonic register so
-// the playable band stays in the comfortable hand-tracked range across roots.
+// Reference octaves keep the playable band in a comfortable hand-tracked range.
 const REF_OCT_VOICES = 3;
 const REF_OCT_BASS = 2;
 
-// Step indices that reproduce the original arrays at key=D major pentatonic.
+// Scale step indices. With the current C-major lock these resolve only to
+// natural notes: C, D, E, F, G, A, and B.
 const PLAYABLE_LOCAL_STEPS  = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 const PLAYABLE_REMOTE_STEPS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 const DUET_STEPS            = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15];
 const ORB_GESTURE_STEPS     = [0, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 const STARLACE_STEPS        = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
-const DRUM_STEPS            = [0, 1, 2, 3, 4];
+const DRUM_STEPS            = [0, 1, 2, 3, 4, 5, 6];
 
 const STARLACE_CHORD_STEPS: readonly (readonly number[])[] = [
   [0, 3, 7],
@@ -40,7 +40,7 @@ const STARLACE_CHORD_STEPS: readonly (readonly number[])[] = [
   [11, 13],
 ];
 
-function pentStepMidi(key: Key, refOctave: number, step: number): number {
+function scaleStepMidi(key: Key, refOctave: number, step: number): number {
   const semis = SCALE_SEMIS[key.mode];
   const len = semis.length;
   const within = ((step % len) + len) % len;
@@ -59,32 +59,32 @@ function midiToHz(midi: number): number {
 }
 
 export function getPlayableNotesLocal(key: Key): string[] {
-  return PLAYABLE_LOCAL_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_VOICES, s)));
+  return PLAYABLE_LOCAL_STEPS.map(s => midiToName(scaleStepMidi(key, REF_OCT_VOICES, s)));
 }
 
 export function getPlayableNotesRemote(key: Key): string[] {
-  return PLAYABLE_REMOTE_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_BASS, s)));
+  return PLAYABLE_REMOTE_STEPS.map(s => midiToName(scaleStepMidi(key, REF_OCT_BASS, s)));
 }
 
 export function getDuetNotes(key: Key): string[] {
-  return DUET_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_BASS, s)));
+  return DUET_STEPS.map(s => midiToName(scaleStepMidi(key, REF_OCT_BASS, s)));
 }
 
 export function getOrbGestureNotes(key: Key): string[] {
-  return ORB_GESTURE_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_BASS, s)));
+  return ORB_GESTURE_STEPS.map(s => midiToName(scaleStepMidi(key, REF_OCT_BASS, s)));
 }
 
 export function getStarlaceNotes(key: Key): string[] {
-  return STARLACE_STEPS.map(s => midiToName(pentStepMidi(key, REF_OCT_VOICES, s)));
+  return STARLACE_STEPS.map(s => midiToName(scaleStepMidi(key, REF_OCT_VOICES, s)));
 }
 
 export function getStarlaceHz(key: Key): number[] {
-  return STARLACE_STEPS.map(s => midiToHz(pentStepMidi(key, REF_OCT_VOICES, s)));
+  return STARLACE_STEPS.map(s => midiToHz(scaleStepMidi(key, REF_OCT_VOICES, s)));
 }
 
 export function getStarlaceChords(key: Key): JamStarlaceChord[] {
   return STARLACE_CHORD_STEPS.map(steps => {
-    const names = steps.map(s => midiToName(pentStepMidi(key, REF_OCT_VOICES, s)));
+    const names = steps.map(s => midiToName(scaleStepMidi(key, REF_OCT_VOICES, s)));
     return (names.length === 2
       ? [names[0], names[1]] as const
       : [names[0], names[1], names[2]] as const) as JamStarlaceChord;
@@ -92,9 +92,9 @@ export function getStarlaceChords(key: Key): JamStarlaceChord[] {
 }
 
 export function getDrumHz(key: Key): number[] {
-  return DRUM_STEPS.map(s => midiToHz(pentStepMidi(key, REF_OCT_VOICES, s)));
+  return DRUM_STEPS.map(s => midiToHz(scaleStepMidi(key, REF_OCT_VOICES, s)));
 }
 
 export function getKeyName(key: Key): string {
-  return `${PITCH_NAMES[key.root]} ${key.mode === 'majorPent' ? 'maj pent' : 'min pent'}`;
+  return `${PITCH_NAMES[key.root]} major`;
 }
