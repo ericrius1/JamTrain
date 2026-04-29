@@ -1,5 +1,36 @@
+import { makeParams, registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { clamp, vec } from './math';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PlayerPose } from './types';
+
+// Live-tunable mapping from mouse-pointer NDC Y to palm vertical reach. Increase
+// `centerYRange` (and widen the clamp) so the arm reaches further up at the top
+// of the screen and further down at the bottom — handy for matching the orb
+// stack span.
+export const POSE_DEFS = {
+  centerYBase:  { default: 0.98, min: 0,    max: 2,   step: 0.01, label: 'Y center' },
+  centerYRange: { default: 1.10, min: 0,    max: 2,   step: 0.01, label: 'Y range' },
+  centerYMin:   { default: 0.0,  min: -1,   max: 2,   step: 0.01, label: 'Y min' },
+  centerYMax:   { default: 2.2,  min: 0,    max: 3,   step: 0.01, label: 'Y max' },
+} as const;
+
+export type PoseParams = ParamsOf<typeof POSE_DEFS>;
+
+export const mousePoseConfig: PoseParams = makeParams(POSE_DEFS);
+
+let posePaneRegistered: ReturnType<typeof registerTweaks<typeof POSE_DEFS>> | undefined;
+
+export function attachMousePosePane(paneDock: HTMLElement): void {
+  if (posePaneRegistered) return;
+  posePaneRegistered = registerTweaks(paneDock, 'mousePose', POSE_DEFS, {
+    title: 'Mouse Pose',
+    params: mousePoseConfig,
+  });
+}
+
+export function disposeMousePosePane(): void {
+  posePaneRegistered?.dispose();
+  posePaneRegistered = undefined;
+}
 
 const fingerSpread: Record<FingerName, number> = {
   thumb: -0.24,
@@ -36,7 +67,11 @@ export function makeMouseHands(
   // In the game camera, the player's playable instrument arc is seen mostly
   // edge-on. Screen X should therefore travel through depth, not world X.
   const centerX = xN * 0.18;
-  const centerY = clamp(0.98 + clamp(pointerY, -1, 1) * 0.68, 0.3, 1.64);
+  const centerY = clamp(
+    mousePoseConfig.centerYBase + yN * mousePoseConfig.centerYRange,
+    mousePoseConfig.centerYMin,
+    mousePoseConfig.centerYMax,
+  );
   const centerZ = clamp(0.2 + depthX * 0.52 + yN * 0.08, -0.24, 0.72);
   const separation = 0.22 - speedN * 0.08;
   const leadX = clamp(velocityX * 0.01, -0.08, 0.08);

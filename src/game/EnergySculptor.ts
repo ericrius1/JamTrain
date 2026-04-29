@@ -9,7 +9,6 @@ import {
   instanceIndex,
   instancedArray,
   mix,
-  sin,
   smoothstep,
   uniform,
   uniformArray,
@@ -39,22 +38,18 @@ export const SCULPTOR_DEFS = {
   particleCount:        { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
   particleSize:         { default: 0.005, min: 0.001, max: 0.03, step: 0.001, label: 'particle size' },
   particleOpacity:      { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
-  particleLifetime:     { default: 30,    min: 0,    max: 240,  step: 0.5,  label: 'particle lifetime' },
-  fieldStrength:        { default: 1.0,   min: 0,    max: 100,  step: 0.05, label: 'field strength' },
-  affinityFalloffStart: { default: 0.40,  min: 0,    max: 1,    step: 0.01, label: 'affinity falloff start' },
-  affinityFalloffEnd:   { default: 0.85,  min: 0,    max: 1,    step: 0.01, label: 'affinity falloff end' },
-  finalAffinity:        { default: 0.0,   min: 0,    max: 1,    step: 0.01, label: 'final affinity' },
-  fieldRotationRate:    { default: 1.0,   min: 0,    max: 3,    step: 0.05, label: 'field rotation' },
-  attractorOverride:    { type: 'select' as const, default: 'auto' as const, options: { auto: 'auto', thomas: 'thomas', lorenz: 'lorenz', aizawa: 'aizawa', halvorsen: 'halvorsen', rossler: 'rossler', dadras: 'dadras' }, label: 'attractor' },
-  speedGlow:            { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
-  stretchScale:         { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
-  containmentStrength:  { default: 6.5,   min: 0,    max: 20,   step: 0.1, label: 'containment pull' },
-  fadeFraction:         { default: 0.18,  min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
-  duetBoost:            { default: 0.45,  min: 0,    max: 1.5,  step: 0.01, label: 'duet boost' },
-  spectrumFlowGain:     { default: 0.55,  min: 0,    max: 2,    step: 0.01, label: 'fft flow gain' },
-  spectrumPulseGain:    { default: 1.4,   min: 0,    max: 4,    step: 0.05, label: 'fft pulse gain' },
-  spectrumGlowGain:     { default: 1.1,   min: 0,    max: 3,    step: 0.05, label: 'fft glow gain' },
-  spectrumOscillation:  { default: 0.35,  min: 0,    max: 1.5,  step: 0.01, label: 'fft oscillation' },
+  particleLifetime:        { default: 30,    min: 0,    max: 240,  step: 0.5,  label: 'particle lifetime' },
+  fieldStrength:           { default: 1.0,   min: 0,    max: 100,  step: 0.05, label: 'field strength' },
+  affinityFalloffStart:    { default: 0.01,  min: 0,    max: 1,    step: 0.01, label: 'affinity falloff start' },
+  affinityFalloffEnd:      { default: 0.11,  min: 0,    max: 0.5,    step: 0.01, label: 'affinity falloff end' },
+  finalAffinityStrength:   { default: 0.0,   min: 0,    max: 1,    step: 0.01, label: 'final affinity strength' },
+  fieldRotationRate:       { default: 0.3,   min: 0,    max: 10,   step: 0.05, label: 'field rotation' },
+  fieldDebugDensity:       { default:11,     min: 3,    max: 15,   step: 1,    label: 'field debug density' },
+  attractorOverride:       { type: 'select' as const, default: 'auto' as const, options: { auto: 'auto', thomas: 'thomas', lorenz: 'lorenz', aizawa: 'aizawa', halvorsen: 'halvorsen', rossler: 'rossler', dadras: 'dadras' }, label: 'attractor' },
+  speedGlow:               { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
+  stretchScale:            { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
+  fadeFraction:            { default: 0.18,  min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
+  spectrumGlowGain:        { default: 1.1,   min: 0,    max: 3,    step: 0.05, label: 'fft glow gain' },
   dissolveBurstSpeed:   { default: 6,     min: 0,    max: 16,   step: 0.1,  label: 'dissolve burst' },
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'projector base radius' },
   projectorRingCount:   { default: 3,     min: 1,    max: 5,    step: 1,    label: 'projector ring count' },
@@ -152,17 +147,12 @@ export class EnergySculptor implements EnergySink {
   private velocityBlendUniform = uniform(0.92);
   private worldScaleUniform = uniform(0.014);
   private containmentRadiusUniform = uniform(36);
-  private containmentStrengthUniform = uniform(6);
   private lifeMaxUniform = uniform(28);
   private fadeFractionUniform = uniform(0.25);
   private dissolveModeUniform = uniform(0);
   private dissolveBurstUniform = uniform(6);
   private musicPulseUniform = uniform(0);
-  private musicLevelUniform = uniform(0);
-  private musicIntensityUniform = uniform(0);
-  private grooveUniform = uniform(0);
   private synchronyBoostUniform = uniform(0);
-  private duetBoostUniform = uniform(0.45);
   private centerUniform = uniform(new THREE.Vector3());
   private speedGlowUniform = uniform(0.7);
   private stretchScaleUniform = uniform(0.06);
@@ -176,12 +166,7 @@ export class EnergySculptor implements EnergySink {
   // A plain number[] with type 'float' was uploading once and never again.
   private spectrumBandArray: THREE.Vector4[] = [];
   private spectrumBandUniform!: THREE.UniformArrayNode<'vec4'>;
-  private spectrumOverallUniform = uniform(0);
-  private spectrumFlowGainUniform = uniform(0.55);
-  private spectrumPulseGainUniform = uniform(1.4);
   private spectrumGlowGainUniform = uniform(1.1);
-  private spectrumOscillationUniform = uniform(0.35);
-  private spectrumTimeUniform = uniform(0);
 
   // Per-attractor parameter uniforms. CPU swaps values on archetype change.
   // attractorSelectUniform is a float (0/1/2/3), cast to uint at compute site.
@@ -213,7 +198,7 @@ export class EnergySculptor implements EnergySink {
   // as they age. flowInfluence = mix(1, finalAffinity, smoothstep(start, end, lifeT)).
   private affinityFalloffStartUniform = uniform(0.30);
   private affinityFalloffEndUniform = uniform(0.95);
-  private finalAffinityUniform = uniform(0.05);
+  private finalAffinityStrengthUniform = uniform(0.05);
   // Master force multiplier — 0 means no acceleration is applied to particles.
   private fieldStrengthUniform = uniform(1.0);
 
@@ -261,7 +246,7 @@ export class EnergySculptor implements EnergySink {
   // line segments sampling the active attractor's flow, transformed by the
   // same rotation the compute shader uses so what we see matches what
   // particles feel.
-  private static readonly FIELD_DEBUG_GRID = 7;
+  private fieldDebugGrid = 7;
   private fieldDebugLines?: THREE.LineSegments;
   private fieldDebugGeom?: THREE.BufferGeometry;
   private fieldDebugMaterial?: THREE.LineBasicMaterial;
@@ -298,20 +283,15 @@ export class EnergySculptor implements EnergySink {
     this.centerUniform.value.copy(this.center);
     this.particleSizeUniform.value = this.params.particleSize;
     this.particleOpacityUniform.value = this.params.particleOpacity;
-    this.containmentStrengthUniform.value = this.params.containmentStrength;
     this.lifeMaxUniform.value = this.params.particleLifetime;
     this.fadeFractionUniform.value = this.params.fadeFraction;
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
-    this.duetBoostUniform.value = this.params.duetBoost;
-    this.spectrumFlowGainUniform.value = this.params.spectrumFlowGain;
-    this.spectrumPulseGainUniform.value = this.params.spectrumPulseGain;
     this.spectrumGlowGainUniform.value = this.params.spectrumGlowGain;
-    this.spectrumOscillationUniform.value = this.params.spectrumOscillation;
     this.speedGlowUniform.value = this.params.speedGlow;
     this.stretchScaleUniform.value = this.params.stretchScale;
     this.affinityFalloffStartUniform.value = this.params.affinityFalloffStart;
     this.affinityFalloffEndUniform.value = this.params.affinityFalloffEnd;
-    this.finalAffinityUniform.value = this.params.finalAffinity;
+    this.finalAffinityStrengthUniform.value = this.params.finalAffinityStrength;
     this.fieldStrengthUniform.value = this.params.fieldStrength;
     this.fieldRotationRate = this.params.fieldRotationRate;
 
@@ -330,21 +310,22 @@ export class EnergySculptor implements EnergySink {
         particleOpacity: v => { this.particleOpacityUniform.value = v; },
         speedGlow: v => { this.speedGlowUniform.value = v; },
         stretchScale: v => { this.stretchScaleUniform.value = v; },
-        containmentStrength: v => { this.containmentStrengthUniform.value = v; },
         particleLifetime: v => { this.lifeMaxUniform.value = v; },
         fadeFraction: v => { this.fadeFractionUniform.value = v; },
         affinityFalloffStart: v => { this.affinityFalloffStartUniform.value = v; },
         affinityFalloffEnd: v => { this.affinityFalloffEndUniform.value = v; },
-        finalAffinity: v => { this.finalAffinityUniform.value = v; },
+        finalAffinityStrength: v => { this.finalAffinityStrengthUniform.value = v; },
         fieldStrength: v => { this.fieldStrengthUniform.value = v; },
         fieldRotationRate: v => { this.fieldRotationRate = v; },
+        fieldDebugDensity: v => {
+          const next = Math.max(2, Math.round(v));
+          if (next === this.fieldDebugGrid) return;
+          this.fieldDebugGrid = next;
+          this.rebuildFieldDebugLines();
+        },
         attractorOverride: v => { this.setAttractorOverride(v as 'auto' | AttractorKind); },
         dissolveBurstSpeed: v => { this.dissolveBurstUniform.value = v; },
-        duetBoost: v => { this.duetBoostUniform.value = v; },
-        spectrumFlowGain: v => { this.spectrumFlowGainUniform.value = v; },
-        spectrumPulseGain: v => { this.spectrumPulseGainUniform.value = v; },
         spectrumGlowGain: v => { this.spectrumGlowGainUniform.value = v; },
-        spectrumOscillation: v => { this.spectrumOscillationUniform.value = v; },
       },
     });
   }
@@ -360,7 +341,6 @@ export class EnergySculptor implements EnergySink {
       band.x = spectrum.levels[i];
       band.y = spectrum.pulses[i];
     }
-    this.spectrumOverallUniform.value = spectrum.overall;
   }
 
   // ---------------------------------------------------------------------- emit
@@ -442,17 +422,12 @@ export class EnergySculptor implements EnergySink {
     this.dtUniform.value = dt;
     this.elapsed += delta;
 
-    // Music + synchrony decay.
+    // Synchrony decay (visual ring effect). musicPulseUniform feeds the
+    // per-particle render brightness; nothing music-driven affects motion any
+    // more — settling is governed entirely by the affinity model.
     this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
     this.synchronyBoostUniform.value = this.synchronyBoost;
     this.musicPulseUniform.value = this.musicField.pulse;
-    this.musicLevelUniform.value = this.musicField.drumLevel;
-    this.musicIntensityUniform.value = this.musicField.intensity;
-    this.grooveUniform.value = this.musicField.groovePhase * TAU;
-    // Spectrum oscillator phase advances unconditionally — bands modulate
-    // its amplitude, but the time base must stay smooth even when bands go
-    // silent so the wobble doesn't snap between frames.
-    this.spectrumTimeUniform.value = this.elapsed;
     this.tickSynchronyRing(delta);
     this.updateProjectorRing();
     this.tickSampleRotation();
@@ -619,103 +594,38 @@ export class EnergySculptor implements EnergySink {
       const flowLen = tangentialFlow.length();
       const flow = tangentialFlow.div(flowLen.max(0.0001)).mul(flowLen.clamp(0, 3.25));
 
-      // Per-particle band assignment: stable through the particle's life so
-      // its motion belongs to one slice of the spectrum. instanceIndex is
-      // uint; element() takes a uint, so the cast happens implicitly.
-      const bandIdx = instanceIndex.mod(uint(SPECTRUM_BAND_COUNT));
-      const bandData = this.spectrumBandUniform.element(bandIdx);
-      const bandLevel = bandData.x.toVar();
-      const bandPulse = bandData.y.toVar();
-      // Each band oscillates at its own rate so low frequencies wobble slowly
-      // and high frequencies shimmer fast — gives the visible "different
-      // frequencies behave differently" reading the user is after.
-      const bandIdxF = bandIdx.toFloat();
-      const bandRate = float(2.4).add(bandIdxF.mul(2.6));
-      const bandPhase = bandIdxF.mul(0.7);
-      const bandWave = sin(this.spectrumTimeUniform.mul(bandRate).add(bandPhase));
-
-      // Music modulation: pulse boosts flow speed; sustained adds gentle swirl.
-      // Per-band level layers on top so loud bass / loud highs each push their
-      // own particles harder.
-      const fftFlow = bandLevel.mul(this.spectrumFlowGainUniform);
-      const musicGain = float(1)
-        .add(this.musicPulseUniform.mul(0.55))
-        .add(this.musicIntensityUniform.mul(0.18))
-        .add(fftFlow);
-      const synchronyGain = float(1).add(this.synchronyBoostUniform.mul(this.duetBoostUniform));
-      const speedGain = this.flowSpeedUniform.mul(musicGain).mul(synchronyGain);
-
       // Age fraction (0 born → 1 dead).
       const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
       const fadeStart = float(1).sub(this.fadeFractionUniform);
 
-      // Affinity = how much the particle is influenced by the field. Starts at
-      // 1 (full pull) and ramps toward `finalAffinity` between
-      // `affinityFalloffStart` and `affinityFalloffEnd` of normalized lifetime.
-      const falloffT = smoothstep(this.affinityFalloffStartUniform, this.affinityFalloffEndUniform, lifeT)
-        .clamp(0, 1);
-      const affinity = mix(float(1), this.finalAffinityUniform, falloffT).clamp(0, 1);
-      const flowInfluence = affinity;
+      // Affinity ramps from 1 → finalAffinityStrength across the falloff
+      // window. We auto-order Start/End so the user can drag the sliders past
+      // each other without inverting the curve.
+      const falloffLo = this.affinityFalloffStartUniform.min(this.affinityFalloffEndUniform);
+      const falloffHi = this.affinityFalloffStartUniform.max(this.affinityFalloffEndUniform);
+      const falloffT = smoothstep(falloffLo, falloffHi, lifeT).clamp(0, 1);
+      const affinity = mix(float(1), this.finalAffinityStrengthUniform, falloffT).clamp(0, 1);
 
-      // Drag scales with (1 - affinity) so when the field stops pulling, the
-      // remaining velocity damps out and particles come to rest.
+      // Drag is weak while affinity is high (so the orbit reads cleanly) and
+      // strong once affinity has dropped, so residual velocity decays and the
+      // particle parks where it last drifted.
       const activeDrag = float(0.55).add(float(1).sub(this.velocityBlendUniform).mul(3.0));
       const settledDrag = activeDrag.add(3.2);
       const drag = mix(activeDrag, settledDrag, float(1).sub(affinity));
 
-      // Soft containment: push runaways back inside the safe radius. Treated
-      // as part of the field, so it scales with field strength too — when
-      // `fieldStrength = 0` no forces act on the particles at all.
-      const overshoot = smoothstep(this.containmentRadiusUniform.mul(0.72), this.containmentRadiusUniform.mul(0.94), r);
-      const inward = radial.negate().mul(overshoot).mul(this.containmentStrengthUniform);
-      const innerCore = float(1).sub(smoothstep(
-        this.containmentRadiusUniform.mul(0.06),
-        this.containmentRadiusUniform.mul(0.18),
-        r,
-      ));
-      const coreRepel = radial.mul(innerCore).mul(this.containmentStrengthUniform).mul(0.28);
-      // Per-band impulse split: low bands get a radial kick (kick drum, sub
-      // → bass shells push outward), high bands get a tangential shimmer
-      // (hi-hats, cymbals → swirl on the surface). The mix shifts smoothly
-      // across the band index.
-      const bandT = bandIdxF.div(float(Math.max(1, SPECTRUM_BAND_COUNT - 1)));
-      const radialMix = float(1).sub(bandT).mul(0.85).add(0.15);
-      const tangentMix = bandT.mul(1.05).add(0.1);
-      // Stable side vector for tangential motion: cross of radial with the
-      // sample-rotation Y axis. Picks an axis that drifts with the field,
-      // so the shimmer stays visually coherent with the orbit.
-      const upRef = this.sampleRotUniform.mul(vec3(0, 1, 0));
-      const sideRaw = radial.cross(upRef);
-      const side = sideRaw.div(sideRaw.length().max(0.0001));
-      const pulseMag = bandPulse.mul(this.spectrumPulseGainUniform);
-      const radialKick = radial.mul(pulseMag.mul(radialMix));
-      const tangentKick = side.mul(pulseMag.mul(tangentMix));
-      // Sustained per-band oscillation: a small wobble along `side` whose
-      // amplitude scales with the band's running level. Gives a continuous
-      // "the spectrum is breathing through me" feel even between transients.
-      const oscillation = side.mul(bandWave.mul(bandLevel).mul(this.spectrumOscillationUniform));
-
-      // Every force is gated by `flowInfluence` (and the master `fieldStrength`)
-      // so when affinity → 0 the field stops acting on the particle entirely
-      // and the (now-stronger) drag wins, parking it where it last drifted.
-      const accel = flow.mul(speedGain)
-        .add(inward)
-        .add(coreRepel)
-        .add(radialKick).add(tangentKick).add(oscillation)
-        .mul(flowInfluence)
-        .mul(this.fieldStrengthUniform);
+      // The ONLY force on a particle is the attractor flow, gated by affinity
+      // and the master field-strength multiplier. Set finalAffinityStrength=0
+      // and after the falloff window the particle stops dead.
+      const accel = flow.mul(this.flowSpeedUniform).mul(affinity).mul(this.fieldStrengthUniform);
       const dragFactor = float(1).div(float(1).add(drag.mul(this.dtUniform)));
       const newVel = vel.add(accel.mul(this.dtUniform)).mul(dragFactor).toVar();
-      // Young particles need to actually travel from emit origin into the
-      // sculpture before getting parked on the attractor — clamp them loosely
-      // so a starlace pluck or drum hit reads as a visible stream. The floor
-      // is 0 so finalAffinity=0 means literally not moving.
+      // Speed cap also scales with affinity and floors at 0, so finalAffinity=0
+      // means truly motionless — drag would only asymptote to 0 otherwise.
       const youngBoost = float(1).sub(m.x.div(0.6).clamp(0, 1));
       const maxWorldSpeed = mix(float(0), mix(0.42, 1.4, youngBoost), affinity);
       const maxSpeed = maxWorldSpeed.div(this.worldScaleUniform.max(0.001));
       const speedNow = newVel.length();
-      // Guard the denominator: when both maxSpeed and speedNow are 0 (a fully
-      // settled, fully stilled particle) this would otherwise produce NaN.
+      // Guard against 0/0 once both maxSpeed and the current speed are zero.
       const speedDenom = speedNow.max(maxSpeed).max(float(1e-5));
       newVel.assign(newVel.mul(maxSpeed.div(speedDenom)));
 
@@ -932,7 +842,7 @@ export class EnergySculptor implements EnergySink {
   // frame `tickFieldDebug` rewrites the geometry to point along the current
   // flow at that grid cell. Initially hidden.
   private buildFieldDebugLines(): void {
-    const N = EnergySculptor.FIELD_DEBUG_GRID;
+    const N = this.fieldDebugGrid;
     const cells = N * N * N;
     const verts = cells * 2;
     this.fieldDebugPositions = new Float32Array(verts * 3);
@@ -958,17 +868,29 @@ export class EnergySculptor implements EnergySink {
       depthWrite: false,
     });
     this.fieldDebugLines = new THREE.LineSegments(this.fieldDebugGeom, this.fieldDebugMaterial);
-    this.fieldDebugLines.visible = false;
+    this.fieldDebugLines.visible = this.fieldDebugVisible;
     this.fieldDebugLines.frustumCulled = false;
     this.fieldDebugLines.renderOrder = 31;
     this.scene.add(this.fieldDebugLines);
+  }
+
+  private rebuildFieldDebugLines(): void {
+    this.fieldDebugLines?.removeFromParent();
+    this.fieldDebugGeom?.dispose();
+    this.fieldDebugMaterial?.dispose();
+    this.fieldDebugLines = undefined;
+    this.fieldDebugGeom = undefined;
+    this.fieldDebugMaterial = undefined;
+    this.fieldDebugPositions = undefined;
+    this.fieldDebugColors = undefined;
+    this.buildFieldDebugLines();
   }
 
   private tickFieldDebug(): void {
     if (!this.fieldDebugVisible) return;
     if (!this.fieldDebugLines || !this.fieldDebugGeom || !this.fieldDebugPositions) return;
 
-    const N = EnergySculptor.FIELD_DEBUG_GRID;
+    const N = this.fieldDebugGrid;
     const radius = this.containmentRadiusUniform.value;
     const worldScale = this.worldScaleUniform.value;
     // Span ±0.85 of the safe radius so arrows live where particles actually fly.

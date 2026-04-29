@@ -16,7 +16,7 @@ import { pickArchetype } from './sculptor/archetypeShared';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId } from './creatures';
-import { makePlayerPose } from './pose';
+import { attachMousePosePane, makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
 import { WebRtcPoseTransport } from './pose/WebRtcPoseTransport';
@@ -289,6 +289,7 @@ export class Game {
     this.setupInstrumentsPane();
     this.handTracker.attachPane(this.paneDock);
     attachHandDepthPane(this.paneDock);
+    attachMousePosePane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
     window.addEventListener('blur', this.handleVisibilityChange);
