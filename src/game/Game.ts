@@ -921,6 +921,11 @@ export class Game {
             pluck.x,
             pluck.y,
             pluck.noteIndex,
+            {
+              chordRootIndex: pluck.chordRootIndex,
+              chordSize: pluck.chordSize,
+              phraseStep: pluck.phraseStep,
+            },
           );
           this.cueRobotInstrumentStrike(player, pluck.hand, pluck.worldPosition, pluck.velocity);
           this.lastStarlacePluckAt = performance.now() / 1000;

@@ -32,7 +32,7 @@ export const STARLACE_DEFS = {
   danceAmount:     { default: 0.030, min: 0,     max: 0.16, step: 0.001, label: 'dance amount' },
   danceSpeed:      { default: 0.14,  min: 0,     max: 1.2,  step: 0.01,  label: 'dance speed' },
   keyWalkInterval: { default: 0.34,  min: 0.18,  max: 0.75, step: 0.005, label: 'key walk step s' },
-  keyPhraseJumps:  { default: 4,     min: 1,     max: 12,   step: 1,     label: 'held jumps' },
+  keyPhraseJumps:  { default: 4,     min: 0,     max: 12,   step: 1,     label: 'held jumps' },
   keyChordMaxNotes:{ default: 3,     min: 1,     max: 3,    step: 1,     label: 'held chord notes' },
   coolColor:       { type: 'color', default: '#5fb6c4', label: 'cool stars' },
   warmColor:       { type: 'color', default: '#e56f67', label: 'warm stars' },
@@ -1179,7 +1179,7 @@ export class Starlace implements PlayerVisual {
     this.pulseNode(nodeIndex, velocity);
 
     if (this.onPluckCallback) {
-      const rootIndex = chord?.rootIndex ?? node.noteIndex;
+      const rootIndex = clamp(chord?.rootIndex ?? node.noteIndex, 0, this.hzTable.length - 1);
       this.onPluckCallback({
         nodeIndex,
         noteIndex: rootIndex,
@@ -1361,6 +1361,9 @@ export class Starlace implements PlayerVisual {
       if (firedCount > 0) {
         state.step += 1;
         fired += firedCount;
+      } else {
+        this.keyboardPaths.delete(key);
+        continue;
       }
 
       if (state.step >= state.totalStages) {
@@ -1372,6 +1375,17 @@ export class Starlace implements PlayerVisual {
       state.nextAt = Math.max(state.nextAt + delay, this.elapsed + delay * 0.65);
       if (fired >= MAX_HITS_PER_FRAME) return;
     }
+  }
+
+  private fireKeyboardStage(state: KeyboardPathState): number {
+    const chordSize = this.keyboardChordSizeForStage(state.step, state.totalStages);
+    const nodes = this.pickKeyboardChordNodes(state, chordSize);
+    if (nodes.length === 0) return 0;
+    state.previousNode = state.currentNode;
+    state.currentNode = nodes[0];
+    for (const nodeIndex of nodes) this.rememberKeyboardNode(state, nodeIndex);
+    this.fireKeyboardChord(state, nodes, chordSize);
+    return nodes.length;
   }
 
   private keyboardHomeNoteIndex(keyIndex: number): number {
@@ -1398,67 +1412,95 @@ export class Starlace implements PlayerVisual {
     return best;
   }
 
-  private pickKeyboardNextNode(state: KeyboardPathState): number {
-    if (!this.nodes[state.currentNode]) return this.pickKeyboardStartNode(state.homeNoteIndex);
+  private pickKeyboardChordNodes(state: KeyboardPathState, chordSize: 1 | 2 | 3): number[] {
+    const noteIndexes = this.keyboardChordNoteIndexes(state.homeNoteIndex, chordSize);
+    const picked: number[] = [];
+    let anchor = state.currentNode;
 
-    const candidates = this.collectKeyboardCandidates(state.currentNode, state.step % 4 === 2);
-    if (candidates.length === 0) return this.pickKeyboardStartNode(state.homeNoteIndex);
+    for (const noteIndex of noteIndexes) {
+      const nodeIndex = picked.length === 0 && state.step === 0
+        ? state.currentNode
+        : this.pickKeyboardChordNode(noteIndex, state, picked, anchor);
+      if (nodeIndex < 0) continue;
+      picked.push(nodeIndex);
+      anchor = nodeIndex;
+    }
 
-    const current = this.nodes[state.currentNode];
-    const desiredInterval = Starlace.KEYBOARD_INTERVAL_PATTERN[
-      (state.step + state.keyIndex) % Starlace.KEYBOARD_INTERVAL_PATTERN.length
-    ];
-    const desiredDirection = Math.sign(Math.sin((state.step + 1 + state.phraseSeed * 4) * 0.92));
+    return picked;
+  }
+
+  private pickKeyboardChordNode(
+    noteIndex: number,
+    state: KeyboardPathState,
+    picked: readonly number[],
+    anchorIndex: number,
+  ): number {
+    const exact = this.keyboardPitchNodes[noteIndex] ?? [];
+    const candidates = exact.length > 0
+      ? exact
+      : this.nodes.map((_, i) => i).filter(i => Math.abs(this.nodes[i].noteIndex - noteIndex) <= 1);
+    const fallback = candidates.length > 0 ? candidates : this.nodes.map((_, i) => i);
+    const anchor = this.nodes[anchorIndex] ?? this.nodes[state.currentNode];
+    const direct = new Set(this.adjacency[anchorIndex] ?? []);
 
     let best = -1;
     let bestScore = Infinity;
-    for (const candidate of candidates) {
-      const node = this.nodes[candidate.index];
+    for (const index of fallback) {
+      const node = this.nodes[index];
       if (!node) continue;
-      const interval = node.noteIndex - current.noteIndex;
-      const recentIndex = state.recentNodes.lastIndexOf(candidate.index);
+      const pickedPenalty = picked.includes(index) ? 20 : 0;
+      const recentIndex = state.recentNodes.lastIndexOf(index);
       const recentPenalty = recentIndex < 0
         ? 0
-        : 1.0 + (recentIndex / Math.max(1, state.recentNodes.length - 1)) * 0.85;
-      const directionPenalty = desiredDirection !== 0 && Math.sign(interval) === -desiredDirection ? 0.36 : 0;
-      const homeDrift = Math.max(0, Math.abs(node.noteIndex - state.homeNoteIndex) - 6) * 0.42;
+        : 0.85 + (recentIndex / Math.max(1, state.recentNodes.length - 1)) * 0.65;
+      const graphBonus = direct.has(index) ? -0.34 : 0;
+      const returnPenalty = index === state.previousNode ? 0.58 : 0;
+      const pitchPenalty = Math.abs(node.noteIndex - noteIndex) * 1.7;
+      const distancePenalty = anchor ? anchor.world.distanceTo(node.world) * 2.1 : 0;
+      const phase = state.step * 9.17 + picked.length * 4.33 + state.phraseSeed * 27.9;
       const score =
-        Math.abs(interval - desiredInterval) * 0.34 +
-        (node.noteIndex === current.noteIndex ? 0.5 : 0) +
-        (candidate.index === state.previousNode ? 0.9 : 0) +
+        pickedPenalty +
+        pitchPenalty +
+        distancePenalty +
         recentPenalty +
-        directionPenalty +
-        homeDrift +
-        node.pulse * 0.28 +
-        candidate.hops * 0.08 +
-        hash(candidate.index * 41.11 + state.step * 7.13 + state.phraseSeed * 19.7) * 0.22;
+        returnPenalty +
+        graphBonus +
+        node.pulse * 0.22 +
+        hash(index * 41.11 + phase) * 0.30;
 
       if (score >= bestScore) continue;
-      best = candidate.index;
+      best = index;
       bestScore = score;
     }
-
     return best;
   }
 
-  private collectKeyboardCandidates(nodeIndex: number, includeSecondHop: boolean): Array<{ index: number; hops: number }> {
-    const direct = this.adjacency[nodeIndex] ?? [];
-    const byIndex = new Map<number, number>();
-    const add = (index: number, hops: number): void => {
-      if (index === nodeIndex) return;
-      const previous = byIndex.get(index);
-      if (previous !== undefined && previous <= hops) return;
-      byIndex.set(index, hops);
-    };
-
-    for (const index of direct) add(index, 1);
-    if (includeSecondHop || direct.length <= 2) {
-      for (const index of direct) {
-        for (const second of this.adjacency[index] ?? []) add(second, 2);
-      }
+  private keyboardChordNoteIndexes(rootIndex: number, chordSize: 1 | 2 | 3): number[] {
+    const root = clamp(rootIndex, 0, this.hzTable.length - 1);
+    const offsets = chordSize === 1 ? [0] : chordSize === 2 ? [0, 2] : [0, 2, 4];
+    const picked: number[] = [];
+    for (const offset of offsets) {
+      let next = root + offset;
+      if (next >= this.hzTable.length) next = root - offset;
+      next = clamp(next, 0, this.hzTable.length - 1);
+      if (!picked.includes(next)) picked.push(next);
     }
+    return picked;
+  }
 
-    return [...byIndex.entries()].map(([index, hops]) => ({ index, hops }));
+  private keyboardChordSizeForStage(stage: number, totalStages: number): 1 | 2 | 3 {
+    const maxNotes = this.keyboardChordMaxNotes();
+    if (totalStages <= 1 || maxNotes <= 1) return 1;
+    const distanceFromEdge = Math.min(stage, Math.max(0, totalStages - 1 - stage));
+    return clamp(1 + Math.floor(distanceFromEdge), 1, maxNotes) as 1 | 2 | 3;
+  }
+
+  private keyboardPhraseJumps(): number {
+    return Math.max(0, Math.round(clamp(this.params.keyPhraseJumps, 0, 12)));
+  }
+
+  private keyboardChordMaxNotes(): 1 | 2 | 3 {
+    return Math.round(clamp(this.params.keyChordMaxNotes, 1, 3)) as 1 | 2 | 3;
   }
 
   private rememberKeyboardNode(state: KeyboardPathState, nodeIndex: number): void {

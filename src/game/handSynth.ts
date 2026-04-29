@@ -94,6 +94,12 @@ type PendingOrbHit = {
   orbIndex: number;
 };
 
+type StarlacePluckOptions = {
+  chordRootIndex?: number;
+  chordSize?: number;
+  phraseStep?: number;
+};
+
 type OrbNoteLedgerEntry = {
   frequency: number;
   octaveHz: number;
@@ -179,6 +185,7 @@ type StarlaceVoice = {
   lastHitCount: number;
   lastNoteIdx: number;
   lastChordIndex: number;
+  lastChordNotes: string[];
   lastAudioAt: number;
   lastAuraRetuneAt: number;
 };
@@ -773,6 +780,7 @@ export class HandSynthEngine {
     x = 0.5,
     y = 0.5,
     noteIndex = -1,
+    options: StarlacePluckOptions = {},
   ): void {
     if (!this.running || !this.tone) {
       if (!this._loggedStarlaceBlock) {
@@ -788,22 +796,28 @@ export class HandSynthEngine {
     if (!Number.isFinite(frequency) || frequency <= 0) return;
 
     const v = clamp(velocity, 0, 1);
-    const chordIndex = this.resolveStarlaceChordIndex(noteIndex, nodeIndex, starlace.lastHitCount);
-    const chord = this.starlaceChordForIndex(chordIndex);
+    const requestedChordSize = this.resolveStarlaceChordSize(options.chordSize);
+    const rootIndex = this.resolveStarlaceRootIndex(options.chordRootIndex ?? noteIndex, nodeIndex, starlace.lastHitCount);
+    const chordIndex = requestedChordSize
+      ? rootIndex
+      : this.resolveStarlaceChordIndex(noteIndex, nodeIndex, starlace.lastHitCount);
+    const chord = requestedChordSize
+      ? this.starlaceChordFromRoot(rootIndex, requestedChordSize)
+      : this.starlaceChordForIndex(chordIndex);
     this.absorbStarlaceGesture(starlace, v, x, y);
 
     const robotFill = this.isRobotPartner(player);
     const noteGap = Math.max(0.04, this.params.starlaceNoteGap * (robotFill ? 1.65 : 1));
     if (this.elapsed - starlace.lastAudioAt < noteGap) return;
 
-    const playableChord = this.starlacePlayableChord(chord, v);
+    const playableChord = this.starlacePlayableChord(chord, v, requestedChordSize);
     if (playableChord.length === 0) return;
     const maxHits = robotFill ? 3 : STARLACE_MAX_HITS_PER_WINDOW;
     if (!this.allowHit(this.starlaceBudgets[player], maxHits)) {
       return;
     }
 
-    const glintActive = clamp(this.params.starlaceGlint, 0, 1) > 0.01;
+    const glintActive = playableChord.length > 1 && clamp(this.params.starlaceGlint, 0, 1) > 0.01;
     this.reserveStarlaceVoiceRoom(player, starlace, playableChord.length, glintActive ? 1 : 0);
     this.fireStarlaceChord(starlace, playableChord, v);
     this.rememberStarlaceTransient(
@@ -819,10 +833,11 @@ export class HandSynthEngine {
       );
     }
     starlace.lastAudioAt = this.elapsed;
-    starlace.lastNoteIdx = chordIndex % this.starlaceNotes.length;
+    starlace.lastNoteIdx = rootIndex % this.starlaceNotes.length;
     starlace.lastChordIndex = chordIndex;
+    starlace.lastChordNotes = [...playableChord];
     if (!this._loggedStarlaceFirstHit) {
-      console.debug('[handSynth] first starlace chord', { player, chord: playableChord, frequency, velocity: v });
+      console.debug('[handSynth] first starlace chord', { player, chord: playableChord, frequency, velocity: v, phraseStep: options.phraseStep });
       this._loggedStarlaceFirstHit = true;
     }
   }
@@ -1404,6 +1419,7 @@ export class HandSynthEngine {
       lastHitCount: 0,
       lastNoteIdx: -1,
       lastChordIndex: -1,
+      lastChordNotes: [],
       lastAudioAt: -Infinity,
       lastAuraRetuneAt: -Infinity,
     };
@@ -1420,7 +1436,9 @@ export class HandSynthEngine {
     const auraChordIndex = starlace.lastChordIndex >= 0
       ? starlace.lastChordIndex
       : this.resolveStarlaceChordIndex(starlace.lastNoteIdx, -1, starlace.lastHitCount);
-    const auraChord = this.starlaceChordForIndex(auraChordIndex);
+    const auraChord = starlace.lastChordNotes.length > 0
+      ? starlace.lastChordNotes
+      : this.starlaceChordForIndex(auraChordIndex);
     const auraChordKey = auraChord.join('|');
     if (starlace.energy > 0.08) {
       if (!starlace.auraActive) {
@@ -1480,6 +1498,7 @@ export class HandSynthEngine {
     this.setGainNow(starlace.wetSend, 0);
     starlace.pulse = 0;
     starlace.energy = 0;
+    starlace.lastChordNotes = [];
   }
 
   private releaseStarlaceAura(starlace: StarlaceVoice, immediate: boolean): void {
@@ -1520,7 +1539,7 @@ export class HandSynthEngine {
     const glint = clamp(this.params.starlaceGlint, 0, 1);
     try {
       starlace.pluck.triggerAttackRelease(chord, this.params.starlaceHold, undefined, synthVel);
-      if (glint > 0.01) {
+      if (chord.length > 1 && glint > 0.01) {
         starlace.glint.triggerAttackRelease(
           glintNote,
           Math.max(0.28, this.params.starlaceHold * 0.65),
@@ -1533,7 +1552,10 @@ export class HandSynthEngine {
     }
   }
 
-  private starlacePlayableChord(chord: readonly string[], velocity: number): readonly string[] {
+  private starlacePlayableChord(chord: readonly string[], velocity: number, requestedCount?: 1 | 2 | 3): readonly string[] {
+    if (requestedCount !== undefined) {
+      return chord.slice(0, clamp(requestedCount, 1, Math.min(3, chord.length)));
+    }
     const richness = clamp(this.params.starlaceRichness, 0, 1);
     const wantsTriad = chord.length >= 3 && richness + velocity * 0.55 > 0.84;
     const desiredCount = wantsTriad ? 3 : 2;
@@ -1562,8 +1584,36 @@ export class HandSynthEngine {
     return positiveModulo(Math.floor(raw), this.starlaceChords.length);
   }
 
+  private resolveStarlaceRootIndex(noteIndex: number, nodeIndex: number, fallback: number): number {
+    const raw = Number.isFinite(noteIndex) && noteIndex >= 0
+      ? noteIndex
+      : Number.isFinite(nodeIndex) && nodeIndex >= 0
+        ? nodeIndex
+        : fallback;
+    return positiveModulo(Math.floor(raw), this.starlaceNotes.length);
+  }
+
+  private resolveStarlaceChordSize(value: number | undefined): 1 | 2 | 3 | undefined {
+    if (!Number.isFinite(value)) return undefined;
+    return clamp(Math.round(value ?? 0), 1, 3) as 1 | 2 | 3;
+  }
+
   private starlaceChordForIndex(index: number): readonly string[] {
     return this.starlaceChords[positiveModulo(index, this.starlaceChords.length)] ?? ['C4', 'E4', 'G4'];
+  }
+
+  private starlaceChordFromRoot(rootIndex: number, noteCount: 1 | 2 | 3): readonly string[] {
+    const root = clamp(rootIndex, 0, this.starlaceNotes.length - 1);
+    const offsets = noteCount === 1 ? [0] : noteCount === 2 ? [0, 2] : [0, 2, 4];
+    const notes: string[] = [];
+    for (const offset of offsets) {
+      let index = root + offset;
+      if (index >= this.starlaceNotes.length) index = root - offset;
+      index = clamp(index, 0, this.starlaceNotes.length - 1);
+      const note = this.starlaceNotes[index];
+      if (note && !notes.includes(note)) notes.push(note);
+    }
+    return notes.length > 0 ? notes : [this.starlaceNotes[root] ?? 'C4'];
   }
 
   private starlaceGlintNote(chord: readonly string[]): string {

@@ -75,28 +75,28 @@ export const SCULPTOR_DEFS = {
   fadeFraction:       { default: 0.04,  min: 0.01,  max: 0.35, step: 0.01,  folder: 'Particles', label: 'end fade fraction' },
 
   fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Settling', label: 'field strength' },
-  fieldFalloffStart:  { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade starts at life' },
-  fieldFalloffEnd:    { default: 0.2,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade reaches final at life' },
-  finalFieldEffect:   { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'final field effect' },
+  fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade starts at life' },
+  fieldFalloffEnd:    { default: 0.7,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade reaches final at life' },
+  finalFieldEffect:   { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'final field effect' },
 
   fieldVolumeScale:   { default: 0.55,  min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
   fieldSphereRadius:  { default: 1.0,   min: 0.2,   max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'sphere radius' },
   fieldSphereCenterY: { default: 0.12,  min: -0.5,  max: 1.1,  step: 0.01,  folder: 'Field Bounds', label: 'center height' },
 
   fieldRotationRate:  { default: 0.3,   min: 0,     max: 10,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
-  fieldDebugDensity:  { default: 11,    min: 3,     max: 15,   step: 1,     folder: 'Field Shape', label: 'debug density' },
+  fieldDebugDensity:  { default: 16,    min: 3,     max: 20,   step: 1,     folder: 'Field Shape', label: 'debug density' },
   attractorOverride:  { type: 'select' as const, default: 'cycle' as const, options: ATTRACTOR_OPTIONS, folder: 'Field Shape', label: 'attractor' },
 
   speedGlow:          { default: 0.7,   min: 0,     max: 2,    step: 0.01,  folder: 'Appearance', label: 'speed glow' },
   stretchScale:       { default: 0.06,  min: 0,     max: 0.4,  step: 0.005, folder: 'Appearance', label: 'accel stretch' },
 
-  dissolveBurstSpeed:   { default: 6,     min: 0,    max: 16,   step: 0.1,   folder: 'Projector', label: 'dissolve burst' },
+  dissolveBurstSpeed:   { default: 4.2,   min: 0,    max: 16,   step: 0.1,   folder: 'Projector', label: 'dissolve burst' },
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
-  projectorRingCount:   { default: 3,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
-  projectorRingSpacing: { default: 0.055, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
-  projectorRingScale:   { default: 0.74,  min: 0.4,  max: 1.0,  step: 0.01,  folder: 'Projector', label: 'ring scale' },
-  projectorBaseY:       { default: -0.27, min: -0.6, max: 0.3,  step: 0.01,  folder: 'Projector', label: 'base height' },
-  timerRingColor:       { type: 'color', default: '#ffd166', folder: 'Projector', label: 'projector rings' },
+  projectorRingCount:   { default: 5,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
+  projectorRingSpacing: { default: 0.020, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
+  projectorRingScale:   { default: 0.58,  min: 0.4,  max: 1.0,  step: 0.01,  folder: 'Projector', label: 'ring scale' },
+  projectorBaseY:       { default: -0.32, min: -0.6, max: 0.3,  step: 0.01,  folder: 'Projector', label: 'base height' },
+  timerRingColor:       { type: 'color', default: '#66ffff', folder: 'Projector', label: 'projector rings' },
 } as const;
 
 export type SculptorParams = ParamsOf<typeof SCULPTOR_DEFS>;

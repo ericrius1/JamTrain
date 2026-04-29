@@ -128,6 +128,9 @@ type DrumOptions = {
 const MAX_RIPPLES = 24;
 const RIPPLE_MAX_AGE = 5.8;
 const DRUM_LAYOUT_TOP_ROWS = DRUM_DEFAULT_BASE_ROW;
+const HELD_STREAM_BASE_RATE = 38;
+const HELD_STREAM_VELOCITY_RATE = 58;
+const HELD_STREAM_MAX_PER_FRAME = 10;
 // NDC units per second. Pointer must be moving at least this fast over an orb
 // for the held drone synth to be considered active. Roughly "a hair of motion"
 // — high enough to ignore the few stray pixels of cursor jitter while a user
@@ -267,6 +270,14 @@ type OrbHitCandidate = {
   speed: number;
 };
 
+type HeldPadSource = {
+  orbIndex: number;
+  frequency: number;
+  noteNumber?: number;
+  velocity: number;
+  streamCarry: number;
+};
+
 type PointerRayHit = {
   orbIndex: number;
   distance: number;
@@ -376,7 +387,7 @@ export class Drum implements PlayerVisual {
   private keyDownListener?: (e: KeyboardEvent) => void;
   private keyUpListener?: (e: KeyboardEvent) => void;
   private keyBlurListener?: () => void;
-  private heldSources = new Map<string, { orbIndex: number; frequency: number; noteNumber?: number }>();
+  private heldSources = new Map<string, HeldPadSource>();
   private hzTable: readonly number[] = getDrumHz(keyDirector.getCurrent());
   private keyUnsubscribe?: () => void;
 
@@ -662,6 +673,7 @@ export class Drum implements PlayerVisual {
     if (this.revealedFully && !this.revealActive) {
       if (contacts) this.processContactHits(contacts, delta);
       this.updatePointerGesture(delta);
+      this.tickHeldParticleStreams(delta);
     } else {
       // Drain any pointer "still inside" state so hits don't fire the moment
       // interactivity returns. Visuals stay quiet during the rise.
@@ -1181,11 +1193,14 @@ export class Drum implements PlayerVisual {
     if (source?.held && source.sourceId) {
       const existing = this.heldSources.get(source.sourceId);
       if (existing && existing.orbIndex !== orbIndex) this.releaseHeldSource(source.sourceId);
+      const current = this.heldSources.get(source.sourceId);
       orb.heldSources.add(source.sourceId);
       this.heldSources.set(source.sourceId, {
         orbIndex,
         frequency: this.frequencyForOrb(orbIndex),
         noteNumber: source.noteNumber,
+        velocity: clamp(velocity, 0.2, 1),
+        streamCarry: current?.streamCarry ?? 0,
       });
     }
     this.startOrbEnvelope(orb, velocity);
@@ -1205,6 +1220,26 @@ export class Drum implements PlayerVisual {
       });
     }
     this.emitSparks(orbIndex, worldStrike, velocity);
+  }
+
+  private tickHeldParticleStreams(delta: number): void {
+    if (!this.sculptor || this.heldSources.size === 0) return;
+    const streamDelta = Math.min(delta, 0.05);
+    _hitDir.set(0, 0.2, 1).normalize();
+
+    for (const held of this.heldSources.values()) {
+      const orb = this.orbs[held.orbIndex];
+      if (!orb) continue;
+      const rate = HELD_STREAM_BASE_RATE + held.velocity * HELD_STREAM_VELOCITY_RATE;
+      held.streamCarry += rate * streamDelta;
+      const count = Math.min(HELD_STREAM_MAX_PER_FRAME, Math.floor(held.streamCarry));
+      if (count <= 0) continue;
+      held.streamCarry -= count;
+
+      _strikePoint.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
+      this.mesh.localToWorld(_strikePoint);
+      this.emitSparks(held.orbIndex, _strikePoint, held.velocity, count);
+    }
   }
 
   private emitGesture(active: boolean, localPoint: THREE.Vector3, depth: number, radius: number, speed: number): void {
@@ -1348,7 +1383,7 @@ export class Drum implements PlayerVisual {
     this.emitSparks(orbIndex, worldStrike, velocity);
   }
 
-  private emitSparks(orbIndex: number, worldPosition: THREE.Vector3, velocity: number): void {
+  private emitSparks(orbIndex: number, worldPosition: THREE.Vector3, velocity: number, count?: number): void {
     if (!this.sculptor) return;
     const sink = this.sculptor;
     const dir = _sparkDir.copy(sink.center).sub(worldPosition);
@@ -1361,7 +1396,7 @@ export class Drum implements PlayerVisual {
       origin: worldPosition.clone(),
       direction: dir.clone(),
       color: { r: spark.r, g: spark.g, b: spark.b },
-      count: Math.round(40 + velocity * 40),
+      count: count ?? Math.round(40 + velocity * 40),
       speed: 0.9 + velocity * 1.4,
     });
   }
