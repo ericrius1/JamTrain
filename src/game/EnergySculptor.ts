@@ -1,7 +1,9 @@
 import * as THREE from 'three/webgpu';
 import {
+  Break,
   Fn,
   If,
+  Loop,
   Return,
   atan,
   cameraViewMatrix,
@@ -18,7 +20,6 @@ import {
   vec3,
   vec4,
 } from 'three/tsl';
-import { SPECTRUM_BAND_COUNT, type MusicSpectrum } from './audioGraph';
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import type { EmitRequest, EnergySink } from './sculptor/EnergyEmitter';
 import type { ArchetypeId } from './sculptor/archetypeShared';
@@ -35,51 +36,37 @@ import {
 } from './sculptor/strangeAttractors';
 
 export const SCULPTOR_DEFS = {
-  particleCount:        { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
-  particleSize:         { default: 0.005, min: 0.001, max: 0.03, step: 0.001, label: 'particle size' },
-  particleOpacity:      { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  label: 'particle opacity' },
-  particleLifetime:        { default: 30,    min: 0,    max: 240,  step: 0.5,  label: 'particle lifetime' },
-  fieldStrength:           { default: 1.0,   min: 0,    max: 100,  step: 0.05, label: 'field strength' },
-  affinityFalloffStart:    { default: 0.01,  min: 0,    max: 1,    step: 0.01, label: 'affinity falloff start' },
-  affinityFalloffEnd:      { default: 0.11,  min: 0,    max: 0.5,    step: 0.01, label: 'affinity falloff end' },
-  finalAffinityStrength:   { default: 0.0,   min: 0,    max: 1,    step: 0.01, label: 'final affinity strength' },
-  fieldRotationRate:       { default: 0.3,   min: 0,    max: 10,   step: 0.05, label: 'field rotation' },
-  fieldDebugDensity:       { default:11,     min: 3,    max: 15,   step: 1,    label: 'field debug density' },
-  attractorOverride:       { type: 'select' as const, default: 'auto' as const, options: { auto: 'auto', thomas: 'thomas', lorenz: 'lorenz', aizawa: 'aizawa', halvorsen: 'halvorsen', rossler: 'rossler', dadras: 'dadras' }, label: 'attractor' },
-  speedGlow:               { default: 0.7,   min: 0,    max: 2,    step: 0.01, label: 'speed glow' },
-  stretchScale:            { default: 0.06,  min: 0,    max: 0.4,  step: 0.005, label: 'accel stretch' },
-  fadeFraction:            { default: 0.18,  min: 0.05, max: 0.9,  step: 0.01, label: 'fade fraction' },
-  spectrumGlowGain:        { default: 1.1,   min: 0,    max: 3,    step: 0.05, label: 'fft glow gain' },
-  dissolveBurstSpeed:   { default: 6,     min: 0,    max: 16,   step: 0.1,  label: 'dissolve burst' },
-  timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01, label: 'projector base radius' },
-  projectorRingCount:   { default: 3,     min: 1,    max: 5,    step: 1,    label: 'projector ring count' },
-  projectorRingSpacing: { default: 0.055, min: 0.01, max: 0.25, step: 0.005, label: 'projector ring spacing' },
-  projectorRingScale:   { default: 0.74,  min: 0.4,  max: 1.0,  step: 0.01, label: 'projector ring scale' },
-  projectorBaseY:       { default: -0.27, min: -0.6, max: 0.3,  step: 0.01, label: 'projector base height' },
-  synchronyRingColor:   { type: 'color', default: '#fff5d6', label: 'synchrony ring' },
-  timerRingColor:       { type: 'color', default: '#ffd166', label: 'projector rings' },
+  particleCount:      { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
+  particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
+  particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
+  particleLifetime:   { default: 30,    min: 0,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
+  fadeFraction:       { default: 0.04,  min: 0.01,  max: 0.35, step: 0.01,  folder: 'Particles', label: 'end fade fraction' },
+
+  fieldStrength:      { default: 1.0,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Settling', label: 'field strength' },
+  fieldFalloffStart:  { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade starts at life' },
+  fieldFalloffEnd:    { default: 0.2,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade reaches final at life' },
+  finalFieldEffect:   { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'final field effect' },
+
+  fieldRotationRate:  { default: 0.3,   min: 0,     max: 10,   step: 0.05,  folder: 'Field Shape', label: 'field rotation' },
+  fieldDebugDensity:  { default: 11,    min: 3,     max: 15,   step: 1,     folder: 'Field Shape', label: 'debug density' },
+  attractorOverride:  { type: 'select' as const, default: 'auto' as const, options: { auto: 'auto', thomas: 'thomas', lorenz: 'lorenz', aizawa: 'aizawa', halvorsen: 'halvorsen', rossler: 'rossler', dadras: 'dadras' }, folder: 'Field Shape', label: 'attractor' },
+
+  speedGlow:          { default: 0.7,   min: 0,     max: 2,    step: 0.01,  folder: 'Appearance', label: 'speed glow' },
+  stretchScale:       { default: 0.06,  min: 0,     max: 0.4,  step: 0.005, folder: 'Appearance', label: 'accel stretch' },
+
+  dissolveBurstSpeed:   { default: 6,     min: 0,    max: 16,   step: 0.1,   folder: 'Projector', label: 'dissolve burst' },
+  timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
+  projectorRingCount:   { default: 3,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
+  projectorRingSpacing: { default: 0.055, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
+  projectorRingScale:   { default: 0.74,  min: 0.4,  max: 1.0,  step: 0.01,  folder: 'Projector', label: 'ring scale' },
+  projectorBaseY:       { default: -0.27, min: -0.6, max: 0.3,  step: 0.01,  folder: 'Projector', label: 'base height' },
+  synchronyRingColor:   { type: 'color', default: '#fff5d6', folder: 'Projector', label: 'synchrony ring' },
+  timerRingColor:       { type: 'color', default: '#ffd166', folder: 'Projector', label: 'projector rings' },
 } as const;
 
 export type SculptorParams = ParamsOf<typeof SCULPTOR_DEFS>;
 
-export type SculptorMusicField = {
-  pulse: number;
-  drumLevel: number;
-  sustained: number;
-  intensity: number;
-  chordProgress: number;
-  groovePhase: number;
-};
-
 const TAU = Math.PI * 2;
-const DEFAULT_MUSIC_FIELD: SculptorMusicField = {
-  pulse: 0,
-  drumLevel: 0,
-  sustained: 0,
-  intensity: 0,
-  chordProgress: 0,
-  groovePhase: 0,
-};
 
 const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
   drumDrum: 'lorenz',
@@ -92,17 +79,13 @@ const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
 // two players hitting hard at the same time we still stay under ~120.
 const MAX_SPAWNS_PER_FRAME = 256;
 
-const KIND_DRUM = 0;
-const KIND_STARLACE = 1;
-
 /**
  * GPU-compute particle sculpture. All particle state lives in TSL
  * `instancedArray` storage buffers; one compute pass injects new particles
  * each frame, another integrates every alive particle through the active
- * archetype's strange-attractor flow field (Lorenz / Thomas / Aizawa /
- * Halvorsen). Rendering uses a billboard SpriteNodeMaterial driven by the
- * same buffers, so no CPU→GPU per-frame data shuffling beyond the small
- * spawn queue and a handful of uniforms.
+ * archetype's strange-attractor flow field. Field influence falls from full
+ * strength to the adjustable final field effect over normalized lifetime, so
+ * streams can keep moving or freeze into a layered record of the music.
  */
 export class EnergySculptor implements EnergySink {
   readonly center: THREE.Vector3;
@@ -151,22 +134,11 @@ export class EnergySculptor implements EnergySink {
   private fadeFractionUniform = uniform(0.25);
   private dissolveModeUniform = uniform(0);
   private dissolveBurstUniform = uniform(6);
-  private musicPulseUniform = uniform(0);
-  private synchronyBoostUniform = uniform(0);
   private centerUniform = uniform(new THREE.Vector3());
   private speedGlowUniform = uniform(0.7);
   private stretchScaleUniform = uniform(0.06);
   private particleSizeUniform = uniform(0.022);
   private particleOpacityUniform = uniform(0.85);
-
-  // Per-band spectrum data — `instanceIndex % SPECTRUM_BAND_COUNT` picks
-  // which band a particle responds to. We pack (level, pulse, _, _) into a
-  // Vector4 array so we can reuse the same uniformArray-of-Vector4 pattern
-  // the spawn queue uses (mutation is auto-uploaded by three each frame).
-  // A plain number[] with type 'float' was uploading once and never again.
-  private spectrumBandArray: THREE.Vector4[] = [];
-  private spectrumBandUniform!: THREE.UniformArrayNode<'vec4'>;
-  private spectrumGlowGainUniform = uniform(1.1);
 
   // Per-attractor parameter uniforms. CPU swaps values on archetype change.
   // attractorSelectUniform is a float (0/1/2/3), cast to uint at compute site.
@@ -194,11 +166,13 @@ export class EnergySculptor implements EnergySink {
   // 'auto' = follow archetype-driven attractor; otherwise pin to the chosen kind.
   private attractorOverride: 'auto' | AttractorKind = 'auto';
 
-  // Lifetime-keyed affinity falloff — particles lose attraction to the field
-  // as they age. flowInfluence = mix(1, finalAffinity, smoothstep(start, end, lifeT)).
-  private affinityFalloffStartUniform = uniform(0.30);
-  private affinityFalloffEndUniform = uniform(0.95);
-  private finalAffinityStrengthUniform = uniform(0.05);
+  // Lifetime-keyed field falloff. fieldEffect = mix(1, finalFieldEffect,
+  // smoothstep(start, end, normalizedAge)). If finalFieldEffect is exactly 0
+  // and the falloff has completed, the particle's velocity is zeroed so it
+  // freezes into the sculpture instead of drifting on residual velocity.
+  private fieldFalloffStartUniform = uniform(0.0);
+  private fieldFalloffEndUniform = uniform(0.2);
+  private finalFieldEffectUniform = uniform(0.0);
   // Master force multiplier — 0 means no acceleration is applied to particles.
   private fieldStrengthUniform = uniform(1.0);
 
@@ -227,7 +201,6 @@ export class EnergySculptor implements EnergySink {
   // Frame state.
   private currentArchetype: ArchetypeId = 'drumMelody';
   private currentAttractor: AttractorKind = 'aizawa';
-  private musicField: SculptorMusicField = { ...DEFAULT_MUSIC_FIELD };
   private roundProgress = 0;
   private dissolveMode = 0;
   private synchronyBoost = 0;
@@ -272,7 +245,6 @@ export class EnergySculptor implements EnergySink {
 
     this.allocateBuffers();
     this.allocateSpawnQueue();
-    this.allocateSpectrumUniforms();
     this.buildComputePipelines();
     this.buildRenderMesh();
     this.buildSynchronyRing();
@@ -286,12 +258,11 @@ export class EnergySculptor implements EnergySink {
     this.lifeMaxUniform.value = this.params.particleLifetime;
     this.fadeFractionUniform.value = this.params.fadeFraction;
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
-    this.spectrumGlowGainUniform.value = this.params.spectrumGlowGain;
     this.speedGlowUniform.value = this.params.speedGlow;
     this.stretchScaleUniform.value = this.params.stretchScale;
-    this.affinityFalloffStartUniform.value = this.params.affinityFalloffStart;
-    this.affinityFalloffEndUniform.value = this.params.affinityFalloffEnd;
-    this.finalAffinityStrengthUniform.value = this.params.finalAffinityStrength;
+    this.fieldFalloffStartUniform.value = this.params.fieldFalloffStart;
+    this.fieldFalloffEndUniform.value = this.params.fieldFalloffEnd;
+    this.finalFieldEffectUniform.value = this.params.finalFieldEffect;
     this.fieldStrengthUniform.value = this.params.fieldStrength;
     this.fieldRotationRate = this.params.fieldRotationRate;
 
@@ -312,9 +283,9 @@ export class EnergySculptor implements EnergySink {
         stretchScale: v => { this.stretchScaleUniform.value = v; },
         particleLifetime: v => { this.lifeMaxUniform.value = v; },
         fadeFraction: v => { this.fadeFractionUniform.value = v; },
-        affinityFalloffStart: v => { this.affinityFalloffStartUniform.value = v; },
-        affinityFalloffEnd: v => { this.affinityFalloffEndUniform.value = v; },
-        finalAffinityStrength: v => { this.finalAffinityStrengthUniform.value = v; },
+        fieldFalloffStart: v => { this.fieldFalloffStartUniform.value = v; },
+        fieldFalloffEnd: v => { this.fieldFalloffEndUniform.value = v; },
+        finalFieldEffect: v => { this.finalFieldEffectUniform.value = v; },
         fieldStrength: v => { this.fieldStrengthUniform.value = v; },
         fieldRotationRate: v => { this.fieldRotationRate = v; },
         fieldDebugDensity: v => {
@@ -325,22 +296,8 @@ export class EnergySculptor implements EnergySink {
         },
         attractorOverride: v => { this.setAttractorOverride(v as 'auto' | AttractorKind); },
         dissolveBurstSpeed: v => { this.dissolveBurstUniform.value = v; },
-        spectrumGlowGain: v => { this.spectrumGlowGainUniform.value = v; },
       },
     });
-  }
-
-  // Push the latest FFT snapshot into the GPU-side band uniforms. We mutate
-  // the existing Vector4 instances in place — three's UniformArrayNode reads
-  // their components on every dispatch, the same way it already does for
-  // the spawn-queue Vector3 array.
-  setMusicSpectrum(spectrum: MusicSpectrum): void {
-    const n = Math.min(SPECTRUM_BAND_COUNT, spectrum.levels.length);
-    for (let i = 0; i < n; i += 1) {
-      const band = this.spectrumBandArray[i];
-      band.x = spectrum.levels[i];
-      band.y = spectrum.pulses[i];
-    }
   }
 
   // ---------------------------------------------------------------------- emit
@@ -379,15 +336,6 @@ export class EnergySculptor implements EnergySink {
     this.roundProgress = Math.max(0, progress);
   }
 
-  setMusicField(field: SculptorMusicField): void {
-    this.musicField.pulse = clamp01(field.pulse);
-    this.musicField.drumLevel = clamp01(field.drumLevel);
-    this.musicField.sustained = clamp01(field.sustained);
-    this.musicField.intensity = clamp01(field.intensity);
-    this.musicField.chordProgress = field.chordProgress - Math.floor(field.chordProgress);
-    this.musicField.groovePhase = field.groovePhase - Math.floor(field.groovePhase);
-  }
-
   fireSynchrony(): void {
     this.synchronyBoost = 1;
     this.synchronyRingAge = 0;
@@ -422,12 +370,9 @@ export class EnergySculptor implements EnergySink {
     this.dtUniform.value = dt;
     this.elapsed += delta;
 
-    // Synchrony decay (visual ring effect). musicPulseUniform feeds the
-    // per-particle render brightness; nothing music-driven affects motion any
-    // more — settling is governed entirely by the affinity model.
+    // Synchrony only drives the decorative ring. Particle motion is governed
+    // by the field plus the lifetime-based settling controls.
     this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
-    this.synchronyBoostUniform.value = this.synchronyBoost;
-    this.musicPulseUniform.value = this.musicField.pulse;
     this.tickSynchronyRing(delta);
     this.updateProjectorRing();
     this.tickSampleRotation();
@@ -488,20 +433,17 @@ export class EnergySculptor implements EnergySink {
     this.spawnMetaUniform = uniformArray(this.spawnMetaArray, 'vec3');
   }
 
-  private allocateSpectrumUniforms(): void {
-    for (let i = 0; i < SPECTRUM_BAND_COUNT; i += 1) {
-      this.spectrumBandArray.push(new THREE.Vector4(0, 0, 0, 0));
-    }
-    this.spectrumBandUniform = uniformArray(this.spectrumBandArray, 'vec4');
-  }
-
   private buildComputePipelines(): void {
     const positions = this.positionsBuffer;
     const velocities = this.velocitiesBuffer;
     const colors = this.colorsBuffer;
     const meta = this.metaBuffer;
+    const spawnSearchSteps = Math.ceil(this.count / MAX_SPAWNS_PER_FRAME);
 
-    // Emit pass: write spawn-queue entries into ring-buffer slots.
+    // Emit pass: write spawn-queue entries into dead slots only. Each spawn
+    // worker searches a disjoint stride through the pool, so live particles
+    // are not overwritten before their lifetime completes. If the pool is
+    // full, the new spawn is dropped instead of shortening existing particles.
     const emitFn = Fn(() => {
       const i = instanceIndex;
       const spawnCountU = this.spawnCountUniform.toUint();
@@ -509,16 +451,26 @@ export class EnergySculptor implements EnergySink {
       If(i.greaterThanEqual(spawnCountU), () => {
         Return();
       });
-      const slot = spawnCursorU.add(i).mod(uint(this.count));
       const spawnPos = this.spawnPosUniform.element(i);
       const spawnVel = this.spawnVelUniform.element(i);
       const spawnColor = this.spawnColorUniform.element(i);
       const spawnMeta = this.spawnMetaUniform.element(i);
-      positions.element(slot).assign(spawnPos);
-      velocities.element(slot).assign(spawnVel);
-      colors.element(slot).assign(spawnColor);
-      // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
-      meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
+      Loop(spawnSearchSteps, ({ i: scan }) => {
+        const slot = spawnCursorU
+          .add(i)
+          .add(scan.toUint().mul(uint(MAX_SPAWNS_PER_FRAME)))
+          .mod(uint(this.count));
+        const slotMeta = meta.element(slot);
+        const isDead = slotMeta.w.lessThanEqual(0).or(slotMeta.x.greaterThanEqual(slotMeta.y));
+        If(isDead, () => {
+          positions.element(slot).assign(spawnPos);
+          velocities.element(slot).assign(spawnVel);
+          colors.element(slot).assign(spawnColor);
+          // meta = (age=0, lifeMax, smoothedAccel=0, alphaLife=1)
+          meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 1));
+          Break();
+        });
+      });
     });
     this.emitCompute = emitFn().compute(MAX_SPAWNS_PER_FRAME);
 

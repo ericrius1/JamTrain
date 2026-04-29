@@ -138,7 +138,6 @@ export class Game {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
   };
-  private musicIntensity = 0;
   // While `introActive` is true the instruments stay hidden and the scenery
   // bird system is held off — the world reads as a still tableau the user is
   // about to step into. exitIntroMode() flips this and runs the per-player
@@ -1081,7 +1080,6 @@ export class Game {
     this.audio.update(localPose, remotePose, atmosphere.daylight, delta);
     this.handSynth.update(localPose, remotePose, delta);
     this.audio.setPlayerActivity(this.handSynth.getActivity());
-    this.updateMusicReactivity(delta);
     this.poseSession.sendLocalPose(localPose, elapsed);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
@@ -1124,36 +1122,6 @@ export class Game {
     }
 
     return contacts;
-  }
-
-  private updateMusicReactivity(delta: number): void {
-    // Combine drum hits + synth note attacks into a single 0..1 pulse, plus a
-    // gentle sustained "music is happening" baseline. Smoothed so the visuals
-    // breathe rather than strobe.
-    const drumPulse = this.audio.getDrumPulse();
-    const drumLevel = this.audio.getDrumLevel();
-    const notePulse = this.handSynth.getNotePulse();
-    const synthActivity = this.handSynth.getActivity();
-    const sustained = clamp(drumLevel * 0.55 + synthActivity * 0.4, 0, 1);
-    const pulse = Math.max(drumPulse, notePulse);
-    const targetIntensity = clamp(sustained * 0.45 + pulse * 0.85, 0, 1);
-
-    const alpha = 1 - Math.exp(-delta * 7);
-    this.musicIntensity += (targetIntensity - this.musicIntensity) * alpha;
-    this.sculptor?.setMusicField({
-      pulse,
-      drumLevel,
-      sustained,
-      intensity: this.musicIntensity,
-      chordProgress: this.audio.getChordProgress(),
-      groovePhase: this.audio.getGroovePhase(),
-    });
-
-    // Sample the master FFT (full mix: backing track + player synths + fx)
-    // and forward per-band level/pulse into the sculptor so different
-    // frequency ranges drive their own particle bands.
-    const spectrum = this.audioGraph.updateSpectrum(delta);
-    this.sculptor?.setMusicSpectrum(spectrum);
   }
 
   // Intro/active state. While intro is enabled the scenery's bird system is
