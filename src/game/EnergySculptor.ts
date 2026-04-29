@@ -539,47 +539,30 @@ export class EnergySculptor implements EnergySink {
       const flowB = sampleFlow(this.attractorTargetUniform, samplePos);
       const sampledFlow = mix(flowA, flowB, this.crossfadeWeightUniform);
       const rawFlow = this.sampleRotUniform.mul(sampledFlow);
-      const r = pos.length();
-      const radial = pos.div(r.max(0.0001));
-      const radialFlow = radial.mul(rawFlow.dot(radial));
-      const tangentialFlow = rawFlow.sub(radialFlow.mul(0.82));
-      const flowLen = tangentialFlow.length();
-      const flow = tangentialFlow.div(flowLen.max(0.0001)).mul(flowLen.clamp(0, 3.25));
+      const flowLen = rawFlow.length();
+      const flow = rawFlow.div(flowLen.max(0.0001)).mul(flowLen.clamp(0, 3.25));
 
       // Age fraction (0 born → 1 dead).
       const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
       const fadeStart = float(1).sub(this.fadeFractionUniform);
 
-      // Affinity ramps from 1 → finalAffinityStrength across the falloff
+      // Field effect ramps from 1 → finalFieldEffect across the falloff
       // window. We auto-order Start/End so the user can drag the sliders past
       // each other without inverting the curve.
-      const falloffLo = this.affinityFalloffStartUniform.min(this.affinityFalloffEndUniform);
-      const falloffHi = this.affinityFalloffStartUniform.max(this.affinityFalloffEndUniform);
+      const falloffLo = this.fieldFalloffStartUniform.min(this.fieldFalloffEndUniform);
+      const falloffHi = this.fieldFalloffStartUniform.max(this.fieldFalloffEndUniform);
       const falloffT = smoothstep(falloffLo, falloffHi, lifeT).clamp(0, 1);
-      const affinity = mix(float(1), this.finalAffinityStrengthUniform, falloffT).clamp(0, 1);
+      const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
 
-      // Drag is weak while affinity is high (so the orbit reads cleanly) and
-      // strong once affinity has dropped, so residual velocity decays and the
-      // particle parks where it last drifted.
-      const activeDrag = float(0.55).add(float(1).sub(this.velocityBlendUniform).mul(3.0));
-      const settledDrag = activeDrag.add(3.2);
-      const drag = mix(activeDrag, settledDrag, float(1).sub(affinity));
-
-      // The ONLY force on a particle is the attractor flow, gated by affinity
-      // and the master field-strength multiplier. Set finalAffinityStrength=0
-      // and after the falloff window the particle stops dead.
-      const accel = flow.mul(this.flowSpeedUniform).mul(affinity).mul(this.fieldStrengthUniform);
-      const dragFactor = float(1).div(float(1).add(drag.mul(this.dtUniform)));
-      const newVel = vel.add(accel.mul(this.dtUniform)).mul(dragFactor).toVar();
-      // Speed cap also scales with affinity and floors at 0, so finalAffinity=0
-      // means truly motionless — drag would only asymptote to 0 otherwise.
-      const youngBoost = float(1).sub(m.x.div(0.6).clamp(0, 1));
-      const maxWorldSpeed = mix(float(0), mix(0.42, 1.4, youngBoost), affinity);
-      const maxSpeed = maxWorldSpeed.div(this.worldScaleUniform.max(0.001));
-      const speedNow = newVel.length();
-      // Guard against 0/0 once both maxSpeed and the current speed are zero.
-      const speedDenom = speedNow.max(maxSpeed).max(float(1e-5));
-      newVel.assign(newVel.mul(maxSpeed.div(speedDenom)));
+      // The field is the only sculpting force. The adjustable final field
+      // effect is used directly, so finalFieldEffect=0.2 means the field keeps
+      // affecting old particles at exactly 20% of its full strength.
+      const accel = flow.mul(this.flowSpeedUniform).mul(this.fieldStrengthUniform).mul(fieldEffect);
+      const newVel = vel.add(accel.mul(this.dtUniform)).toVar();
+      const freezeWhenSettled = this.finalFieldEffectUniform.lessThanEqual(0.0001).and(falloffT.greaterThanEqual(0.999));
+      If(freezeWhenSettled, () => {
+        newVel.assign(vec3(0));
+      });
 
       // Dissolve burst: blow particles outward away from origin and shorten life.
       const dm = this.dissolveModeUniform;
@@ -663,21 +646,11 @@ export class EnergySculptor implements EnergySink {
     const sizeBase = this.particleSizeUniform.mul(fadeShape);
     material.scaleNode = vec2(sizeBase.mul(stretchSafe), sizeBase.div(stretchSafe));
 
-    // Per-particle band lookup for the render brightness term. Same band the
-    // integrate pass used, so brightness and motion line up.
-    const renderBandIdx = instanceIndex.mod(uint(SPECTRUM_BAND_COUNT));
-    const renderBand = this.spectrumBandUniform.element(renderBandIdx);
-    const renderBandLevel = renderBand.x;
-    const renderBandPulse = renderBand.y;
-
-    // Color: base color, brightened by speed, music pulse, and per-band fft
-    // energy. Multiplied by alphaLife so dead particles contribute nothing
-    // under additive blending.
+    // Color: base color brightened only by motion. Multiplying by alphaLife
+    // keeps dead particles invisible under additive blending.
     const baseColor = this.colorsBuffer.toAttribute();
     const speedTerm = speed.mul(0.05).clamp(0, 1).mul(this.speedGlowUniform);
-    const musicTerm = this.musicPulseUniform.mul(0.35);
-    const fftTerm = renderBandLevel.mul(0.45).add(renderBandPulse.mul(this.spectrumGlowGainUniform));
-    const glow = float(0.55).add(speedTerm).add(musicTerm).add(fftTerm);
+    const glow = float(0.55).add(speedTerm);
     const lit = baseColor.mul(glow).mul(alpha);
     material.colorNode = lit;
 
