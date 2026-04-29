@@ -47,7 +47,7 @@ export const SCULPTOR_DEFS = {
   fieldFalloffEnd:    { default: 0.2,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'fade reaches final at life' },
   finalFieldEffect:   { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Settling', label: 'final field effect' },
 
-  fieldVolumeScale:   { default: 1.0,   min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
+  fieldVolumeScale:   { default: 0.55,   min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
   fieldBoundsWidth:   { default: 1.02,  min: 0.35,  max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'half width' },
   fieldBoundsDepth:   { default: 0.46,  min: 0.18,  max: 1.4,  step: 0.01,  folder: 'Field Bounds', label: 'half depth' },
   fieldBoundsBottom:  { default: -0.34, min: -0.8,  max: 0.3,  step: 0.01,  folder: 'Field Bounds', label: 'bottom from center' },
@@ -201,8 +201,8 @@ export class EnergySculptor implements EnergySink {
   private crossfadeWeightUniform = uniform(0);
   private crossfadeRemaining = 0;
   private static readonly CROSSFADE_DURATION = 6;
-  private fromPreset = ATTRACTOR_PRESETS.aizawa;
-  private toPreset = ATTRACTOR_PRESETS.aizawa;
+  private fromPreset = ATTRACTOR_PRESETS.thomas;
+  private toPreset = ATTRACTOR_PRESETS.thomas;
 
   // Compute passes (ComputeNode produced by Fn(...)().compute(N)).
   private emitCompute!: THREE.ComputeNode;
@@ -210,7 +210,7 @@ export class EnergySculptor implements EnergySink {
 
   // Frame state.
   private currentArchetype: ArchetypeId = 'drumMelody';
-  private currentAttractor: AttractorKind = 'aizawa';
+  private currentAttractor: AttractorKind = 'thomas';
   private roundProgress = 0;
   private dissolveMode = 0;
   private synchronyBoost = 0;
