@@ -32,6 +32,8 @@ export const STARLACE_DEFS = {
   danceAmount:     { default: 0.030, min: 0,     max: 0.16, step: 0.001, label: 'dance amount' },
   danceSpeed:      { default: 0.14,  min: 0,     max: 1.2,  step: 0.01,  label: 'dance speed' },
   keyWalkInterval: { default: 0.34,  min: 0.18,  max: 0.75, step: 0.005, label: 'key walk step s' },
+  keyPhraseJumps:  { default: 4,     min: 1,     max: 12,   step: 1,     label: 'held jumps' },
+  keyChordMaxNotes:{ default: 3,     min: 1,     max: 3,    step: 1,     label: 'held chord notes' },
   coolColor:       { type: 'color', default: '#5fb6c4', label: 'cool stars' },
   warmColor:       { type: 'color', default: '#e56f67', label: 'warm stars' },
   goldColor:       { type: 'color', default: '#edae4a', label: 'gold links' },
@@ -49,6 +51,9 @@ export type StarlacePluck = {
   worldPosition: THREE.Vector3;
   x: number;
   y: number;
+  chordRootIndex?: number;
+  chordSize?: 1 | 2 | 3;
+  phraseStep?: number;
 };
 
 type StarlacePalette = 'local' | 'remote';
@@ -89,6 +94,7 @@ type KeyboardPathState = {
   previousNode: number;
   nextAt: number;
   step: number;
+  totalStages: number;
   phraseSeed: number;
   recentNodes: number[];
   velocity: number;
@@ -239,6 +245,7 @@ export class Starlace implements PlayerVisual {
   private keyboardPitchNodes: number[][] = [];
   private keyboardStartCursor: number[] = [];
   private keyboardPaths = new Map<string, KeyboardPathState>();
+  private keyboardHeldKeys = new Set<string>();
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
   private pointerNdc = new THREE.Vector2(999, 999);
@@ -361,6 +368,7 @@ export class Starlace implements PlayerVisual {
       this.activeContactKeys.clear();
       this.currentContactKeys.clear();
       this.keyboardPaths.clear();
+      this.keyboardHeldKeys.clear();
     }
   }
 
@@ -373,6 +381,7 @@ export class Starlace implements PlayerVisual {
   startHidden(): void {
     this.mesh.visible = false;
     this.keyboardPaths.clear();
+    this.keyboardHeldKeys.clear();
     this.revealedFully = false;
     this.revealActive = false;
     this.fillRevealValues(0);
@@ -583,6 +592,7 @@ export class Starlace implements PlayerVisual {
       this.processPointer(delta);
     } else {
       this.keyboardPaths.clear();
+      this.keyboardHeldKeys.clear();
       this.clearPointerState();
     }
     this.decayPulses(delta);
@@ -1159,28 +1169,79 @@ export class Starlace implements PlayerVisual {
     for (const key of this.currentContactKeys) this.activeContactKeys.add(key);
   }
 
-  private fireNode(nodeIndex: number, velocity: number, hand?: HandContactPoint['hand']): void {
+  private fireNode(
+    nodeIndex: number,
+    velocity: number,
+    hand?: HandContactPoint['hand'],
+    chord?: { rootIndex?: number; size?: 1 | 2 | 3; phraseStep?: number },
+  ): void {
     const node = this.nodes[nodeIndex];
-    node.lastHitAt = this.elapsed;
-    node.pulse = Math.min(1, node.pulse + 0.78 + velocity * 0.52);
+    this.pulseNode(nodeIndex, velocity);
 
     if (this.onPluckCallback) {
+      const rootIndex = chord?.rootIndex ?? node.noteIndex;
       this.onPluckCallback({
         nodeIndex,
-        noteIndex: node.noteIndex,
-        frequency: this.hzTable[node.noteIndex],
+        noteIndex: rootIndex,
+        frequency: this.hzTable[rootIndex] ?? this.hzTable[node.noteIndex],
         velocity,
         hand,
         worldPosition: node.world.clone(),
         x: clamp(node.u + 0.5, 0, 1),
         y: clamp(node.v + 0.5, 0, 1),
+        chordRootIndex: rootIndex,
+        chordSize: chord?.size,
+        phraseStep: chord?.phraseStep,
       });
     }
     this.emitStreak(node, velocity);
   }
 
+  private pulseNode(nodeIndex: number, velocity: number): void {
+    const node = this.nodes[nodeIndex];
+    if (!node) return;
+    node.lastHitAt = this.elapsed;
+    node.pulse = Math.min(1, node.pulse + 0.78 + velocity * 0.52);
+  }
+
+  private fireKeyboardChord(state: KeyboardPathState, nodeIndices: readonly number[], chordSize: 1 | 2 | 3): void {
+    if (nodeIndices.length === 0) return;
+    const rootNodeIndex = nodeIndices[0];
+    const rootNode = this.nodes[rootNodeIndex];
+    if (!rootNode) return;
+    const velocity = this.keyboardPathVelocity(state);
+
+    for (let i = 0; i < nodeIndices.length; i += 1) {
+      const nodeIndex = nodeIndices[i];
+      const node = this.nodes[nodeIndex];
+      if (!node) continue;
+      this.pulseNode(nodeIndex, velocity * (i === 0 ? 1 : 0.86));
+      this.emitStreak(node, velocity * (i === 0 ? 0.92 : 0.72));
+      if (state.previousNode >= 0 && state.previousNode !== nodeIndex) {
+        this.addSpark(state.previousNode, nodeIndex, velocity * (i === 0 ? 0.88 : 0.64));
+      }
+      if (i > 0 && rootNodeIndex !== nodeIndex) {
+        this.addSpark(rootNodeIndex, nodeIndex, velocity * 0.76);
+      }
+    }
+
+    if (this.onPluckCallback) {
+      this.onPluckCallback({
+        nodeIndex: rootNodeIndex,
+        noteIndex: state.homeNoteIndex,
+        frequency: this.hzTable[state.homeNoteIndex] ?? this.hzTable[rootNode.noteIndex],
+        velocity,
+        worldPosition: rootNode.world.clone(),
+        x: clamp(rootNode.u + 0.5, 0, 1),
+        y: clamp(rootNode.v + 0.5, 0, 1),
+        chordRootIndex: state.homeNoteIndex,
+        chordSize,
+        phraseStep: state.step,
+      });
+    }
+  }
+
   private static readonly KEY_MAP: ReadonlyArray<string> = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
-  private static readonly KEYBOARD_INTERVAL_PATTERN: ReadonlyArray<number> = [1, 2, -1, 3, 1, -2, 2, -1];
   private static readonly KEYBOARD_RECENT_LIMIT = 8;
 
   private attachKeyboardEvents(): void {
@@ -1190,15 +1251,18 @@ export class Starlace implements PlayerVisual {
       if (!this.isInteractive()) return;
       const key = e.key.toLowerCase();
       const idx = Starlace.KEY_MAP.indexOf(key);
-      if (idx < 0 || this.keyboardPaths.has(key)) return;
+      if (idx < 0 || e.repeat || this.keyboardHeldKeys.has(key)) return;
       e.preventDefault();
       this.startKeyboardPath(key, idx);
     };
     this.keyUpListener = (e: KeyboardEvent) => {
-      this.keyboardPaths.delete(e.key.toLowerCase());
+      const key = e.key.toLowerCase();
+      this.keyboardPaths.delete(key);
+      this.keyboardHeldKeys.delete(key);
     };
     this.keyBlurListener = () => {
       this.keyboardPaths.clear();
+      this.keyboardHeldKeys.clear();
     };
     window.addEventListener('keydown', this.keyDownListener);
     window.addEventListener('keyup', this.keyUpListener);
@@ -1219,6 +1283,7 @@ export class Starlace implements PlayerVisual {
       this.keyBlurListener = undefined;
     }
     this.keyboardPaths.clear();
+    this.keyboardHeldKeys.clear();
   }
 
   private isKeyboardTextTarget(target: EventTarget | null): boolean {
@@ -1233,17 +1298,22 @@ export class Starlace implements PlayerVisual {
     if (!Number.isFinite(noteNumber)) return;
     const keyIndex = positiveModulo(Math.round(noteNumber) - 36, Starlace.KEY_MAP.length);
     const key = this.midiSourceId(noteNumber, sourceId);
-    if (this.keyboardPaths.has(key)) return;
+    if (this.keyboardHeldKeys.has(key)) return;
     this.startKeyboardPath(key, keyIndex, clamp(velocity, 0, 1));
   }
 
   triggerMidiNoteOff(noteNumber: number, sourceId?: string): void {
-    this.keyboardPaths.delete(this.midiSourceId(noteNumber, sourceId));
+    const key = this.midiSourceId(noteNumber, sourceId);
+    this.keyboardPaths.delete(key);
+    this.keyboardHeldKeys.delete(key);
   }
 
   releaseAllMidiNotes(): void {
     for (const key of [...this.keyboardPaths.keys()]) {
       if (key.startsWith('midi:')) this.keyboardPaths.delete(key);
+    }
+    for (const key of [...this.keyboardHeldKeys.keys()]) {
+      if (key.startsWith('midi:')) this.keyboardHeldKeys.delete(key);
     }
   }
 
@@ -1251,10 +1321,10 @@ export class Starlace implements PlayerVisual {
     return `midi:${sourceId ?? Math.round(noteNumber)}`;
   }
 
-  private startKeyboardPath(key: string, keyIndex: number, velocity = 0.74): void {
+  private startKeyboardPath(key: string, keyIndex: number, velocity = 0.74): boolean {
     const homeNoteIndex = this.keyboardHomeNoteIndex(keyIndex);
     const startNode = this.pickKeyboardStartNode(homeNoteIndex);
-    if (startNode < 0) return;
+    if (startNode < 0) return false;
 
     const state: KeyboardPathState = {
       keyIndex,
@@ -1263,32 +1333,41 @@ export class Starlace implements PlayerVisual {
       previousNode: -1,
       nextAt: this.elapsed,
       step: 0,
+      totalStages: this.keyboardPhraseJumps() + 1,
       phraseSeed: hash(keyIndex * 17.31 + this.elapsed * 0.71 + (this.keyboardStartCursor[homeNoteIndex] ?? 0) * 3.19),
-      recentNodes: [startNode],
+      recentNodes: [],
       velocity: clamp(velocity, 0.2, 1),
     };
+    this.keyboardHeldKeys.add(key);
+    this.fireKeyboardStage(state);
+    state.step = 1;
     state.nextAt = this.elapsed + this.keyboardStepDelay(state);
     this.keyboardPaths.set(key, state);
-    this.fireNode(startNode, state.velocity);
+    return true;
   }
 
   private processKeyboardPaths(): void {
     if (this.keyboardPaths.size === 0) return;
 
     let fired = 0;
-    for (const state of this.keyboardPaths.values()) {
+    for (const [key, state] of this.keyboardPaths) {
       if (this.elapsed < state.nextAt) continue;
-
-      const nextNode = this.pickKeyboardNextNode(state);
-      if (nextNode >= 0) {
-        state.previousNode = state.currentNode;
-        state.currentNode = nextNode;
-        state.step += 1;
-        this.rememberKeyboardNode(state, nextNode);
-        this.fireNode(nextNode, this.keyboardPathVelocity(state));
-        fired += 1;
+      if (state.step >= state.totalStages) {
+        this.keyboardPaths.delete(key);
+        continue;
       }
 
+      const firedCount = this.fireKeyboardStage(state);
+      if (firedCount > 0) {
+        state.step += 1;
+        fired += firedCount;
+      }
+
+      if (state.step >= state.totalStages) {
+        this.keyboardPaths.delete(key);
+        if (fired >= MAX_HITS_PER_FRAME) return;
+        continue;
+      }
       const delay = this.keyboardStepDelay(state);
       state.nextAt = Math.max(state.nextAt + delay, this.elapsed + delay * 0.65);
       if (fired >= MAX_HITS_PER_FRAME) return;

@@ -46,7 +46,20 @@ const ROBOT_JAM_MIN_DELAY = 1.85;
 const ROBOT_JAM_MAX_DELAY = 4.6;
 const ROBOT_STARLACE_JAM_MIN_DELAY = 2.35;
 const ROBOT_STARLACE_JAM_MAX_DELAY = 5.8;
-const ROBOT_JAM_NOTE_HOLD = 0.18;
+const ROBOT_JAM_SHORT_HOLD = 0.18;
+const ROBOT_JAM_LONG_HOLD_MIN = 0.68;
+const ROBOT_JAM_LONG_HOLD_MAX = 1.55;
+const ROBOT_JAM_STRUM_MAX_OFFSET = 0.16;
+// Scale-degree patterns. harmony.ts is locked to C major, so these stay
+// diatonic while still letting the robot imply simple chords.
+const ROBOT_JAM_SCALE_ROOTS = [0, 1, 3, 4, 5] as const;
+const ROBOT_JAM_CHORD_SHAPES: readonly (readonly number[])[] = [
+  [0],
+  [0, 2],
+  [0, 2, 4],
+  [0, 3, 5],
+  [2, 4, 6],
+];
 
 const INTRO_SCENE_DEFS = {
   opacity:    { default: 0.7, min: 0.08, max: 0.80, step: 0.01, label: 'opacity' },
@@ -63,9 +76,9 @@ const CABIN_DEFS = {
 const CABIN_LIGHTING_DEFS = {
   nightBlend:       { default: 0.74, min: 0, max: 2,    step: 0.01, label: 'lamp dim' },
   driftRate:        { default: 0.07, min: 0, max: 0.5,  step: 0.01, label: 'drift rate' },
-  flickerRate:      { default: 1.85, min: 0, max: 8,    step: 0.05, label: 'flicker rate' },
-  flickerAmplitude: { default: 0.20, min: 0, max: 0.65, step: 0.01, label: 'lamp amp' },
-  flutter:          { default: 0.05, min: 0, max: 0.25, step: 0.01, label: 'flutter' },
+  flickerRate:      { default: .5, min: 0, max: 2,    step: 0.05, label: 'flicker rate' },
+  flickerAmplitude: { default: 0.40, min: 0, max: 0.65, step: 0.01, label: 'lamp amp' },
+  flutter:          { default: 0.07, min: 0, max: 0.25, step: 0.01, label: 'flutter' },
 } as const;
 
 const ILLUSTRATED_CABIN_TEXTURES = [
@@ -90,6 +103,11 @@ type RobotJamNote = {
   noteNumber: number;
   sourceId: string;
   releaseAt: number;
+};
+type RobotJamPendingNote = RobotJamNote & {
+  startAt: number;
+  velocity: number;
+  seed: number;
 };
 type CabinPlateLayer = {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
@@ -202,7 +220,8 @@ export class Game {
   private robotJamMuted = false;
   private robotJamNextAt = 0;
   private robotJamStep = 0;
-  private robotJamActive: RobotJamNote | null = null;
+  private robotJamActive: RobotJamNote[] = [];
+  private robotJamPending: RobotJamPendingNote[] = [];
   private readonly localLeftPalm = new THREE.Vector3();
   private readonly localRightPalm = new THREE.Vector3();
   private readonly remoteLeftPalm = new THREE.Vector3();
@@ -1072,7 +1091,7 @@ export class Game {
     if (!isInstrumentId(id)) return;
     if (player === 'remote') {
       if (this.playerInstruments.remote === id) return;
-      this.releaseRobotJamNote();
+      this.releaseRobotJamNotes();
       this.robotJamNextAt = 0;
       if (this.introActive) {
         this.installPlayerVisualImmediate(player, id);
@@ -1221,14 +1240,13 @@ export class Game {
 
   private tickRobotJam(elapsed: number): void {
     if (this.partnerPresent || this.introActive || this.robotJamMuted) {
-      this.releaseRobotJamNote();
+      this.releaseRobotJamNotes();
       this.robotJamNextAt = 0;
       return;
     }
 
-    if (this.robotJamActive && elapsed >= this.robotJamActive.releaseAt) {
-      this.releaseRobotJamNote();
-    }
+    this.releaseDueRobotJamNotes(elapsed);
+    this.startDueRobotJamNotes(elapsed);
 
     const visual = this.playerVisuals.remote;
     if (!visual?.triggerMidiNoteOn) return;
@@ -1236,22 +1254,11 @@ export class Game {
       this.scheduleNextRobotJam(elapsed, 1.0);
       return;
     }
-    if (this.robotJamActive || elapsed < this.robotJamNextAt) return;
+    if (this.robotJamActive.length > 0 || this.robotJamPending.length > 0 || elapsed < this.robotJamNextAt) return;
 
     const instrument = this.playerInstruments.remote;
-    const sourceId = `robot:${this.robotJamStep}`;
-    const noteNumber = this.pickRobotJamNoteNumber(instrument);
-    const velocity = 0.34 + hash(this.robotJamStep * 19.19 + this.roomSeed * 0.017) * 0.30;
-    visual.triggerMidiNoteOn(noteNumber, velocity, sourceId);
-    this.cueRobotJamStrike(noteNumber, velocity, elapsed);
-    this.robotJamActive = {
-      instrument,
-      noteNumber,
-      sourceId,
-      releaseAt: elapsed + ROBOT_JAM_NOTE_HOLD,
-    };
-    this.robotJamStep += 1;
-    this.scheduleNextRobotJam(elapsed);
+    const noteCount = this.queueRobotJamGesture(elapsed, instrument);
+    this.scheduleNextRobotJam(elapsed, noteCount > 1 ? 0.85 : 0);
   }
 
   private scheduleNextRobotJam(elapsed: number, extraDelay = 0): void {
@@ -1263,31 +1270,97 @@ export class Game {
     this.robotJamNextAt = elapsed + extraDelay + min + swing * (max - min) + breath;
   }
 
-  private pickRobotJamNoteNumber(instrument: InstrumentId): number {
-    const targets = this.playerVisuals.remote?.getPerformanceTargets?.();
-    const targetCount = targets?.length ?? 0;
-    const span = instrument === 'drum'
-      ? Math.max(1, Math.min(targetCount || 12, 24))
-      : 9;
-    const pick = Math.floor(hash(this.robotJamStep * 7.91 + this.roomSeed * 0.023 + 0.44) * span);
-    return 36 + pick;
+  private queueRobotJamGesture(elapsed: number, instrument: InstrumentId): number {
+    const gestureIndex = this.robotJamStep;
+    const seed = gestureIndex * 17.17 + this.roomSeed * 0.029;
+    const shape = this.pickRobotJamShape(seed);
+    const root = ROBOT_JAM_SCALE_ROOTS[Math.floor(hash(seed + 0.11) * ROBOT_JAM_SCALE_ROOTS.length)] ?? 0;
+    const longHold = instrument === 'drum' && shape.length === 1 && hash(seed + 0.29) > 0.56;
+    const strum = shape.length > 1 ? ROBOT_JAM_STRUM_MAX_OFFSET * (0.35 + hash(seed + 0.41) * 0.65) : 0;
+
+    this.robotJamPending = shape.map((degreeOffset, index) => {
+      const startAt = elapsed + index * strum;
+      const hold = this.robotJamHoldDuration(instrument, seed, longHold);
+      return {
+        instrument,
+        noteNumber: 36 + root + degreeOffset,
+        sourceId: `robot:${gestureIndex}:${index}`,
+        startAt,
+        releaseAt: startAt + hold,
+        velocity: 0.30 + hash(seed + index * 1.91 + 0.67) * 0.32,
+        seed: seed + index * 3.07,
+      };
+    });
+    this.robotJamStep += 1;
+    return this.robotJamPending.length;
   }
 
-  private cueRobotJamStrike(noteNumber: number, velocity: number, elapsed: number): void {
+  private pickRobotJamShape(seed: number): readonly number[] {
+    const roll = hash(seed + 0.73);
+    if (roll < 0.56) return ROBOT_JAM_CHORD_SHAPES[0];
+    if (roll < 0.78) return ROBOT_JAM_CHORD_SHAPES[1];
+    if (roll < 0.92) return ROBOT_JAM_CHORD_SHAPES[2];
+    return ROBOT_JAM_CHORD_SHAPES[3 + Math.floor(hash(seed + 1.31) * 2)] ?? ROBOT_JAM_CHORD_SHAPES[2];
+  }
+
+  private robotJamHoldDuration(instrument: InstrumentId, seed: number, longHold: boolean): number {
+    if (instrument !== 'drum') return ROBOT_JAM_SHORT_HOLD;
+    if (!longHold) return ROBOT_JAM_SHORT_HOLD + hash(seed + 2.17) * 0.18;
+    return ROBOT_JAM_LONG_HOLD_MIN + hash(seed + 2.17) * (ROBOT_JAM_LONG_HOLD_MAX - ROBOT_JAM_LONG_HOLD_MIN);
+  }
+
+  private startDueRobotJamNotes(elapsed: number): void {
+    if (this.robotJamPending.length === 0) return;
+    const stillPending: RobotJamPendingNote[] = [];
+    const visual = this.playerVisuals.remote;
+    for (const note of this.robotJamPending) {
+      if (elapsed < note.startAt) {
+        stillPending.push(note);
+        continue;
+      }
+      visual?.triggerMidiNoteOn?.(note.noteNumber, note.velocity, note.sourceId);
+      this.cueRobotJamStrike(note.noteNumber, note.velocity, elapsed, note.seed);
+      this.robotJamActive.push({
+        instrument: note.instrument,
+        noteNumber: note.noteNumber,
+        sourceId: note.sourceId,
+        releaseAt: note.releaseAt,
+      });
+    }
+    this.robotJamPending = stillPending;
+  }
+
+  private cueRobotJamStrike(noteNumber: number, velocity: number, elapsed: number, seed: number): void {
     const targets = this.playerVisuals.remote?.getPerformanceTargets?.();
     if (!targets?.length) return;
-    const hand: Handedness = hash(this.robotJamStep * 5.37 + this.roomSeed * 0.011) < 0.5 ? 'left' : 'right';
+    const hand: Handedness = hash(seed + 1.03) < 0.5 ? 'left' : 'right';
     const index = positiveModulo(Math.round(noteNumber) - 36, targets.length);
     this.remoteRig.worldToPosePoint(hand, targets[index], this.robotJamStrikeTarget);
     this.robotMotion.cueStrike(hand, this.robotJamStrikeTarget, clamp(velocity, 0, 1), elapsed);
   }
 
-  private releaseRobotJamNote(): void {
-    const active = this.robotJamActive;
-    if (!active) return;
-    const visual = this.playerVisualCache.remote[active.instrument] ?? this.playerVisuals.remote;
-    visual?.triggerMidiNoteOff?.(active.noteNumber, active.sourceId);
-    this.robotJamActive = null;
+  private releaseDueRobotJamNotes(elapsed: number): void {
+    if (this.robotJamActive.length === 0) return;
+    const stillActive: RobotJamNote[] = [];
+    for (const note of this.robotJamActive) {
+      if (elapsed < note.releaseAt) {
+        stillActive.push(note);
+        continue;
+      }
+      this.releaseRobotJamNote(note);
+    }
+    this.robotJamActive = stillActive;
+  }
+
+  private releaseRobotJamNotes(): void {
+    this.robotJamPending = [];
+    for (const note of this.robotJamActive) this.releaseRobotJamNote(note);
+    this.robotJamActive = [];
+  }
+
+  private releaseRobotJamNote(note: RobotJamNote): void {
+    const visual = this.playerVisualCache.remote[note.instrument] ?? this.playerVisuals.remote;
+    visual?.triggerMidiNoteOff?.(note.noteNumber, note.sourceId);
   }
 
   private updateRobotInstrumentTargets(): RobotPerformanceContext | undefined {

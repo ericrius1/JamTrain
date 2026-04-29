@@ -59,8 +59,16 @@ const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
   dadras: 'Dadras',
 };
 
+// The spawn queue is baked into TSL uniform arrays and the emit compute
+// dispatch size, so changing the live stream cap rebuilds that small emit
+// pipeline. The particle pool itself stays fixed.
+const DEFAULT_MAX_SPAWNS_PER_FRAME = 256;
+const MIN_CONFIGURABLE_SPAWNS_PER_FRAME = 16;
+const MAX_CONFIGURABLE_SPAWNS_PER_FRAME = 2048;
+
 export const SCULPTOR_DEFS = {
   particleCount:      { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
+  maxSpawnsPerFrame:  { default: DEFAULT_MAX_SPAWNS_PER_FRAME, min: MIN_CONFIGURABLE_SPAWNS_PER_FRAME, max: MAX_CONFIGURABLE_SPAWNS_PER_FRAME, step: 16, folder: 'Particles', label: 'stream cap / frame' },
   particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
@@ -104,11 +112,6 @@ const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
   drumMelody: 'aizawa',
 };
 
-// Cap on how many particles we can spawn in a single frame. Sized for the
-// instruments' bursty emit: Drum hits emit ~24, Starlace plucks ~20-34. With
-// two players hitting hard at the same time we still stay under ~120.
-const MAX_SPAWNS_PER_FRAME = 256;
-
 /**
  * GPU-compute particle sculpture. All particle state lives in TSL
  * `instancedArray` storage buffers; one compute pass injects new particles
@@ -127,6 +130,7 @@ export class EnergySculptor implements EnergySink {
   private material!: THREE.SpriteNodeMaterial;
 
   private count: number;
+  private spawnQueueCapacity = DEFAULT_MAX_SPAWNS_PER_FRAME;
   private spawnCursorCpu = 0;
   private pendingEmits: EmitRequest[] = [];
 
@@ -285,6 +289,7 @@ export class EnergySculptor implements EnergySink {
     this.center = center.clone();
     this.params = { ...Object.fromEntries(Object.entries(SCULPTOR_DEFS).map(([k, d]) => [k, d.default])) } as SculptorParams;
     this.count = this.params.particleCount;
+    this.spawnQueueCapacity = clampSpawnQueueCapacity(this.params.maxSpawnsPerFrame);
 
     this.allocateBuffers();
     this.allocateSpawnQueue();
@@ -323,6 +328,7 @@ export class EnergySculptor implements EnergySink {
         projectorBaseY: () => this.layoutProjectorRings(),
         particleSize: v => { this.particleSizeUniform.value = v; },
         particleOpacity: v => { this.particleOpacityUniform.value = v; },
+        maxSpawnsPerFrame: v => { this.applyMaxSpawnsPerFrame(v); },
         speedGlow: v => { this.speedGlowUniform.value = v; },
         stretchScale: v => { this.stretchScaleUniform.value = v; },
         particleLifetime: v => { this.applyParticleLifetime(v); },
@@ -617,7 +623,11 @@ export class EnergySculptor implements EnergySink {
   }
 
   private allocateSpawnQueue(): void {
-    for (let i = 0; i < MAX_SPAWNS_PER_FRAME; i += 1) {
+    this.spawnPosArray = [];
+    this.spawnVelArray = [];
+    this.spawnColorArray = [];
+    this.spawnMetaArray = [];
+    for (let i = 0; i < this.spawnQueueCapacity; i += 1) {
       this.spawnPosArray.push(new THREE.Vector3());
       this.spawnVelArray.push(new THREE.Vector3());
       this.spawnColorArray.push(new THREE.Vector3());
@@ -634,7 +644,8 @@ export class EnergySculptor implements EnergySink {
     const velocities = this.velocitiesBuffer;
     const colors = this.colorsBuffer;
     const meta = this.metaBuffer;
-    const spawnSearchSteps = Math.ceil(this.count / MAX_SPAWNS_PER_FRAME);
+    const spawnQueueCapacity = this.spawnQueueCapacity;
+    const spawnSearchSteps = Math.ceil(this.count / spawnQueueCapacity);
 
     // Emit pass: prefer dead slots, but fall back to the ring cursor when the
     // pool is full. Fresh instrument hits should always show up; older
@@ -662,7 +673,7 @@ export class EnergySculptor implements EnergySink {
       Loop(spawnSearchSteps, ({ i: scan }) => {
         const slot = spawnCursorU
           .add(i)
-          .add(scan.toUint().mul(uint(MAX_SPAWNS_PER_FRAME)))
+          .add(scan.toUint().mul(uint(spawnQueueCapacity)))
           .mod(uint(this.count));
         const slotMeta = meta.element(slot);
         const isDead = slotMeta.y.lessThanEqual(0).or(slotMeta.x.greaterThanEqual(slotMeta.y));
@@ -676,7 +687,7 @@ export class EnergySculptor implements EnergySink {
         writeSpawn(fallbackSlot);
       });
     });
-    this.emitCompute = emitFn().compute(MAX_SPAWNS_PER_FRAME);
+    this.emitCompute = emitFn().compute(spawnQueueCapacity);
 
     // Helper: branch over the attractor index uniform and assign the matching
     // flow vector. Used twice — once for the current attractor and once for
@@ -1260,8 +1271,18 @@ export class EnergySculptor implements EnergySink {
     this.lifeMaxUniform.value = lifetime;
   }
 
+  private applyMaxSpawnsPerFrame(value = this.params.maxSpawnsPerFrame): void {
+    const next = clampSpawnQueueCapacity(value);
+    this.params.maxSpawnsPerFrame = next;
+    if (next === this.spawnQueueCapacity && this.spawnPosArray.length === next) return;
+    this.spawnQueueCapacity = next;
+    this.allocateSpawnQueue();
+    this.buildComputePipelines();
+  }
+
   private fillSpawnQueue(): void {
     let cursor = 0;
+    const frameCap = this.spawnQueueCapacity;
     const lifeBase = Math.max(MIN_PARTICLE_LIFETIME, this.lifeMaxUniform.value);
     const sphereRadius = this.fieldSphereRadiusUniform.value;
     const sphereCenterY = this.fieldSphereCenterYUniform.value;
@@ -1269,8 +1290,8 @@ export class EnergySculptor implements EnergySink {
 
     for (let reqIndex = this.pendingEmits.length - 1; reqIndex >= 0; reqIndex -= 1) {
       const req = this.pendingEmits[reqIndex];
-      if (cursor >= MAX_SPAWNS_PER_FRAME) break;
-      const allowed = Math.min(req.count, MAX_SPAWNS_PER_FRAME - cursor);
+      if (cursor >= frameCap) break;
+      const allowed = Math.min(req.count, frameCap - cursor);
       let dirX = this.center.x - req.origin.x;
       let dirY = sphereCenterWorldY - req.origin.y;
       let dirZ = this.center.z - req.origin.z;
@@ -1435,4 +1456,9 @@ function lerp(a: number, b: number, t: number): number {
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
+}
+
+function clampSpawnQueueCapacity(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_MAX_SPAWNS_PER_FRAME;
+  return Math.max(MIN_CONFIGURABLE_SPAWNS_PER_FRAME, Math.min(MAX_CONFIGURABLE_SPAWNS_PER_FRAME, Math.round(value)));
 }
