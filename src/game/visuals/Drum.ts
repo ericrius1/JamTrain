@@ -926,8 +926,7 @@ export class Drum implements PlayerVisual {
   private orbIndexForMidiNote(noteNumber: number): number {
     const count = this.orbs.length;
     if (count <= 0 || !Number.isFinite(noteNumber)) return -1;
-    const keyIndex = positiveModulo(Math.round(noteNumber) - 36, count);
-    return count - 1 - keyIndex;
+    return positiveModulo(Math.round(noteNumber) - 36, count);
   }
 
   private midiSourceId(noteNumber: number, sourceId?: string): string {

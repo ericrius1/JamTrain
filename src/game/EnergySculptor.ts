@@ -63,7 +63,7 @@ export const SCULPTOR_DEFS = {
   particleCount:      { default: 24576, min: 4096, max: 65536, step: 256, label: 'particle pool', hidden: true },
   particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
-  particleLifetime:   { default: 30,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
+  particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   fadeFraction:       { default: 0.04,  min: 0.01,  max: 0.35, step: 0.01,  folder: 'Particles', label: 'end fade fraction' },
 
   fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Settling', label: 'field strength' },
@@ -315,7 +315,6 @@ export class EnergySculptor implements EnergySink {
       title: 'Energy Sculptor',
       params: this.params,
       onChange: {
-        synchronyRingColor: v => this.synchronyRingMaterial?.color.set(v),
         timerRingColor: v => this.projectorRingMaterial?.color.set(v),
         timerRingRadius: () => this.layoutProjectorRings(),
         projectorRingCount: () => this.rebuildProjectorRings(),
@@ -398,7 +397,6 @@ export class EnergySculptor implements EnergySink {
 
   fireSynchrony(): void {
     this.synchronyBoost = 1;
-    this.synchronyRingAge = 0;
   }
 
   getSynchronyBoost(): number {
@@ -434,7 +432,6 @@ export class EnergySculptor implements EnergySink {
     // Synchrony only drives the decorative ring. Particle motion is governed
     // by the field plus the lifetime-based settling controls.
     this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
-    this.tickSynchronyRing(delta);
     this.updateProjectorRing();
     this.tickSampleRotation();
     this.tickAttractorCrossfade(delta);
@@ -473,11 +470,6 @@ export class EnergySculptor implements EnergySink {
     this.mesh.geometry.dispose();
     this.material.dispose();
     this.mesh.removeFromParent();
-    if (this.synchronyRing) {
-      this.synchronyRing.geometry.dispose();
-      this.synchronyRingMaterial?.dispose();
-      this.synchronyRing.removeFromParent();
-    }
     for (const ring of this.projectorRings) ring.removeFromParent();
     this.projectorRings.length = 0;
     this.projectorRingGeom?.dispose();
@@ -913,24 +905,6 @@ export class EnergySculptor implements EnergySink {
     this.scene.add(this.mesh);
   }
 
-  private buildSynchronyRing(): void {
-    this.synchronyRingMaterial = new THREE.MeshBasicMaterial({
-      color: this.params.synchronyRingColor,
-      transparent: true,
-      opacity: 0,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      side: THREE.DoubleSide,
-    });
-    const ringGeom = new THREE.RingGeometry(0.12, 0.16, 96);
-    this.synchronyRing = new THREE.Mesh(ringGeom, this.synchronyRingMaterial);
-    this.synchronyRing.position.copy(this.center);
-    this.synchronyRing.rotation.x = Math.PI / 2;
-    this.synchronyRing.frustumCulled = false;
-    this.synchronyRing.renderOrder = 33;
-    this.scene.add(this.synchronyRing);
-  }
-
   private buildProjectorRings(): void {
     const segs = EnergySculptor.TIMER_SEGMENTS;
     const ringPositions = new Float32Array((segs + 1) * 3);
@@ -1214,20 +1188,6 @@ export class EnergySculptor implements EnergySink {
       this.crossfadeWeightUniform.value = 0;
       this.fromPreset = this.toPreset;
     }
-  }
-
-  private tickSynchronyRing(delta: number): void {
-    if (!this.synchronyRing || !this.synchronyRingMaterial) return;
-    this.synchronyRingAge += delta;
-    const lifeWindow = 0.85;
-    if (this.synchronyRingAge >= lifeWindow) {
-      this.synchronyRingMaterial.opacity = 0;
-      return;
-    }
-    const t = this.synchronyRingAge / lifeWindow;
-    const radius = 0.18 + t * 0.95;
-    this.synchronyRing.scale.setScalar(radius);
-    this.synchronyRingMaterial.opacity = (1 - t) * 0.9;
   }
 
   private applyFieldVolumeParams(): void {

@@ -21,7 +21,7 @@ export function drumKeyLabelsForOrbCount(orbCount: number): string[] {
 export function drumKeyboardIndexForKey(key: string, orbCount: number): number | undefined {
   const keyIndex = DRUM_KEY_RANGE.indexOf(key.toLowerCase() as (typeof DRUM_KEY_RANGE)[number]);
   if (keyIndex < 0 || keyIndex >= orbCount) return undefined;
-  return orbCount - 1 - keyIndex;
+  return keyIndex;
 }
 
 function labelForDrumKey(key: string): string {
