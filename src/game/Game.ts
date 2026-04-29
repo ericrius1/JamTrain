@@ -65,7 +65,7 @@ type GameUi = {
   musicStatus: HTMLElement;
 };
 
-type CameraMode = 'game' | 'orbit';
+export type CameraMode = 'game' | 'orbit';
 type PlayerSlot = 'local' | 'remote';
 
 function makeHandContactPoints(): HandContactPoint[] {

@@ -1,7 +1,7 @@
 import './style.css';
 import { TitlePlaque } from './components/TitlePlaque';
 import { PlayerPlaque } from './components/PlayerPlaque';
-import type { CameraMode } from './components/EngineRoomDrawer';
+import type { CameraMode } from '../game/Game';
 import { VideoPanel } from './components/VideoPanel';
 import type { HandTracker } from '../game/handTracking';
 import { createCornerFiligree } from './components/CornerFiligree';

@@ -31,9 +31,6 @@ export const HAND_SYNTH_DEFS = {
   pluckDb:       { default: -9,    min: -24, max: 4,    step: 0.5,  label: 'attack dB' },
   duetDb:        { default: -19,   min: -36, max: 0,    step: 0.5,  label: 'duet dB' },
   mouseEnabled:  { type: 'boolean', default: true,  label: 'mouse plays' },
-  chimeDb:       { default: 4,     min: -30, max: 12,   step: 0.5,  label: 'chime dB' },
-  chimeWarmthMin:{ default: 600,   min: 120, max: 3000, step: 10,   label: 'chime warmth min Hz' },
-  chimeWarmthMax:{ default: 6800,  min: 1200, max: 12000, step: 50, label: 'chime warmth max Hz' },
   orbDb:         { default: -2,    min: -30, max: 12,   step: 0.5,  label: 'orb dB' },
   orbDecay:      { default: 3.2,   min: 0.4, max: 6,    step: 0.05, label: 'orb decay s' },
   orbHarmonics:  { default: 0.38,  min: 0,   max: 1,    step: 0.01, label: 'orb partials' },
@@ -65,8 +62,6 @@ const HAND_Y_LOW = 0.4;
 const HAND_Y_HIGH = 1.8;
 const NOTE_HYSTERESIS = 0.18;
 const HIT_BUDGET_WINDOW = 0.2;
-const CHIME_MAX_HITS_PER_WINDOW = 6;
-const CHIME_MAX_ACTIVE_VOICES = 12;
 const ORB_MAX_HITS_PER_WINDOW = 12;
 const ORB_MAX_ACTIVE_VOICES = 24;
 const STARLACE_MAX_HITS_PER_WINDOW = 5;
@@ -118,22 +113,6 @@ type Voice = {
   pitch: number;
   expression: number;
   tension: number;
-};
-
-type ChimeVoice = {
-  synth: any;       // Tone.PolySynth(Tone.FMSynth) — bell-like
-  filter: any;      // lowpass, freq driven by warmth
-  panner: any;
-  dryGain: any;     // gated to 0 when this player isn't on chime
-  wetSend: any;     // into reverb
-  reverb: any;
-  reverbReturn: any;
-  pulse: number;
-  energy: number;
-  warmth: number;
-  lastHitCount: number;
-  decay: number;    // accumulates over time, used for gentle energy drift
-  lastNoteIdx: number;
 };
 
 type OrbVoice = {
@@ -197,13 +176,8 @@ export class HandSynthEngine {
 
   private master?: any;
   private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
-  private chimeVoices: Record<PlayerKey, ChimeVoice | null> = { local: null, remote: null };
   private orbVoices: Record<PlayerKey, OrbVoice | null> = { local: null, remote: null };
   private starlaceVoices: Record<PlayerKey, StarlaceVoice | null> = { local: null, remote: null };
-  private chimeBudgets: Record<PlayerKey, HitBudget> = {
-    local: { windowStart: 0, used: 0, dropped: 0 },
-    remote: { windowStart: 0, used: 0, dropped: 0 },
-  };
   private orbBudgets: Record<PlayerKey, HitBudget> = {
     local: { windowStart: 0, used: 0, dropped: 0 },
     remote: { windowStart: 0, used: 0, dropped: 0 },
@@ -247,9 +221,6 @@ export class HandSynthEngine {
     pluckDb: HAND_SYNTH_DEFS.pluckDb.default,
     duetDb: HAND_SYNTH_DEFS.duetDb.default,
     mouseEnabled: HAND_SYNTH_DEFS.mouseEnabled.default,
-    chimeDb: HAND_SYNTH_DEFS.chimeDb.default,
-    chimeWarmthMin: HAND_SYNTH_DEFS.chimeWarmthMin.default,
-    chimeWarmthMax: HAND_SYNTH_DEFS.chimeWarmthMax.default,
     orbDb: HAND_SYNTH_DEFS.orbDb.default,
     orbDecay: HAND_SYNTH_DEFS.orbDecay.default,
     orbHarmonics: HAND_SYNTH_DEFS.orbHarmonics.default,
@@ -378,7 +349,6 @@ export class HandSynthEngine {
     await Promise.all(
       [
         ...PLAYER_KEYS.map(key => this.voices[key]?.reverb?.ready),
-        ...PLAYER_KEYS.map(key => this.chimeVoices[key]?.reverb?.ready),
         ...PLAYER_KEYS.map(key => this.orbVoices[key]?.reverb?.ready),
         ...PLAYER_KEYS.map(key => this.starlaceVoices[key]?.reverb?.ready),
       ]
@@ -395,7 +365,6 @@ export class HandSynthEngine {
     if (!this.params.enabled) {
       for (const key of PLAYER_KEYS) {
         this.silenceVoice(key);
-        this.silenceChime(key);
         this.silenceOrb(key);
         this.silenceStarlace(key);
       }
@@ -431,8 +400,6 @@ export class HandSynthEngine {
     for (const key of PLAYER_KEYS) {
       const v = this.voices[key];
       if (v && v.pulse > max) max = v.pulse;
-      const c = this.chimeVoices[key];
-      if (c && c.pulse > max) max = c.pulse;
       const o = this.orbVoices[key];
       if (o && o.pulse > max) max = o.pulse;
       const s = this.starlaceVoices[key];
@@ -444,7 +411,6 @@ export class HandSynthEngine {
   silenceAll(): void {
     for (const key of PLAYER_KEYS) {
       this.silenceVoice(key);
-      this.silenceChime(key);
       this.silenceOrb(key);
       this.silenceStarlace(key);
     }
@@ -456,7 +422,6 @@ export class HandSynthEngine {
     this.muted[player] = muted;
     if (muted) {
       this.silenceVoice(player);
-      this.silenceChime(player);
       this.silenceOrb(player);
       this.silenceStarlace(player);
     } else {
@@ -471,10 +436,9 @@ export class HandSynthEngine {
   setInstrument(player: PlayerKey, id: InstrumentId): void {
     if (this.pendingInstruments[player] === id) return;
     this.pendingInstruments[player] = id;
-    // Hard-silence the previous chain immediately; updateVoice/updateChimeVoice/
-    // updateOrbVoice will bring the new chain to life on the next frame.
+    // Hard-silence the previous chain immediately; updateOrbVoice/
+    // updateStarlaceVoice will bring the new chain to life on the next frame.
     this.silenceVoice(player);
-    this.silenceChime(player);
     this.silenceOrb(player);
     this.silenceStarlace(player);
     if (this.running) this.ensureInstrumentVoice(player);
@@ -527,12 +491,6 @@ export class HandSynthEngine {
     return this.voices[player];
   }
 
-  private ensureChimeVoice(player: PlayerKey): ChimeVoice | null {
-    if (!this.tone || !this.master) return null;
-    if (!this.chimeVoices[player]) this.chimeVoices[player] = this.createChimeVoice(player);
-    return this.chimeVoices[player];
-  }
-
   private ensureOrbVoice(player: PlayerKey): OrbVoice | null {
     if (!this.tone || !this.master) return null;
     if (!this.orbVoices[player]) this.orbVoices[player] = this.createOrbVoice(player);
@@ -561,33 +519,16 @@ export class HandSynthEngine {
 
   private reportHitBudgetDrops(): void {
     if (this.elapsed - this.hitBudgetLogAt < 4) return;
-    const chimeDropped = this.chimeBudgets.local.dropped + this.chimeBudgets.remote.dropped;
     const orbDropped = this.orbBudgets.local.dropped + this.orbBudgets.remote.dropped;
     const starlaceDropped = this.starlaceBudgets.local.dropped + this.starlaceBudgets.remote.dropped;
-    if (chimeDropped > 0 || orbDropped > 0 || starlaceDropped > 0) {
-      console.debug('[handSynth] dropped excess hit events', { chimeDropped, orbDropped, starlaceDropped });
+    if (orbDropped > 0 || starlaceDropped > 0) {
+      console.debug('[handSynth] dropped excess hit events', { orbDropped, starlaceDropped });
       for (const key of PLAYER_KEYS) {
-        this.chimeBudgets[key].dropped = 0;
         this.orbBudgets[key].dropped = 0;
         this.starlaceBudgets[key].dropped = 0;
       }
     }
     this.hitBudgetLogAt = this.elapsed;
-  }
-
-  // Chime instrument retired in drum+starlace migration — method kept as a
-  // no-op stub so any stale call sites don't crash. Remove fully once we've
-  // confirmed no remaining callers.
-  triggerChimeHit(_player: PlayerKey, _frequency: number, _velocity: number, _gemIndex = -1): void {
-    return;
-  }
-
-  /** Set the left-hand-driven warmth for a player's chime voice. 0 = darker,
-   *  1 = brighter. Smoothing is handled internally. */
-  setChimeWarmth(player: PlayerKey, warmth: number): void {
-    const chime = this.chimeVoices[player];
-    if (!chime) return;
-    chime.warmth = clamp(warmth, 0, 1);
   }
 
   setOrbGesture(player: PlayerKey, gesture: OrbGestureState): void {
@@ -720,8 +661,6 @@ export class HandSynthEngine {
   getActivity(): number {
     let local = this.voices.local?.energy ?? 0;
     let remote = this.voices.remote?.energy ?? 0;
-    local = Math.max(local, this.chimeVoices.local?.energy ?? 0);
-    remote = Math.max(remote, this.chimeVoices.remote?.energy ?? 0);
     local = Math.max(local, this.orbVoices.local?.energy ?? 0);
     remote = Math.max(remote, this.orbVoices.remote?.energy ?? 0);
     local = Math.max(local, this.starlaceVoices.local?.energy ?? 0);
@@ -741,11 +680,6 @@ export class HandSynthEngine {
       if (v) {
         this.disposeVoice(v);
         this.voices[key] = null;
-      }
-      const c = this.chimeVoices[key];
-      if (c) {
-        this.disposeChimeVoice(c);
-        this.chimeVoices[key] = null;
       }
       const o = this.orbVoices[key];
       if (o) {
@@ -845,117 +779,13 @@ export class HandSynthEngine {
     };
   }
 
-  private createChimeVoice(key: PlayerKey): ChimeVoice {
-    const Tone = this.tone!;
-    const panner = new Tone.Panner(key === 'local' ? -0.18 : 0.18).connect(this.master);
-    const dryGain = new Tone.Gain(0).connect(panner);
-    const reverbReturn = new Tone.Gain(0.55).connect(panner);
-    const reverb = new Tone.Reverb({
-      decay: 6.5,
-      preDelay: 0.02,
-      wet: 1,
-    }).connect(reverbReturn);
-    const wetSend = new Tone.Gain(0).connect(reverb);
-    const filter = new Tone.Filter({
-      frequency: this.params.chimeWarmthMin,
-      type: 'lowpass',
-      rolloff: -12,
-      Q: 0.6,
-    });
-    filter.connect(dryGain);
-    filter.connect(wetSend);
-
-    // FM bell — short percussive attack, long decay. The harmonicity & mod
-    // index are tuned to a glassy chime tone that blends with the loom but
-    // reads as distinct.
-    const synth = new Tone.PolySynth(Tone.FMSynth, {
-      harmonicity: 3.01,
-      modulationIndex: 11,
-      oscillator: { type: 'sine' },
-      envelope: { attack: 0.001, decay: 1.6, sustain: 0, release: 1.8 },
-      modulation: { type: 'sine' },
-      modulationEnvelope: { attack: 0.002, decay: 0.18, sustain: 0, release: 0.2 },
-      volume: this.params.chimeDb,
-    }).connect(filter);
-    synth.maxPolyphony = CHIME_MAX_ACTIVE_VOICES;
-
-    return {
-      synth,
-      filter,
-      panner,
-      dryGain,
-      wetSend,
-      reverb,
-      reverbReturn,
-      pulse: 0,
-      energy: 0,
-      warmth: 0.5,
-      lastHitCount: 0,
-      decay: 0,
-      lastNoteIdx: -1,
-    };
-  }
-
-  private updateChimeVoice(player: PlayerKey, delta: number): void {
-    const chime = this.chimeVoices[player];
-    if (!chime || !this.tone) return;
-    if (this.muted[player]) {
-      this.silenceChime(player);
-      return;
-    }
-
-    // Filter cutoff from warmth — exponential mapping so low warmth doesn't
-    // sound choked.
-    const warmth = clamp(chime.warmth, 0, 1);
-    const minHz = this.params.chimeWarmthMin;
-    const maxHz = this.params.chimeWarmthMax;
-    const cutoff = minHz * Math.pow(maxHz / minHz, warmth);
-    chime.filter.frequency.rampTo(cutoff, PARAM_RAMP);
-
-    // Wet send rises with energy — more reverb tail when actively playing.
-    const wet = clamp(0.18 + chime.energy * 0.6, 0, 1);
-    chime.wetSend.gain.rampTo(wet * this.params.reverbWetMax, PARAM_RAMP * 2);
-    chime.dryGain.gain.rampTo(0.95, PARAM_RAMP);
-
-    // Decay pulse and energy each frame.
-    chime.pulse = Math.max(0, chime.pulse - delta * 3.4);
-    chime.energy = Math.max(0, chime.energy - delta * 0.55);
-  }
-
-  private silenceChime(player: PlayerKey): void {
-    const chime = this.chimeVoices[player];
-    if (!chime) return;
-    try {
-      chime.synth.releaseAll?.(this.tone?.now?.());
-    } catch (err) {
-      console.warn('[handSynth] chime releaseAll failed', err);
-    }
-    this.setGainNow(chime.dryGain, 0);
-    this.setGainNow(chime.wetSend, 0);
-    chime.pulse = 0;
-    chime.energy = 0;
-  }
-
-  private disposeChimeVoice(chime: ChimeVoice): void {
-    try { chime.synth?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
-    chime.synth?.dispose?.();
-    chime.filter?.dispose?.();
-    chime.panner?.dispose?.();
-    chime.dryGain?.dispose?.();
-    chime.wetSend?.dispose?.();
-    chime.reverb?.dispose?.();
-    chime.reverbReturn?.dispose?.();
-  }
-
   private applyInstrumentRouting(player: PlayerKey): void {
     if (!this.running) return;
     const instrument = this.pendingInstruments[player];
     const voice = this.voices[player];
-    const chime = this.chimeVoices[player];
     const orb = this.orbVoices[player];
     const starlace = this.starlaceVoices[player];
     if (voice) this.releaseVoice(voice, false);
-    if (chime) this.silenceChime(player);
     if (instrument === 'starlace') {
       if (orb) this.silenceOrb(player);
     } else {
@@ -1728,7 +1558,6 @@ export class HandSynthEngine {
         shimmer: () => this.applyShimmer(),
         pluckDb: () => this.applyPluckGain(),
         duetDb:  () => this.applyDuetVolume(),
-        chimeDb: () => this.applyChimeVolume(),
         orbDb:   () => this.applyOrbVolume(),
         starlaceDb: () => this.applyStarlaceVolume(),
         starlaceAttack: () => this.applyStarlaceEnvelope(),
@@ -1771,13 +1600,6 @@ export class HandSynthEngine {
 
   private applyDuetVolume(): void {
     if (this.duetSynth?.volume) this.duetSynth.volume.rampTo(this.params.duetDb, PARAM_RAMP);
-  }
-
-  private applyChimeVolume(): void {
-    for (const key of PLAYER_KEYS) {
-      const c = this.chimeVoices[key];
-      if (c?.synth?.volume) c.synth.volume.rampTo(this.params.chimeDb, PARAM_RAMP);
-    }
   }
 
   private applyOrbVolume(): void {
