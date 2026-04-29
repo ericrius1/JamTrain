@@ -18,11 +18,13 @@ export class WebRTCClient {
   private pendingIceCandidates: RTCIceCandidateInit[] = [];
   private remoteDescriptionSet = false;
   private makingOffer = false;
+  private queuedNegotiation = false;
   private disposed = false;
   // Cloned video track that we hand to the peer connection. Kept independent
   // of HandTracker's original so the user can have local tracking on without
   // sharing video with the partner (and vice versa).
   private videoSenderTrack?: MediaStreamTrack;
+  private audioSenderTrack?: MediaStreamTrack;
   // Pending share state — applied as soon as a video sender track exists.
   private desiredShareVideo = false;
   private poseChannel?: RTCDataChannel;
@@ -71,13 +73,18 @@ export class WebRTCClient {
 
   /** Called by Game once the local MediaStream becomes available. */
   notifyLocalStreamReady(): void {
-    if (this.partnerIdentity && !this.pc) this.maybeStartNegotiation();
+    if (!this.partnerIdentity) return;
+    if (!this.pc) {
+      this.maybeStartNegotiation();
+      return;
+    }
+    this.syncLocalTracksAndRenegotiate('local stream ready');
   }
 
   /**
    * Called the first time the mic becomes available — typically when the user
-   * clicks the Mic button. If a peer connection already exists without an
-   * audio sender, rebuild it so the mic track ends up in the negotiated SDP.
+   * clicks the Mic button. If a peer connection already exists, renegotiate
+   * so the mic track ends up in the SDP.
    */
   notifyMicReady(): void {
     if (!this.partnerIdentity) return;
@@ -85,11 +92,7 @@ export class WebRTCClient {
       this.maybeStartNegotiation();
       return;
     }
-    const hasAudioSender = this.pc.getSenders().some(s => s.track?.kind === 'audio');
-    if (hasAudioSender) return;
-    console.info('[webrtc] mic became available; restarting peer to attach');
-    this.teardownPeer();
-    this.maybeStartNegotiation();
+    this.syncLocalTracksAndRenegotiate('mic ready');
   }
 
   dispose(): void {
@@ -141,14 +144,12 @@ export class WebRTCClient {
       `(local=${this.multiplayer.localId.slice(0, 10)} partner=${this.partnerIdentity.slice(0, 10)})`
     );
 
+    if (this.pc) return;
+
     this.pc = this.createPeerConnection();
     if (!this.pc) return;
 
-    if (!this.attachLocalTracks(this.pc)) {
-      console.warn('[webrtc] no local stream yet; deferring negotiation');
-      this.teardownPeer();
-      return;
-    }
+    this.syncLocalTracks(this.pc);
 
     if (offerer) {
       // Unreliable + unordered keeps latency tight — a dropped pose frame is
@@ -160,7 +161,7 @@ export class WebRTCClient {
         maxRetransmits: 0,
       });
       this.wirePoseChannel(channel);
-      void this.createAndSendOffer();
+      void this.createAndSendOffer('initial');
     }
   }
 
@@ -174,11 +175,17 @@ export class WebRTCClient {
     }
 
     pc.ontrack = event => {
-      const [stream] = event.streams;
-      if (!stream) return;
       console.info('[webrtc] received remote track', event.track.kind, event.track.id);
-      this.remoteStream = stream;
-      for (const listener of this.remoteListeners) listener(stream);
+      if (!this.remoteStream) this.remoteStream = new MediaStream();
+      if (!this.remoteStream.getTrackById(event.track.id)) {
+        this.remoteStream.addTrack(event.track);
+      }
+      event.track.onended = () => {
+        if (!this.remoteStream) return;
+        this.remoteStream.removeTrack(event.track);
+        this.emitRemoteStream();
+      };
+      this.emitRemoteStream();
     };
 
     pc.onicecandidate = event => {
@@ -211,40 +218,64 @@ export class WebRTCClient {
     return pc;
   }
 
-  private attachLocalTracks(pc: RTCPeerConnection): boolean {
+  private syncLocalTracksAndRenegotiate(reason: string): void {
+    if (!this.pc || !this.partnerIdentity) return;
+    const changed = this.syncLocalTracks(this.pc);
+    if (changed) void this.createAndSendOffer(reason);
+  }
+
+  private syncLocalTracks(pc: RTCPeerConnection): boolean {
+    let changed = false;
     const videoStream = this.getLocalStream();
     const micStream = this.getMicStream();
-    const primary = videoStream ?? micStream;
-    if (!primary) return false;
 
-    if (videoStream) {
-      for (const track of videoStream.getVideoTracks()) {
+    if (!this.desiredShareVideo && this.videoSenderTrack) {
+      const sender = pc.getSenders().find(s => s.track === this.videoSenderTrack);
+      if (sender) {
+        try {
+          pc.removeTrack(sender);
+          changed = true;
+        } catch (err) {
+          console.warn('[webrtc] removeTrack failed', err);
+        }
+      }
+      try { this.videoSenderTrack.stop(); } catch { /* ignore */ }
+      this.videoSenderTrack = undefined;
+    }
+
+    if (this.desiredShareVideo && videoStream && !this.videoSenderTrack) {
+      const [track] = videoStream.getVideoTracks();
+      if (track) {
         try {
           // Clone so the local hand-tracker / preview can keep running on the
-          // original even when we mute partner-facing video. The clone has
-          // its own enabled flag that the Share Video toggle controls.
+          // original. The clone is only attached when Share Video is enabled.
           const clone = track.clone();
-          clone.enabled = this.desiredShareVideo;
-          pc.addTrack(clone, primary);
+          clone.enabled = true;
+          pc.addTrack(clone, videoStream);
           this.videoSenderTrack = clone;
+          changed = true;
         } catch (err) {
           console.warn('[webrtc] addTrack failed', track.kind, err);
         }
       }
     }
+
     if (micStream) {
-      for (const track of micStream.getAudioTracks()) {
+      const [track] = micStream.getAudioTracks();
+      if (track && !this.audioSenderTrack) {
         try {
           // Mic doesn't have a local-only consumer, so we hand the original
           // straight to the peer. Toggling the Mic icon disables capture +
           // transmission together (and the browser's mic indicator follows).
-          pc.addTrack(track, primary);
+          pc.addTrack(track, micStream);
+          this.audioSenderTrack = track;
+          changed = true;
         } catch (err) {
           console.warn('[webrtc] addTrack failed', track.kind, err);
         }
       }
     }
-    return true;
+    return changed;
   }
 
   private wirePoseChannel(channel: RTCDataChannel): void {
@@ -271,9 +302,17 @@ export class WebRTCClient {
   }
 
   setShareVideo(enabled: boolean): void {
+    const changed = enabled !== this.desiredShareVideo;
     this.desiredShareVideo = enabled;
     if (this.videoSenderTrack) {
       this.videoSenderTrack.enabled = enabled;
+    }
+    if (changed) {
+      if (!this.pc && this.partnerIdentity) {
+        this.maybeStartNegotiation();
+      } else {
+        this.syncLocalTracksAndRenegotiate(enabled ? 'share video enabled' : 'share video disabled');
+      }
     }
     console.info('[webrtc] share video', enabled ? 'enabled' : 'disabled');
   }
@@ -282,13 +321,18 @@ export class WebRTCClient {
     return this.videoSenderTrack?.enabled ?? this.desiredShareVideo;
   }
 
-  private async createAndSendOffer(): Promise<void> {
+  private async createAndSendOffer(reason: string): Promise<void> {
     if (!this.pc || !this.partnerIdentity) return;
+    if (this.makingOffer || this.pc.signalingState !== 'stable') {
+      this.queuedNegotiation = true;
+      console.info('[webrtc] queued negotiation', reason, this.pc.signalingState);
+      return;
+    }
     try {
       this.makingOffer = true;
       const offer = await this.pc.createOffer();
       await this.pc.setLocalDescription(offer);
-      console.info('[webrtc] sending offer');
+      console.info('[webrtc] sending offer', reason);
       await this.multiplayer.sendWebrtcSignal(
         this.partnerIdentity,
         'offer',
@@ -349,8 +393,8 @@ export class WebRTCClient {
     if (!this.pc) {
       this.pc = this.createPeerConnection();
       if (!this.pc) return;
-      this.attachLocalTracks(this.pc);
     }
+    this.syncLocalTracks(this.pc);
 
     // Perfect-negotiation collision handling. If we're mid-offer (or already
     // have a local offer set) and we're the impolite peer, drop the incoming
@@ -381,6 +425,7 @@ export class WebRTCClient {
     } else {
       console.warn('[webrtc] would send answer but partnerIdentity is null');
     }
+    this.flushQueuedNegotiation();
   }
 
   private async handleAnswer(answer: RTCSessionDescriptionInit): Promise<void> {
@@ -399,6 +444,7 @@ export class WebRTCClient {
     await this.pc.setRemoteDescription(answer);
     this.remoteDescriptionSet = true;
     await this.flushPendingIce();
+    this.flushQueuedNegotiation();
   }
 
   private async handleIce(candidate: RTCIceCandidateInit): Promise<void> {
@@ -429,6 +475,19 @@ export class WebRTCClient {
     }
   }
 
+  private flushQueuedNegotiation(): void {
+    if (!this.queuedNegotiation || !this.pc || this.pc.signalingState !== 'stable') return;
+    this.queuedNegotiation = false;
+    void this.createAndSendOffer('queued');
+  }
+
+  private emitRemoteStream(): void {
+    const stream = this.remoteStream && this.remoteStream.getTracks().length > 0
+      ? this.remoteStream
+      : null;
+    for (const listener of this.remoteListeners) listener(stream);
+  }
+
   private teardownPeer(): void {
     if (this.pc) {
       try {
@@ -453,7 +512,11 @@ export class WebRTCClient {
       try { this.videoSenderTrack.stop(); } catch { /* ignore */ }
       this.videoSenderTrack = undefined;
     }
+    this.audioSenderTrack = undefined;
     if (this.remoteStream) {
+      for (const track of this.remoteStream.getTracks()) {
+        this.remoteStream.removeTrack(track);
+      }
       this.remoteStream = undefined;
       for (const listener of this.remoteListeners) listener(null);
     }

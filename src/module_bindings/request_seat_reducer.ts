@@ -14,4 +14,8 @@ export default {
   preferredRoom: __t.string(),
   fallbackName: __t.string(),
   displayName: __t.string(),
+  instrument: __t.string(),
+  creature: __t.string(),
+  instrumentAuto: __t.bool(),
+  creatureAuto: __t.bool(),
 };

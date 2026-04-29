@@ -1,7 +1,8 @@
 import { Identity } from 'spacetimedb';
 import { DbConnection, tables, type ErrorContext } from '../module_bindings';
 import type { Player, WebrtcSignal } from '../module_bindings/types';
-import { isInstrumentId, normalizeInstrumentId, type InstrumentId } from './instruments';
+import { CREATURE_IDS, type CreatureId } from './creatures';
+import { INSTRUMENT_IDS, normalizeInstrumentId, type InstrumentId } from './instruments';
 import { pickRandomRoomName, sanitizeRoomName } from './roomNames';
 import type { ConnectionState } from './types';
 
@@ -19,6 +20,8 @@ const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
 const TOKEN_STORAGE_KEY = 'jam-train-spacetime-token';
 const ROBOT_PARTNER_CREATURE = 'robot';
+const SERVER_DEFAULT_INSTRUMENT: InstrumentId = 'drum';
+const SERVER_DEFAULT_CREATURE: CreatureId = 'lion';
 
 export class MultiplayerClient {
   localId = `local-${crypto.randomUUID()}`;
@@ -42,17 +45,18 @@ export class MultiplayerClient {
   private partnerIdentityHex: string | null = null;
   private signalListeners = new Set<SignalListener>();
   private partnerIdentityListeners = new Set<PartnerIdentityListener>();
-  private localInstrument: InstrumentId = 'drum';
+  private localInstrument: InstrumentId = SERVER_DEFAULT_INSTRUMENT;
   private localInstrumentDirty = false;
+  private localInstrumentExplicit = false;
   private partnerInstrument: InstrumentId = 'starlace';
   private localInstrumentListeners = new Set<InstrumentListener>();
   private partnerInstrumentListeners = new Set<InstrumentListener>();
-  private localCreature: string = 'lion';
-  // True once the user explicitly picks a creature (via the HUD picker). On
-  // boot we no longer restore a saved preference — the server always
-  // randomly assigns on cabin entry, so the localStorage value is just a
-  // preload-asset hint, never a request to override the server.
+  private localCreature: CreatureId = SERVER_DEFAULT_CREATURE;
+  // True once the client has chosen a creature locally (auto-pick or HUD).
+  // SpacetimeDB stores the published value but no longer assigns random
+  // loadouts itself.
   private localCreatureDirty = false;
+  private localCreatureExplicit = false;
   private partnerCreature: string = ROBOT_PARTNER_CREATURE;
   private localCreatureListeners = new Set<CreatureListener>();
   private partnerCreatureListeners = new Set<CreatureListener>();
@@ -73,6 +77,11 @@ export class MultiplayerClient {
     this.bootPreferredRoom = sanitized;
     this.roomId = sanitized || pickRandomRoomName();
     this.displayName = displayName;
+    this.localInstrument = this.pickRandomInstrument();
+    this.localInstrumentDirty = true;
+    this.partnerInstrument = this.oppositeInstrument(this.localInstrument);
+    this.localCreature = this.pickRandomCreature();
+    this.localCreatureDirty = true;
   }
 
   onStateChange(listener: StateListener): void {
@@ -139,6 +148,7 @@ export class MultiplayerClient {
   }
 
   async setLocalInstrument(instrumentId: string): Promise<void> {
+    this.localInstrumentExplicit = true;
     this.localInstrumentDirty = true;
     this.acceptLocalInstrument(instrumentId);
     await this.pushLocalInstrument();
@@ -162,8 +172,9 @@ export class MultiplayerClient {
 
   private acceptServerLocalInstrument(instrumentId: string): void {
     const norm = normalizeInstrumentId(instrumentId);
-    if (this.localInstrumentDirty && norm !== this.localInstrument) return;
+    if (this.localInstrumentDirty && this.localInstrumentExplicit && norm !== this.localInstrument) return;
     this.acceptLocalInstrument(norm);
+    this.localInstrumentDirty = false;
   }
 
   private oppositeInstrument(id: InstrumentId): InstrumentId {
@@ -198,21 +209,25 @@ export class MultiplayerClient {
   }
 
   async setLocalCreature(creatureId: string): Promise<void> {
+    this.localCreatureExplicit = true;
     this.localCreatureDirty = true;
     this.acceptLocalCreature(creatureId);
     await this.pushLocalCreature();
   }
 
   private acceptLocalCreature(creatureId: string): void {
-    if (this.localCreature === creatureId) return;
-    this.localCreature = creatureId;
-    for (const listener of this.localCreatureListeners) listener(creatureId);
+    const next = this.normalizeCreature(creatureId);
+    if (this.localCreature === next) return;
+    this.localCreature = next;
+    for (const listener of this.localCreatureListeners) listener(next);
   }
 
   private acceptServerLocalCreature(creatureId: string): void {
     if (!creatureId) return;
-    if (this.localCreatureDirty && creatureId !== this.localCreature) return;
-    this.acceptLocalCreature(creatureId);
+    const next = this.normalizeCreature(creatureId);
+    if (this.localCreatureDirty && this.localCreatureExplicit && next !== this.localCreature) return;
+    this.acceptLocalCreature(next);
+    this.localCreatureDirty = false;
   }
 
   private async pushLocalCreature(): Promise<void> {
@@ -374,6 +389,10 @@ export class MultiplayerClient {
         preferredRoom: sanitizeRoomName(preferredRoom),
         fallbackName: pickRandomRoomName(this.roomId),
         displayName: this.displayName,
+        instrument: this.localInstrument,
+        creature: this.localCreature,
+        instrumentAuto: !this.localInstrumentExplicit,
+        creatureAuto: !this.localCreatureExplicit,
       })
       .catch(error => console.warn('SpacetimeDB request_seat failed', error));
   }
@@ -412,10 +431,14 @@ export class MultiplayerClient {
         // subscriptionApplied is still false at this point).
         this.rebuildKnownPlayers();
         this.subscriptionApplied = true;
+        // Pick/publish the local loadout after we can see whether a partner
+        // is already in this cabin. The reducer only stores choices; it does
+        // not roll random loadouts.
+        this.ensureInitialLocalLoadout();
         // Now sync the partner plaque with whoever's actually online here.
         this.updatePartner();
-        // Push the local loadout only when it was deliberately chosen before
-        // the subscription came up; otherwise let an existing server row win.
+        // Push any local choice made before the subscription came up,
+        // including the initial client-side auto-pick.
         if (this.localInstrumentDirty) void this.pushLocalInstrument();
         if (this.localCreatureDirty) void this.pushLocalCreature();
         console.info('[jam-train] subscription applied; room', this.roomId, 'partners', this.knownPlayers.size);
@@ -424,6 +447,65 @@ export class MultiplayerClient {
         console.warn('SpacetimeDB subscription failed', ctx.event);
       })
       .subscribe([tables.player, tables.webrtcSignal]);
+  }
+
+  private ensureInitialLocalLoadout(): void {
+    const partner = this.findOnlinePartnerRow();
+
+    if (partner && !this.localInstrumentExplicit) {
+      const next = this.oppositeInstrument(normalizeInstrumentId(partner.instrument));
+      if (next !== this.localInstrument) {
+        this.localInstrumentDirty = true;
+        this.acceptLocalInstrument(next);
+      }
+    } else if (!this.localInstrumentDirty && this.localInstrument === SERVER_DEFAULT_INSTRUMENT) {
+      const next = this.pickRandomInstrument();
+      this.localInstrumentDirty = true;
+      this.acceptLocalInstrument(next);
+    }
+
+    if (partner && !this.localCreatureExplicit) {
+      const partnerCreature = this.normalizeCreature(partner.creature);
+      if (partnerCreature === this.localCreature) {
+        const next = this.pickRandomCreature(partnerCreature);
+        this.localCreatureDirty = true;
+        this.acceptLocalCreature(next);
+      }
+    } else if (!this.localCreatureDirty && this.localCreature === SERVER_DEFAULT_CREATURE) {
+      const next = this.pickRandomCreature();
+      this.localCreatureDirty = true;
+      this.acceptLocalCreature(next);
+    }
+  }
+
+  private findOnlinePartnerRow(): Player | null {
+    if (!this.connection) return null;
+    for (const row of this.connection.db.player.iter()) {
+      const id = row.identity.toHexString();
+      if (id === this.localId) continue;
+      if (row.roomId !== this.roomId) continue;
+      if (!row.online) continue;
+      return row;
+    }
+    return null;
+  }
+
+  private pickRandomInstrument(): InstrumentId {
+    return this.randomChoice(INSTRUMENT_IDS);
+  }
+
+  private pickRandomCreature(exclude?: string): CreatureId {
+    const excluded = CREATURE_IDS.includes(exclude as CreatureId) ? exclude as CreatureId : null;
+    const pool = excluded ? CREATURE_IDS.filter(id => id !== excluded) : CREATURE_IDS;
+    return this.randomChoice(pool.length > 0 ? pool : CREATURE_IDS);
+  }
+
+  private randomChoice<T>(items: readonly T[]): T {
+    return items[Math.floor(Math.random() * items.length)] ?? items[0];
+  }
+
+  private normalizeCreature(value: string | undefined | null): CreatureId {
+    return CREATURE_IDS.includes(value as CreatureId) ? value as CreatureId : SERVER_DEFAULT_CREATURE;
   }
 
   private maybeAnnouncePlayer(row: Player): void {
@@ -480,18 +562,12 @@ export class MultiplayerClient {
     let nextIdentity: string | null = null;
     let realPartnerInstrument: InstrumentId | null = null;
     let nextCreature: string = ROBOT_PARTNER_CREATURE;
-    if (this.connection) {
-      for (const row of this.connection.db.player.iter()) {
-        const id = row.identity.toHexString();
-        if (id === this.localId) continue;
-        if (row.roomId !== this.roomId) continue;
-        if (!row.online) continue;
-        nextName = row.displayName || 'Player';
-        nextIdentity = id;
-        realPartnerInstrument = normalizeInstrumentId(row.instrument);
-        nextCreature = row.creature || 'lion';
-        break;
-      }
+    const partner = this.findOnlinePartnerRow();
+    if (partner) {
+      nextName = partner.displayName || 'Player';
+      nextIdentity = partner.identity.toHexString();
+      realPartnerInstrument = normalizeInstrumentId(partner.instrument);
+      nextCreature = this.normalizeCreature(partner.creature);
     }
 
     const partnerIdentityChanged = nextIdentity !== this.partnerIdentityHex;

@@ -376,6 +376,10 @@ async function createRuntime(): Promise<RuntimeApi> {
     if (game.getCameraEnabled()) {
       game.setCameraEnabled(false);
       hud.setCameraEnabled(false);
+      if (game.getShareVideoEnabled()) {
+        game.setShareVideoEnabled(false);
+        hud.setShareVideoEnabled(false);
+      }
       return;
     }
 
@@ -466,8 +470,8 @@ async function createRuntime(): Promise<RuntimeApi> {
       console.warn('[jam-train] handpose preload failed', err);
     });
 
-    await game.startAudio();
     game.connectMultiplayer();
+    await game.startAudio();
 
     hud.setCameraEnabled(false);
     hud.setMicEnabled(false);
