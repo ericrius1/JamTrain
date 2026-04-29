@@ -88,7 +88,6 @@ export const SCULPTOR_DEFS = {
   projectorRingSpacing: { default: 0.055, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
   projectorRingScale:   { default: 0.74,  min: 0.4,  max: 1.0,  step: 0.01,  folder: 'Projector', label: 'ring scale' },
   projectorBaseY:       { default: -0.27, min: -0.6, max: 0.3,  step: 0.01,  folder: 'Projector', label: 'base height' },
-  synchronyRingColor:   { type: 'color', default: '#fff5d6', folder: 'Projector', label: 'synchrony ring' },
   timerRingColor:       { type: 'color', default: '#ffd166', folder: 'Projector', label: 'projector rings' },
 } as const;
 
@@ -245,12 +244,9 @@ export class EnergySculptor implements EnergySink {
   private roundProgress = 0;
   private dissolveMode = 0;
   private synchronyBoost = 0;
-  private synchronyRingAge = 1;
   private elapsed = 0;
 
   // Decorative scene elements.
-  private synchronyRing?: THREE.Mesh;
-  private synchronyRingMaterial?: THREE.MeshBasicMaterial;
   private static TIMER_SEGMENTS = 96;
   private projectorRings: THREE.Line[] = [];
   private projectorRingMaterial?: THREE.LineBasicMaterial;
@@ -294,7 +290,6 @@ export class EnergySculptor implements EnergySink {
     this.allocateSpawnQueue();
     this.buildComputePipelines();
     this.buildRenderMesh();
-    this.buildSynchronyRing();
     this.buildProjectorRings();
     this.buildFieldDebugLines();
     this.buildThomasSeedTargets();

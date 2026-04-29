@@ -1438,7 +1438,7 @@ export class HandSynthEngine {
   }
 
   private starlaceChordForIndex(index: number): readonly string[] {
-    return this.starlaceChords[positiveModulo(index, this.starlaceChords.length)] ?? ['D4', 'F#4', 'A4'];
+    return this.starlaceChords[positiveModulo(index, this.starlaceChords.length)] ?? ['C4', 'E4', 'G4'];
   }
 
   private starlaceGlintNote(chord: readonly string[]): string {
