@@ -46,6 +46,7 @@ export const DRUM_DEFS = {
   orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
   pyramidRowSpacing: { default: 0.105, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
+  heldStreamAmount:  { default: 1.0, min: 0, max: 4, step: 0.05, folder: 'Emission', label: 'held stream amount' },
 } as const;
 
 export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
@@ -1225,14 +1226,20 @@ export class Drum implements PlayerVisual {
   private tickHeldParticleStreams(delta: number): void {
     if (!this.sculptor || this.heldSources.size === 0) return;
     const streamDelta = Math.min(delta, 0.05);
+    const amount = clamp(this.params.heldStreamAmount, 0, 4);
+    const streamCap = Math.max(1, Math.ceil(HELD_STREAM_MAX_PER_FRAME * amount));
     _hitDir.set(0, 0.2, 1).normalize();
 
     for (const held of this.heldSources.values()) {
       const orb = this.orbs[held.orbIndex];
       if (!orb) continue;
-      const rate = HELD_STREAM_BASE_RATE + held.velocity * HELD_STREAM_VELOCITY_RATE;
+      if (amount <= 0) {
+        held.streamCarry = 0;
+        continue;
+      }
+      const rate = (HELD_STREAM_BASE_RATE + held.velocity * HELD_STREAM_VELOCITY_RATE) * amount;
       held.streamCarry += rate * streamDelta;
-      const count = Math.min(HELD_STREAM_MAX_PER_FRAME, Math.floor(held.streamCarry));
+      const count = Math.min(streamCap, Math.floor(held.streamCarry));
       if (count <= 0) continue;
       held.streamCarry -= count;
 
