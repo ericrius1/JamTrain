@@ -74,12 +74,12 @@ export const SCULPTOR_DEFS = {
   particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
-  fadeFraction:       { default: 0.04,  min: 0.01,  max: 0.35, step: 0.01,  folder: 'Particles', label: 'visual fade-out fraction' },
+  opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'opacity fade starts at life' },
 
   fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Affinity', label: 'field strength' },
-  fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'affinity starts at life' },
-  fieldFalloffEnd:    { default: 0.7,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'affinity final at life' },
-  finalFieldEffect:   { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final field affinity' },
+  fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay starts at life' },
+  fieldFalloffEnd:    { default: 0.7,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final reached at life' },
+  finalFieldEffect:   { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final affinity' },
 
   fieldVolumeScale:   { default: 0.55,  min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
   fieldSphereRadius:  { default: 1.0,   min: 0.2,   max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'sphere radius' },
@@ -168,7 +168,7 @@ export class EnergySculptor implements EnergySink {
   private flowSpeedUniform = uniform(1);
   private worldScaleUniform = uniform(0.014);
   private lifeMaxUniform = uniform(28);
-  private fadeFractionUniform = uniform(0.25);
+  private opacityFadeStartUniform = uniform(0.90);
   private dissolveModeUniform = uniform(0);
   private dissolveBurstUniform = uniform(6);
   private centerUniform = uniform(new THREE.Vector3());
@@ -204,10 +204,11 @@ export class EnergySculptor implements EnergySink {
   // otherwise pin to the chosen kind.
   private attractorOverride: AttractorMode = 'cycle';
 
-  // Lifetime-keyed field falloff. fieldEffect = mix(1, finalFieldEffect,
-  // smoothstep(start, end, normalizedAge)). If finalFieldEffect is exactly 0
-  // and the falloff has completed, the particle's velocity is zeroed so it
-  // freezes into the sculpture instead of drifting on residual velocity.
+  // Lifetime-keyed field affinity. A particle keeps full field influence until
+  // normalizedAge reaches fieldFalloffStart, then eases to finalFieldEffect by
+  // fieldFalloffEnd and holds that affinity for the rest of its life. If
+  // finalFieldEffect is exactly 0 and the falloff has completed, velocity is
+  // zeroed so it freezes instead of drifting on residual velocity.
   private fieldFalloffStartUniform = uniform(0.0);
   private fieldFalloffEndUniform = uniform(0.2);
   private finalFieldEffectUniform = uniform(0.0);
@@ -310,7 +311,7 @@ export class EnergySculptor implements EnergySink {
     this.particleSizeUniform.value = this.params.particleSize;
     this.particleOpacityUniform.value = this.params.particleOpacity;
     this.applyParticleLifetime();
-    this.fadeFractionUniform.value = this.params.fadeFraction;
+    this.opacityFadeStartUniform.value = this.params.opacityFadeStart;
     this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
     this.speedGlowUniform.value = this.params.speedGlow;
     this.stretchScaleUniform.value = this.params.stretchScale;
@@ -337,7 +338,7 @@ export class EnergySculptor implements EnergySink {
         speedGlow: v => { this.speedGlowUniform.value = v; },
         stretchScale: v => { this.stretchScaleUniform.value = v; },
         particleLifetime: v => { this.applyParticleLifetime(v); },
-        fadeFraction: v => { this.fadeFractionUniform.value = v; },
+        opacityFadeStart: v => { this.opacityFadeStartUniform.value = v; },
         fieldFalloffStart: v => { this.fieldFalloffStartUniform.value = v; },
         fieldFalloffEnd: v => { this.fieldFalloffEndUniform.value = v; },
         finalFieldEffect: v => { this.finalFieldEffectUniform.value = v; },
@@ -577,17 +578,17 @@ export class EnergySculptor implements EnergySink {
     );
     const age = hasParticle ? Math.min(this.affinityDebugParticleAge, life) : 0;
     const lifeT = life > 0 ? age / life : 0;
-    const { start, end } = this.affinityFalloffWindow();
+    const { start, finalAt } = this.affinityFalloffWindow();
     const startSec = start * life;
-    const endSec = end * life;
+    const finalAtSec = finalAt * life;
     const finalAffinity = clamp01(this.finalFieldEffectUniform.value);
     const currentAffinity = this.affinityAtLifeT(lifeT);
-    const journey = start === end
-      ? `${this.formatPercent(1)} until ${this.formatSeconds(endSec)}, then ${this.formatPercent(finalAffinity)}`
-      : `${this.formatPercent(1)} at ${this.formatSeconds(startSec)} -> ${this.formatPercent(finalAffinity)} at ${this.formatSeconds(endSec)}`;
+    const journey = start === finalAt
+      ? `${this.formatPercent(1)} until ${this.formatLifePoint(finalAtSec, finalAt)}, then ${this.formatPercent(finalAffinity)}`
+      : `${this.formatPercent(1)} until ${this.formatLifePoint(startSec, start)}, decays to ${this.formatPercent(finalAffinity)} by ${this.formatLifePoint(finalAtSec, finalAt)}`;
     const finalBehavior = finalAffinity <= 0.0005
-      ? `field motion stops after ${this.formatSeconds(endSec)}`
-      : `keeps ${this.formatPercent(finalAffinity)} field after ${this.formatSeconds(endSec)}`;
+      ? `field motion stops after ${this.formatLifePoint(finalAtSec, finalAt)}`
+      : `keeps ${this.formatPercent(finalAffinity)} field after ${this.formatLifePoint(finalAtSec, finalAt)}`;
     const particleLabel = hasParticle ? 'debug particle' : 'next particle';
 
     return [
@@ -604,15 +605,15 @@ export class EnergySculptor implements EnergySink {
     );
   }
 
-  private affinityFalloffWindow(): { start: number; end: number } {
-    const a = clamp01(this.fieldFalloffStartUniform.value);
-    const b = clamp01(this.fieldFalloffEndUniform.value);
-    return { start: Math.min(a, b), end: Math.max(a, b) };
+  private affinityFalloffWindow(): { start: number; finalAt: number } {
+    const start = clamp01(this.fieldFalloffStartUniform.value);
+    const finalAt = Math.max(start, clamp01(this.fieldFalloffEndUniform.value));
+    return { start, finalAt };
   }
 
   private affinityAtLifeT(lifeT: number): number {
-    const { start, end } = this.affinityFalloffWindow();
-    const span = Math.max(0.0001, end - start);
+    const { start, finalAt } = this.affinityFalloffWindow();
+    const span = Math.max(0.0001, finalAt - start);
     const raw = clamp01((clamp01(lifeT) - start) / span);
     const eased = raw * raw * (3 - 2 * raw);
     return clamp01(1 + (clamp01(this.finalFieldEffectUniform.value) - 1) * eased);
@@ -620,6 +621,10 @@ export class EnergySculptor implements EnergySink {
 
   private formatSeconds(value: number): string {
     return `${value.toFixed(value >= 10 ? 0 : 1)}s`;
+  }
+
+  private formatLifePoint(seconds: number, normalized: number): string {
+    return `${this.formatSeconds(seconds)} (${this.formatPercent(normalized)})`;
   }
 
   private formatPercent(value: number): string {
@@ -811,14 +816,13 @@ export class EnergySculptor implements EnergySink {
 
       // Age fraction (0 born -> 1 dead).
       const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
-      const fadeStart = float(1).sub(this.fadeFractionUniform);
+      const fadeStart = this.opacityFadeStartUniform.clamp(0, 1);
 
-      // Field affinity ramps from 1 -> finalFieldEffect across the settling
-      // window. We auto-order Start/End so the user can drag the sliders past
-      // each other without inverting the curve.
-      const falloffLo = this.fieldFalloffStartUniform.min(this.fieldFalloffEndUniform);
-      const falloffHi = this.fieldFalloffStartUniform.max(this.fieldFalloffEndUniform);
-      const falloffRaw = lifeT.sub(falloffLo).div(falloffHi.sub(falloffLo).max(0.0001)).clamp(0, 1);
+      // Field affinity stays full until the configured normalized start, then
+      // reaches the configured final affinity by the configured normalized end.
+      const falloffStart = this.fieldFalloffStartUniform.clamp(0, 1);
+      const falloffFinalAt = this.fieldFalloffEndUniform.clamp(0, 1).max(falloffStart);
+      const falloffRaw = lifeT.sub(falloffStart).div(falloffFinalAt.sub(falloffStart).max(0.0001)).clamp(0, 1);
       const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
       const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
       const freezeWhenSettled = this.finalFieldEffectUniform.lessThanEqual(0.0001).and(falloffT.greaterThanEqual(0.999));
@@ -884,9 +888,9 @@ export class EnergySculptor implements EnergySink {
       const newAge = m.x.add(ageStep);
       const lifeMax = m.y;
       const newLifeT = newAge.div(lifeMax.max(0.0001)).clamp(0, 1);
-      // Linear fade-in over 0.04s (born), linear fade-out over fadeFraction of life.
       // Short fade-in so emit-bursts read as emanating from the source node,
-      // not blooming into existence already mid-flight.
+      // not blooming into existence already mid-flight. Fade-out is opacity-only
+      // from the configured normalized lifetime point to death.
       const born = newAge.div(0.04).clamp(0, 1);
       const fadeOut = float(1).sub(smoothstep(fadeStart, 1.0, newLifeT));
       const alphaLife = born.mul(fadeOut);
@@ -945,13 +949,8 @@ export class EnergySculptor implements EnergySink {
     const angle = atan(viewVel.y, viewVel.x);
     material.rotationNode = angle;
 
-    // Sprite scale: a lifted-then-faded curve so newborn particles bloom in
-    // and dying ones shrink all the way to nothing instead of leaving a small
-    // residual disc. fadeShape = alpha * (0.4 + 0.6*alpha) — close to 1 in
-    // the middle of life, monotonically → 0 at end so the particle smoothly
-    // disappears. No size floor, so the visible "pop" at lifeMax is gone.
-    const fadeShape = alpha.mul(float(0.4).add(alpha.mul(0.6)));
-    const sizeBase = this.particleSizeUniform.mul(fadeShape);
+    // Sprite size stays stable across lifetime; fade-out is opacity-only.
+    const sizeBase = this.particleSizeUniform;
     material.scaleNode = vec2(sizeBase.mul(stretchSafe), sizeBase.div(stretchSafe));
 
     // Color: base color brightened only by motion. Multiplying by alphaLife
