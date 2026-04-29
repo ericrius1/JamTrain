@@ -581,10 +581,11 @@ export class EnergySculptor implements EnergySink {
       // The field is the only sculpting force. Treat it as a velocity field
       // with light inertia instead of a raw acceleration so Thomas particles
       // trace the attractor lobes rather than ballistically filling the bounds.
-      const desiredVel = flow.mul(this.flowSpeedUniform);
-      const fieldFollow = this.fieldStrengthUniform.mul(fieldEffect).mul(this.dtUniform).mul(5.5).clamp(0, 1);
-      const velocityDrag = float(1).sub(this.dtUniform.mul(0.75).clamp(0, 0.2));
-      const newVel = mix(vel.mul(velocityDrag), desiredVel, fieldFollow).toVar();
+      // `fieldEffect` scales the target velocity itself, so an affinity of 0
+      // settles motion to a full stop while 0.2 keeps exactly 20% field speed.
+      const desiredVel = flow.mul(this.flowSpeedUniform).mul(this.fieldStrengthUniform).mul(fieldEffect);
+      const fieldFollow = this.dtUniform.mul(6.5).clamp(0, 1);
+      const newVel = mix(vel, desiredVel, fieldFollow).toVar();
       const freezeWhenSettled = this.finalFieldEffectUniform.lessThanEqual(0.0001).and(falloffT.greaterThanEqual(0.999));
       If(freezeWhenSettled, () => {
         newVel.assign(vec3(0));
