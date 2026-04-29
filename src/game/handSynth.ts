@@ -20,7 +20,7 @@ export const HAND_SYNTH_DEFS = {
   // Driven by the mixer panel's persisted avPrefs.musicVolume (see main.ts).
   // Persisting this separately lets the dB slider drift below the slider on
   // reload, leaving the synth muted while the slider reads healthy.
-  volumeDb:      { default: -18,   min: -40, max: 6,    step: 0.5,  label: 'volume dB', persisted: false },
+  volumeDb:      { default: -6,    min: -40, max: 6,    step: 0.5,  label: 'volume dB', persisted: false },
   filterMinHz:   { default: 260,   min: 80,  max: 2000, step: 10,   label: 'filter min Hz' },
   filterMaxHz:   { default: 6400,  min: 800, max: 9000, step: 50,   label: 'filter max Hz' },
   filterQ:       { default: 1.2,   min: 0.4, max: 8,    step: 0.1,  label: 'filter Q' },
@@ -326,8 +326,10 @@ export class HandSynthEngine {
   }
 
   setMasterGain(value: number): void {
-    const MAX_SYNTH_GAIN = 0.35;
-    const CURVE_EXP = 2.5;
+    // Keep the middle of the mixer usable while letting 100% reach the graph
+    // at unity; the final compressor/limiter catches summed peaks.
+    const MAX_SYNTH_GAIN = 1.0;
+    const CURVE_EXP = 1.2;
     const v = value <= 0 ? 0 : Math.min(1, value);
     const linear = MAX_SYNTH_GAIN * Math.pow(v, CURVE_EXP);
     this.params.volumeDb = linear > 0.0001 ? 20 * Math.log10(linear) : -60;

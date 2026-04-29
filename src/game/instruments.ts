@@ -1,4 +1,5 @@
 import type * as THREE from 'three/webgpu';
+import type { CreatureId } from './creatures';
 import type { FingerJointName, FingerName, Handedness } from './types';
 
 export type InstrumentId = 'drum' | 'starlace';
@@ -153,5 +154,7 @@ export interface PlayerVisual {
   triggerMidiNoteOn?(noteNumber: number, velocity: number, sourceId?: string): void;
   triggerMidiNoteOff?(noteNumber: number, sourceId?: string): void;
   releaseAllMidiNotes?(): void;
+  /** Optional creature palette hook for visuals whose color follows the avatar. */
+  setCreature?(id: CreatureId): void;
   dispose(): void;
 }

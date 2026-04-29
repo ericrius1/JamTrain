@@ -50,6 +50,15 @@ export const CREATURES: Record<CreatureId, CreatureMeta> = {
   },
 };
 
+// Dominant robe cloth sampled from the illustrated puppet body assets. These
+// colors drive creature-tied instrument effects, not the picker accent chips.
+export const CREATURE_ROBE_COLORS: Record<CreatureId, string> = {
+  lion: '#12233b',
+  elk: '#1f4b42',
+  fox: '#4a1723',
+  robot: '#402147',
+};
+
 export function isCreatureId(value: unknown): value is CreatureId {
   return value === 'lion' || value === 'elk' || value === 'fox' || value === 'robot';
 }

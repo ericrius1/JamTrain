@@ -22,6 +22,7 @@ import {
   drumKeyboardIndexForKey,
   drumOrbCountForBaseRow,
 } from '../drumControls';
+import { CREATURE_ROBE_COLORS, type CreatureId } from '../creatures';
 import { getDrumHz } from '../harmony';
 import { keyDirector } from '../keyDirector';
 import {
@@ -64,7 +65,6 @@ const DRUM_RUNTIME = {
   hitCooldown: 0.075,
   hitVelMin: 0.012,
   anchorSmoothing: 8.0,
-  hitTint: '#52ffaa',
   hitTintAmount: 0.85,
   envAttack: DEFAULT_ORB_ENVELOPE.attack,
   envDecay: DEFAULT_ORB_ENVELOPE.decay,
@@ -72,18 +72,8 @@ const DRUM_RUNTIME = {
   envRelease: DEFAULT_ORB_ENVELOPE.release,
 } as const;
 
-const DRUM_PALETTES: Record<DrumPalette, { baseColor: string; rimColor: string; hotColor: string }> = {
-  local: {
-    baseColor: '#102947',
-    rimColor: '#75f0ff',
-    hotColor: '#fff4ca',
-  },
-  remote: {
-    baseColor: '#37183a',
-    rimColor: '#ff7ad6',
-    hotColor: '#fff0fb',
-  },
-};
+const DRUM_ROBE_COOL = new THREE.Color('#6faec8');
+const _orbHsl = { h: 0, s: 0, l: 0 };
 
 export type OrbHit = {
   /** Scale field selected from the strike point on the single orb. */
@@ -116,6 +106,7 @@ export type OrbRelease = {
 
 type DrumOptions = {
   palette?: DrumPalette;
+  creature?: CreatureId;
   title?: string;
   onHit?: (event: OrbHit) => void;
   onRelease?: (event: OrbRelease) => void;
@@ -187,13 +178,8 @@ function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: num
   return offsets;
 }
 
-function createOrbUniforms(params: DrumParams, palette: DrumPalette) {
-  const colors = DRUM_PALETTES[palette];
+function createOrbUniforms(params: DrumParams) {
   return {
-    baseColor:    uniform(new THREE.Color(colors.baseColor)),
-    rimColor:     uniform(new THREE.Color(colors.rimColor)),
-    hotColor:     uniform(new THREE.Color(colors.hotColor)),
-    hitTint:      uniform(new THREE.Color(DRUM_RUNTIME.hitTint)),
     hitTintAmount: uniform(DRUM_RUNTIME.hitTintAmount),
     orbRadius:    uniform(params.orbRadius),
     rippleSpeed:  uniform(DRUM_RUNTIME.rippleSpeed),
@@ -213,9 +199,51 @@ function createOrbPerInstanceUniforms() {
     elapsed: uniform(0),
     pulse: uniform(0),
     offset: uniform(new THREE.Vector3()),
+    baseColor: uniform(new THREE.Color()),
+    rimColor: uniform(new THREE.Color()),
+    hotColor: uniform(new THREE.Color()),
+    sparkColor: new THREE.Color(),
   };
 }
 type OrbPerInstanceUniforms = ReturnType<typeof createOrbPerInstanceUniforms>;
+
+function applyOrbRobeGradient(
+  creature: CreatureId,
+  heightT: number,
+  index: number,
+  perOrb: OrbPerInstanceUniforms,
+): void {
+  const t = clamp(heightT, 0, 1);
+  const jitterRaw = Math.sin((index + 1) * 12.9898) * 43758.5453;
+  const jitter = jitterRaw - Math.floor(jitterRaw) - 0.5;
+
+  const base = perOrb.baseColor.value;
+  base.set(CREATURE_ROBE_COLORS[creature]);
+  base.lerp(DRUM_ROBE_COOL, clamp((1 - t) * 0.18 + Math.max(0, -jitter) * 0.035, 0, 0.28));
+  base.getHSL(_orbHsl);
+  base.setHSL(
+    _orbHsl.h,
+    clamp(_orbHsl.s * (0.84 + t * 0.36) + jitter * 0.055, 0, 1),
+    clamp(_orbHsl.l * (0.90 + t * 0.14) + t * 0.095 + jitter * 0.026, 0.045, 0.62),
+  );
+
+  base.getHSL(_orbHsl);
+  perOrb.rimColor.value.setHSL(
+    _orbHsl.h,
+    clamp(_orbHsl.s * 1.16 + 0.14, 0, 1),
+    clamp(_orbHsl.l + 0.28 + t * 0.08, 0.28, 0.86),
+  );
+  perOrb.hotColor.value.setHSL(
+    _orbHsl.h,
+    clamp(_orbHsl.s * 0.94 + 0.10, 0, 1),
+    clamp(_orbHsl.l + 0.50 + t * 0.03, 0.58, 0.97),
+  );
+  perOrb.sparkColor.setHSL(
+    _orbHsl.h,
+    clamp(_orbHsl.s * 1.08 + 0.08, 0, 1),
+    clamp(_orbHsl.l + 0.22 + t * 0.07, 0.34, 0.78),
+  );
+}
 
 type Orb = {
   mesh: THREE.Mesh;

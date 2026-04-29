@@ -1,8 +1,12 @@
 const DEFAULT_FADE_MS = 3000;
+// The mastered MP3 is denser than the played instruments, so low mixer values
+// need to fall away faster than a raw HTMLMediaElement volume scalar.
+const BACKING_TRACK_MAX_MEDIA_VOLUME = 0.75;
+const BACKING_TRACK_VOLUME_EXPONENT = 1.6;
 
 export class MidnightTrainStream {
   private audio?: HTMLAudioElement;
-  private volume = 0.55;
+  private volume = toMediaVolume(0.55);
   private fadeRaf = 0;
   private playToken = 0;
   private fading = false;
@@ -10,7 +14,7 @@ export class MidnightTrainStream {
   constructor(private readonly src: string) {}
 
   setVolume(value: number): void {
-    this.volume = clamp01(value);
+    this.volume = toMediaVolume(value);
     if (this.audio && !this.fading && !this.audio.paused) {
       this.audio.volume = this.volume;
     }
@@ -116,4 +120,9 @@ export class MidnightTrainStream {
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
+}
+
+function toMediaVolume(sliderValue: number): number {
+  const v = clamp01(sliderValue);
+  return BACKING_TRACK_MAX_MEDIA_VOLUME * Math.pow(v, BACKING_TRACK_VOLUME_EXPONENT);
 }
