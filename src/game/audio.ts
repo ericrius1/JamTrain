@@ -6,8 +6,6 @@ import { clamp, distance } from './math';
 import { fingerNames, handednesses, type HandPose, type PlayerPose, type Vec3Data } from './types';
 
 export const AUDIO_DEFS = {
-  // Driven by the mixer panel's persisted avPrefs.backingVolume (see main.ts).
-  // Persisting separately lets the dev slider diverge from the mixer on reload.
   masterGain:         { default: 0.35, min: 0,    max: 1,    step: 0.01, label: 'master', persisted: false },
   chordCycleSeconds:  { default: 12,   min: 4,    max: 120,  step: 1,    label: 'chord seconds' },
   attackSeconds:      { default: 1.4,  min: 0.2,  max: 8,    step: 0.1,  label: 'attack sec' },

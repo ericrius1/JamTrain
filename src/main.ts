@@ -7,7 +7,6 @@ window.addEventListener('vite:preloadError', () => {
 });
 
 const LOCAL_CREATURE_KEY = 'jam-train.local-creature';
-const PREFS_KEY = 'jam-train-av-prefs';
 
 type AvPrefs = {
   backingVolume: number;
@@ -159,34 +158,6 @@ function revealRuntimeSurface(): void {
   runtimeCanvas?.classList.add('scene-active');
 }
 
-const clampUnit = (n: unknown, fallback: number): number => {
-  const v = typeof n === 'number' && Number.isFinite(n) ? n : fallback;
-  return Math.max(0, Math.min(1, v));
-};
-
-function loadPrefs(defaults: AvPrefs): AvPrefs {
-  try {
-    const raw = localStorage.getItem(PREFS_KEY);
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw) as Partial<AvPrefs>;
-    return {
-      backingVolume: clampUnit(parsed.backingVolume, defaults.backingVolume),
-      musicVolume: clampUnit(parsed.musicVolume, defaults.musicVolume),
-      voiceVolume: clampUnit(parsed.voiceVolume, defaults.voiceVolume),
-    };
-  } catch {
-    return defaults;
-  }
-}
-
-function savePrefs(prefs: AvPrefs): void {
-  try {
-    localStorage.setItem(PREFS_KEY, JSON.stringify(prefs));
-  } catch {
-    /* storage may be disabled - non-fatal */
-  }
-}
-
 async function createRuntime(): Promise<RuntimeApi> {
   const [
     { Game },
@@ -222,7 +193,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     musicVolume: DEFAULT_MUSIC_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
   };
-  const avPrefs = loadPrefs(defaultAvPrefs);
+  const avPrefs: AvPrefs = { ...defaultAvPrefs };
 
   const canvas = document.querySelector<HTMLCanvasElement>('#scene');
   if (!canvas) {
@@ -422,17 +393,14 @@ async function createRuntime(): Promise<RuntimeApi> {
   hud.onBackingVolumeChange(value => {
     game.setBackingVolume(value);
     avPrefs.backingVolume = value;
-    savePrefs(avPrefs);
   });
   hud.onMusicVolumeChange(value => {
     game.setMusicVolume(value);
     avPrefs.musicVolume = value;
-    savePrefs(avPrefs);
   });
   hud.onVoiceVolumeChange(value => {
     hud.setRemoteVolume(value);
     avPrefs.voiceVolume = value;
-    savePrefs(avPrefs);
   });
 
   const handleRobotMuteKey = (e: KeyboardEvent): void => {
@@ -451,12 +419,11 @@ async function createRuntime(): Promise<RuntimeApi> {
   hud.setRemoteVolume(avPrefs.voiceVolume);
 
   // Pressing R in debug mode resets tweakpane params; piggyback on the same
-  // registry to also restore the mixer panel + persisted A/V prefs.
+  // registry to also restore the mixer panel to in-code defaults.
   registerResetHook('av-prefs', () => {
     avPrefs.backingVolume = defaultAvPrefs.backingVolume;
     avPrefs.musicVolume = defaultAvPrefs.musicVolume;
     avPrefs.voiceVolume = defaultAvPrefs.voiceVolume;
-    try { localStorage.removeItem(PREFS_KEY); } catch { /* noop */ }
     game.setBackingVolume(avPrefs.backingVolume);
     game.setMusicVolume(avPrefs.musicVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
