@@ -1,9 +1,7 @@
 import * as THREE from 'three/webgpu';
 import {
-  Break,
   Fn,
   If,
-  Loop,
   Return,
   atan,
   cameraViewMatrix,
@@ -697,11 +695,10 @@ export class EnergySculptor implements EnergySink {
     const colors = this.colorsBuffer;
     const meta = this.metaBuffer;
     const spawnQueueCapacity = SPAWN_QUEUE_CAPACITY;
-    const spawnSearchSteps = Math.ceil(this.count / spawnQueueCapacity);
 
-    // Emit pass: only write into dead slots. Dropping overflow is preferable to
-    // replacing live particles, because replacement bypasses lifetime fade-out
-    // and reads as popping.
+    // Emit pass: write at the cursor-derived slot unconditionally. Pool size is
+    // the only cap — when the ring wraps, the oldest particle is overwritten.
+    // Stream rate and lifetime are tuned via tweakpane to find the sweet spot.
     const emitFn = Fn(() => {
       const i = instanceIndex;
       const spawnCountU = this.spawnCountUniform.toUint();
@@ -713,25 +710,12 @@ export class EnergySculptor implements EnergySink {
       const spawnVel = this.spawnVelUniform.element(i);
       const spawnColor = this.spawnColorUniform.element(i);
       const spawnMeta = this.spawnMetaUniform.element(i);
-      const writeSpawn = (slot: any) => {
-        positions.element(slot).assign(spawnPos);
-        velocities.element(slot).assign(spawnVel);
-        colors.element(slot).assign(spawnColor);
-        // meta = (age=0, lifeMax, smoothedAccel=0, reserved=0)
-        meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 0));
-      };
-      Loop(spawnSearchSteps, ({ i: scan }) => {
-        const slot = spawnCursorU
-          .add(i)
-          .add(scan.toUint().mul(uint(spawnQueueCapacity)))
-          .mod(uint(this.count));
-        const slotMeta = meta.element(slot);
-        const isDead = slotMeta.y.lessThanEqual(0).or(slotMeta.x.greaterThanEqual(slotMeta.y));
-        If(isDead, () => {
-          writeSpawn(slot);
-          Break();
-        });
-      });
+      const slot = spawnCursorU.add(i).mod(uint(this.count));
+      positions.element(slot).assign(spawnPos);
+      velocities.element(slot).assign(spawnVel);
+      colors.element(slot).assign(spawnColor);
+      // meta = (age=0, lifeMax, smoothedAccel=0, reserved=0)
+      meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 0));
     });
     this.emitCompute = emitFn().compute(spawnQueueCapacity);
 
