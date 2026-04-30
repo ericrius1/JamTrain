@@ -7,7 +7,7 @@ import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
 import { MidiInputController, type MidiNoteEvent, type MidiState } from './midiInput';
-import { clamp, hash } from './math';
+import { clamp, hash, lerp } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { Orb } from './visuals/Orb';
 import { Starlace } from './visuals/Starlace';
@@ -63,12 +63,18 @@ const ROBOT_JAM_SLOTS_PER_BEAT = 2;
 const ROBOT_JAM_BEATS_PER_BAR = 4;
 const ROBOT_JAM_SLOTS_PER_BAR = ROBOT_JAM_SLOTS_PER_BEAT * ROBOT_JAM_BEATS_PER_BAR;
 const ROBOT_JAM_PHRASE_BARS = 8;
-const ROBOT_JAM_STARLACE_DENSITY_SCALE = 0.78;
-const ROBOT_JAM_ORB_LISTEN_GAP = 0.36;
-const ROBOT_JAM_STARLACE_LISTEN_GAP = 0.72;
-const ROBOT_JAM_QUIET_AFTER = 2.4;
-const ROBOT_JAM_HUMAN_ACTIVE = 0.28;
-const ROBOT_JAM_IDLE_BOOST = 1.28;
+const ROBOT_JAM_STARLACE_DENSITY_SCALE = 0.92;
+const ROBOT_JAM_ORB_LISTEN_GAP = 0.18;
+const ROBOT_JAM_STARLACE_LISTEN_GAP = 0.32;
+// Cap simultaneous robot voices so phrases can layer without stacking up forever.
+const ROBOT_JAM_MAX_CONCURRENT = 6;
+// Beat-tracking window: keep last N detected backing-track beats to estimate tempo.
+const ROBOT_JAM_BEAT_HISTORY = 8;
+// Tempo lock requires median interval variance under this fraction.
+const ROBOT_JAM_BEAT_LOCK_TOLERANCE = 0.12;
+// Min/max BPM the lock will accept (rejects double/half-time noise).
+const ROBOT_JAM_BEAT_BPM_MIN = 60;
+const ROBOT_JAM_BEAT_BPM_MAX = 150;
 // C-major late-night progressions. Values are diatonic scale degrees, not
 // semitones, so they stay aligned with harmony.ts and the backing track.
 const ROBOT_JAM_PROGRESSIONS: readonly (readonly RobotJamChord[])[] = [
@@ -170,12 +176,12 @@ type RobotJamEvent = {
   strumBeats: number;
   chance: number;
 };
+type RobotJamHumanMode = 'active' | 'leading' | 'silent';
 type RobotJamHumanState = {
-  activity: number;
-  densityScale: number;
   sinceLastNote: number;
-  recentlyPlayed: boolean;
-  quietBoost: number;
+  mode: RobotJamHumanMode;
+  /** Density multiplier: pad-only when active, full when silent. */
+  densityScale: number;
 };
 type CabinPlateLayer = {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
@@ -253,16 +259,16 @@ export class Game {
   private lastOrbHitAt = -10;
   private lastStarlacePluckAt = -10;
   private lastSynchronyAt = -10;
-  // Sliding window of human note-on times (in elapsed seconds). Old entries are
-  // dropped each robot-jam tick. Drives `humanDuckActivity` so the robot
-  // listens over a few seconds of average activity instead of reacting to a
-  // single hit.
-  private humanNoteTimes: number[] = [];
   private lastHumanNoteAt = -Infinity;
-  // Smoothed 0..1 measure of how busy the human is. 0 = quiet, 1 = saturated.
-  // Multiplied into robot density to make room when the human is playing.
-  private humanDuckActivity = 0;
-  private lastRobotJamTickAt = -1;
+  // Backing-track beat timestamps (elapsed seconds) — drives tempo lock.
+  private detectedBeatTimes: number[] = [];
+  // When tempo locks, this is the elapsed time of an anchor beat that pins
+  // slot 0; null until enough stable beats arrive.
+  private lockedTempoBpm: number | null = null;
+  private lockedPhaseAnchor = 0;
+  // Phrase generator state — when robot launches a multi-slot melodic line,
+  // we remember the slot it ends on so we don't double-trigger.
+  private robotJamPhraseEndsAtSlot = -1;
   private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
@@ -1210,7 +1216,6 @@ export class Game {
 
   private recordHumanNote(): void {
     const elapsed = (performance.now() - this.startedAt) / 1000;
-    this.humanNoteTimes.push(elapsed);
     this.lastHumanNoteAt = elapsed;
     this.duckRobotJamForHuman(elapsed);
   }
@@ -1413,10 +1418,8 @@ export class Game {
       this.releaseRobotJamNotes();
       this.robotJamNextAt = 0;
       this.robotJamStep = -1;
-      this.humanNoteTimes.length = 0;
       this.lastHumanNoteAt = -Infinity;
-      this.humanDuckActivity = 0;
-      this.lastRobotJamTickAt = elapsed;
+      this.robotJamPhraseEndsAtSlot = -1;
       return;
     }
 
@@ -1465,35 +1468,69 @@ export class Game {
   }
 
   /**
-   * Maintains the sliding-window count of human note-ons and returns the
-   * listening state the robot should apply right now. The window catches
-   * sustained human activity, while sinceLastNote creates the immediate
-   * call-and-response pocket after the player starts playing.
+   * Three-mode listener. `active` = human just hit a note (robot pad-only).
+   * `leading` = brief gap (robot fills with sparse accents). `silent` = long
+   * gap (robot solos with full phrase generator).
    */
   private updateHumanJamState(elapsed: number): RobotJamHumanState {
     const motion = this.robotMotion.params;
-    const dt = this.lastRobotJamTickAt < 0 ? 0 : Math.max(0, elapsed - this.lastRobotJamTickAt);
-    this.lastRobotJamTickAt = elapsed;
-
-    const cutoff = elapsed - motion.humanDuckWindow;
-    let drop = 0;
-    while (drop < this.humanNoteTimes.length && this.humanNoteTimes[drop] < cutoff) drop += 1;
-    if (drop > 0) this.humanNoteTimes.splice(0, drop);
-
-    const target = clamp(this.humanNoteTimes.length / Math.max(motion.humanDuckSaturate, 1), 0, 1);
-    const tau = motion.humanDuckSmoothTau;
-    const alpha = tau > 0 && dt > 0 ? 1 - Math.exp(-dt / tau) : 1;
-    this.humanDuckActivity += (target - this.humanDuckActivity) * alpha;
-
     const sinceLastNote = elapsed - this.lastHumanNoteAt;
-    const quietT = clamp((sinceLastNote - ROBOT_JAM_QUIET_AFTER) / 2.4, 0, 1);
-    return {
-      activity: this.humanDuckActivity,
-      densityScale: 1 - motion.humanDuckAmount * this.humanDuckActivity,
-      sinceLastNote,
-      recentlyPlayed: sinceLastNote < 1.15,
-      quietBoost: 1 + (ROBOT_JAM_IDLE_BOOST - 1) * quietT,
-    };
+    const leadingTime = motion.humanLeadingTime;
+    const floor = motion.humanDuckFloor;
+    const boost = motion.silentBoost;
+
+    let mode: RobotJamHumanMode;
+    let densityScale: number;
+    if (sinceLastNote < leadingTime * 0.5) {
+      mode = 'active';
+      densityScale = floor;
+    } else if (sinceLastNote < leadingTime * 2.5) {
+      mode = 'leading';
+      // Smooth ramp from floor → 1 across the leading window.
+      const t = clamp((sinceLastNote - leadingTime * 0.5) / (leadingTime * 2), 0, 1);
+      densityScale = lerp(floor, 1, t);
+    } else {
+      mode = 'silent';
+      // Continued ramp into boost so the robot pushes harder the longer the
+      // human is gone.
+      const t = clamp((sinceLastNote - leadingTime * 2.5) / 4, 0, 1);
+      densityScale = lerp(1, boost, t);
+    }
+    return { sinceLastNote, mode, densityScale };
+  }
+
+  /**
+   * Backing-track beat ingestion. Pushes new beat times, estimates BPM from
+   * recent intervals, and locks tempo + phase anchor when intervals are
+   * stable. Called from animate() whenever the analyzer fires a beat.
+   */
+  private ingestBackingTrackBeat(elapsed: number): void {
+    this.detectedBeatTimes.push(elapsed);
+    if (this.detectedBeatTimes.length > ROBOT_JAM_BEAT_HISTORY) {
+      this.detectedBeatTimes.shift();
+    }
+    if (this.detectedBeatTimes.length < 4) return;
+
+    const intervals: number[] = [];
+    for (let i = 1; i < this.detectedBeatTimes.length; i += 1) {
+      intervals.push(this.detectedBeatTimes[i] - this.detectedBeatTimes[i - 1]);
+    }
+    intervals.sort((a, b) => a - b);
+    const median = intervals[Math.floor(intervals.length / 2)];
+    if (median <= 0) return;
+
+    const minInterval = intervals[0];
+    const maxInterval = intervals[intervals.length - 1];
+    if ((maxInterval - minInterval) / median > ROBOT_JAM_BEAT_LOCK_TOLERANCE) return;
+
+    const bpm = 60 / median;
+    if (bpm < ROBOT_JAM_BEAT_BPM_MIN || bpm > ROBOT_JAM_BEAT_BPM_MAX) return;
+
+    this.lockedTempoBpm = bpm;
+    this.lockedPhaseAnchor = elapsed;
+    // Realign the next-fire moment so we don't trigger a stray off-grid note
+    // right after the lock changes the slot math.
+    this.robotJamNextAt = 0;
   }
 
   private scheduleNextRobotJam(elapsed: number): void {

@@ -46,19 +46,17 @@ type RobotPerformanceIntent = {
 };
 
 export const ROBOT_MOTION_DEFS = {
-  tempo:            { default: 78,   min: 50,  max: 160, step: 1,    label: 'tempo (BPM)' },
-  density:          { default: 0.62, min: 0.1, max: 1,   step: 0.01, label: 'density' },
-  swing:            { default: 0.18, min: 0,   max: 0.5, step: 0.01, label: 'swing' },
+  tempo:            { default: 92,   min: 50,  max: 160, step: 1,    label: 'tempo (BPM)' },
+  density:          { default: 0.84, min: 0.1, max: 1,   step: 0.01, label: 'density' },
+  swing:            { default: 0.16, min: 0,   max: 0.5, step: 0.01, label: 'swing' },
   gestureSize:      { default: 0.78, min: 0.2, max: 1.6, step: 0.01, label: 'gesture size' },
   playerFollow:     { default: 0.56, min: 0,   max: 1,   step: 0.01, label: 'player follow' },
-  // Sliding-window seconds the robot averages human note hits over to decide how much to duck its density.
-  humanDuckWindow:  { default: 2.8,  min: 1,   max: 8,   step: 0.1,  label: 'human duck window (s)' },
-  // Max fraction the robot density is reduced when human activity is fully saturated. 1 = silence robot.
-  humanDuckAmount:  { default: 0.82, min: 0,   max: 1,   step: 0.01, label: 'human duck amount' },
-  // Number of human notes within the window that maps to fully-saturated activity (1.0).
-  humanDuckSaturate:{ default: 6,    min: 1,   max: 30,  step: 1,    label: 'human duck saturate (notes)' },
-  // Exponential smoothing time constant (seconds) on top of the window — keeps transitions buttery so the robot doesn't snap density up/down on a single note.
-  humanDuckSmoothTau:{default: 0.55, min: 0,   max: 4,   step: 0.05, label: 'human duck smooth tau (s)' },
+  // Hard floor on robot density while human plays. 0.18 = robot keeps a soft pad / accents instead of shutting up.
+  humanDuckFloor:   { default: 0.32, min: 0,   max: 1,   step: 0.01, label: 'human duck floor' },
+  // How long after a human note the robot is in "leading" mode. After this it transitions to "silent" → robot solos.
+  humanLeadingTime: { default: 0.55, min: 0.1, max: 3,   step: 0.05, label: 'lead window (s)' },
+  // Robot density multiplier when player is silent for >= leadingTime. >1 amplifies idle activity.
+  silentBoost:      { default: 1.45, min: 1,   max: 3,   step: 0.05, label: 'silent boost' },
 } as const;
 
 const ROBOT_MOTION_CONST = {
