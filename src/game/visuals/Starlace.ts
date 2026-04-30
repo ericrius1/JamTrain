@@ -112,6 +112,7 @@ const STARLACE_MAX_NODE_DEGREE = 4;
 const STARLACE_MAX_LINK_SPAN = 0.33;
 const STARLACE_LINK_FADE_START = 0.18;
 const POINTER_PLUCK_MOTION_NDC_PER_SEC = 0.05;
+const POINTER_HOLD_KEY = 'pointer:primary';
 
 // Hz table for the current key. Refreshed per Starlace instance via the
 // KeyDirector subscription so each starlace harp picks up new tunings as the
@@ -246,6 +247,7 @@ export class Starlace implements PlayerVisual {
   private keyUnsubscribe?: () => void;
   private onPluckCallback?: (event: StarlacePluck) => void;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
+  private motionElapsed = 0;
   private keyDownListener?: (e: KeyboardEvent) => void;
   private keyUpListener?: (e: KeyboardEvent) => void;
   private keyBlurListener?: () => void;
@@ -261,6 +263,7 @@ export class Starlace implements PlayerVisual {
   private pointerLastAtMs = -Infinity;
   private pointerDown = false;
   private pointerClickQueued = false;
+  private pointerHeldNode = -1;
   private pointerNodeInside: boolean[] = [];
   private pointerSweepSeen: boolean[] = [];
   private pointerFrameFired: boolean[] = [];
@@ -371,11 +374,14 @@ export class Starlace implements PlayerVisual {
     this.active = visible;
     this.mesh.visible = visible;
     if (!visible) {
+      this.pointerDown = false;
+      this.releasePointerHold();
       this.previousContacts.clear();
       this.activeContactKeys.clear();
       this.currentContactKeys.clear();
       this.keyboardPaths.clear();
       this.keyboardHeldKeys.clear();
+      this.clearPointerState();
     }
   }
 
@@ -387,8 +393,11 @@ export class Starlace implements PlayerVisual {
 
   startHidden(): void {
     this.mesh.visible = false;
+    this.pointerDown = false;
+    this.releasePointerHold();
     this.keyboardPaths.clear();
     this.keyboardHeldKeys.clear();
+    this.clearPointerState();
     this.revealedFully = false;
     this.revealActive = false;
     this.fillRevealValues(0);
@@ -558,7 +567,9 @@ export class Starlace implements PlayerVisual {
   ): void {
     if (!this.active || delta <= 0) return;
 
+    const freezeForPointerHold = this.isPointerHoldActive();
     this.elapsed += delta;
+    if (!freezeForPointerHold) this.motionElapsed += delta;
     if (!this.initialized) {
       this.left.copy(leftPalm);
       this.right.copy(rightPalm);
@@ -576,7 +587,7 @@ export class Starlace implements PlayerVisual {
     this.right.lerp(rightPalm, palmAlpha);
     if (this.fixedAnchor) {
       this.anchor.copy(this.fixedAnchor);
-    } else {
+    } else if (!freezeForPointerHold) {
       _scratch.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
       _scratch.y += 0.05;
       const anchorAlpha = 1 - Math.exp(-delta / Math.max(0.05, this.params.anchorSmoothing));
@@ -590,7 +601,7 @@ export class Starlace implements PlayerVisual {
     this.smoothedExpression += (voice.expression - this.smoothedExpression) * (1 - Math.exp(-delta * 4));
     this.smoothedTension += (voice.tension - this.smoothedTension) * (1 - Math.exp(-delta * 3.6));
 
-    this.resolveAxes(delta);
+    if (!freezeForPointerHold) this.resolveAxes(delta);
     this.writeNodePositions();
     this.updateRevealValues();
     if (this.revealedFully && !this.revealActive) {
@@ -601,6 +612,7 @@ export class Starlace implements PlayerVisual {
     } else {
       this.keyboardPaths.clear();
       this.keyboardHeldKeys.clear();
+      this.releasePointerHold();
       this.clearPointerState();
     }
     this.decayPulses(delta);
@@ -789,7 +801,7 @@ export class Starlace implements PlayerVisual {
     }
 
     if (this.params.danceAmount > 0 && this.params.danceSpeed > 0) {
-      const phase = this.elapsed * this.params.danceSpeed * TAU + (this.palette === 'remote' ? 0.72 : 0);
+      const phase = this.motionElapsed * this.params.danceSpeed * TAU + (this.palette === 'remote' ? 0.72 : 0);
       const yaw = Math.sin(phase) * this.params.danceAmount;
       this.targetAxis.applyAxisAngle(_worldUp, yaw);
     }
@@ -808,7 +820,7 @@ export class Starlace implements PlayerVisual {
     const width = this.params.width * (0.88 + this.smoothedTension * 0.24) + clamp(handSpan - 0.42, -0.18, 0.36) * 0.26;
     const height = this.params.height * (0.90 + this.smoothedEnergy * 0.14);
     const depth = this.params.depth * (0.72 + this.smoothedExpression * 0.38);
-    const time = this.elapsed * this.params.driftSpeed;
+    const time = this.motionElapsed * this.params.driftSpeed;
 
     for (let i = 0; i < this.nodes.length; i += 1) {
       const n = this.nodes[i];
@@ -900,7 +912,7 @@ export class Starlace implements PlayerVisual {
 
     for (let i = 0; i < this.nodes.length; i += 1) {
       const node = this.nodes[i];
-      const twinkle = 0.5 + Math.sin(this.elapsed * (1.2 + node.seed * 1.7) + node.seed * TAU) * 0.5;
+      const twinkle = 0.5 + Math.sin(this.motionElapsed * (1.2 + node.seed * 1.7) + node.seed * TAU) * 0.5;
       const pitchGlow = 1 - Math.abs((node.noteIndex / (this.hzTable.length - 1)) - this.smoothedPitch);
       const pulse = clamp(node.pulse + pitchGlow * this.smoothedEnergy * 0.18 + twinkle * 0.07, 0, 1);
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
@@ -910,9 +922,9 @@ export class Starlace implements PlayerVisual {
 
       _dummy.position.copy(node.world);
       _dummy.rotation.set(
-        this.elapsed * (0.18 + node.seed * 0.18) + node.seed * TAU,
-        this.elapsed * (0.14 + node.seed * 0.16) + node.u * 2.1,
-        this.elapsed * (0.10 + node.seed * 0.12) + node.v * 2.4,
+        this.motionElapsed * (0.18 + node.seed * 0.18) + node.seed * TAU,
+        this.motionElapsed * (0.14 + node.seed * 0.16) + node.u * 2.1,
+        this.motionElapsed * (0.10 + node.seed * 0.12) + node.v * 2.4,
       );
       _dummy.scale.setScalar(drawSize);
       _dummy.updateMatrix();
@@ -999,9 +1011,11 @@ export class Starlace implements PlayerVisual {
     };
     this.pointerUpListener = () => {
       this.pointerDown = false;
+      this.releasePointerHold();
     };
     this.pointerCancelListener = () => {
       this.pointerDown = false;
+      this.releasePointerHold();
       this.clearPointerState();
     };
 
@@ -1031,6 +1045,7 @@ export class Starlace implements PlayerVisual {
 
   private clearPointerState(): void {
     if (this.pointerDown) return;
+    this.releasePointerHold();
     this.pointerClickQueued = false;
     this.pointerNdcPrevValid = false;
     this.pointerLastAtMs = -Infinity;
