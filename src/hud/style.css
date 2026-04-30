@@ -1278,9 +1278,14 @@
 }
 .creature-picker-btn:disabled { cursor: default; }
 .creature-picker-btn.active {
-  color: var(--creature-color);
+  color: #ffd76a;
   border-color: var(--creature-color);
   box-shadow: 0 0 14px color-mix(in srgb, var(--creature-color) 35%, transparent);
+}
+.creature-picker-btn.active svg {
+  filter:
+    drop-shadow(0 0 4px #ffd76a)
+    drop-shadow(0 0 10px color-mix(in srgb, var(--sun) 70%, transparent));
 }
 .creature-picker-btn svg { display: block; width: 22px; height: 22px; }
 
@@ -1343,9 +1348,14 @@
 }
 .instrument-picker-btn:disabled { cursor: default; }
 .instrument-picker-btn.active {
-  color: var(--instrument-color);
+  color: #ffd76a;
   border-color: var(--instrument-color);
   box-shadow: 0 0 14px color-mix(in srgb, var(--instrument-color) 35%, transparent);
+}
+.instrument-picker-btn.active svg {
+  filter:
+    drop-shadow(0 0 4px #ffd76a)
+    drop-shadow(0 0 10px color-mix(in srgb, var(--sun) 70%, transparent));
 }
 .instrument-picker-btn svg { display: block; width: 22px; height: 22px; }
 
