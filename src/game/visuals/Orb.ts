@@ -33,6 +33,7 @@ import {
   type VoiceState,
 } from '../instruments';
 import { clamp } from '../math';
+import { orbLfo, type OrbLfoTarget } from '../orbLfo';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
 type OrbPalette = 'local' | 'remote';
@@ -47,6 +48,16 @@ export const ORB_DEFS = {
   envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
   envSustain:        { default: DEFAULT_ORB_ENVELOPE.sustain, min: 0,     max: 1,   step: 0.01,  folder: 'Envelope', label: 'sustain' },
   envRelease:        { default: DEFAULT_ORB_ENVELOPE.release, min: 0.01,  max: 5.0, step: 0.01,  folder: 'Envelope', label: 'release s' },
+  lfoRate:           { default: 1.5, min: 0.05, max: 12, step: 0.05, folder: 'Filter LFO', label: 'rate Hz' },
+  lfoDepth:          { default: 0.55, min: 0, max: 1, step: 0.01, folder: 'Filter LFO', label: 'depth' },
+  lfoTarget:         {
+    type: 'select',
+    default: 'cutoff',
+    options: { 'cutoff': 'cutoff', 'resonance Q': 'resonance' },
+    folder: 'Filter LFO',
+    label: 'target',
+  },
+  lfoStreamWave:     { default: 0.7, min: 0, max: 1, step: 0.01, folder: 'Filter LFO', label: 'particle wave' },
 } as const;
 
 export type OrbParams = ParamsOf<typeof ORB_DEFS>;
@@ -444,6 +455,10 @@ export class Orb implements PlayerVisual {
         ringRadius:        () => this.layoutOrbs(),
         pyramidRowSpacing: () => this.layoutOrbs(),
         pyramidStartHeight: () => this.layoutOrbs(),
+        lfoRate:           v => { orbLfo.rate = v; },
+        lfoDepth:          v => { orbLfo.depth = v; },
+        lfoTarget:         v => { orbLfo.target = v as OrbLfoTarget; },
+        lfoStreamWave:     v => { orbLfo.streamWaveAmount = v; },
       },
     });
 
@@ -1285,7 +1300,11 @@ export class Orb implements PlayerVisual {
         held.streamCarry = 0;
         continue;
       }
-      const rate = (HELD_STREAM_BASE_RATE + held.velocity * HELD_STREAM_VELOCITY_RATE) * amount;
+      // Modulate emission rate by the shared LFO so held streams emerge as
+      // wave packets in lockstep with the audible filter sweep.
+      const wave = orbLfo.streamWaveAmount;
+      const ratePulse = wave > 0 ? 1 + (orbLfo.unipolar - 0.5) * wave * 1.6 : 1;
+      const rate = (HELD_STREAM_BASE_RATE + held.velocity * HELD_STREAM_VELOCITY_RATE) * amount * Math.max(0, ratePulse);
       held.streamCarry += rate * streamDelta;
       const count = Math.floor(held.streamCarry);
       if (count <= 0) continue;
@@ -1461,13 +1480,18 @@ export class Orb implements PlayerVisual {
     dir.normalize();
     const spark = this.orbs[orbIndex]?.uniforms.sparkColor;
     if (!spark) return;
+    // Spark speed is offset by the bipolar LFO so consecutive emission ticks
+    // land at different speeds — leading edge faster, trailing edge slower —
+    // producing a visible wave train along the stream.
+    const wave = orbLfo.streamWaveAmount;
+    const speedMod = wave > 0 ? 1 + orbLfo.value * wave * 0.55 : 1;
     sink.emit({
       kind: 'orb',
       origin: worldPosition.clone(),
       direction: dir.clone(),
       color: { r: spark.r, g: spark.g, b: spark.b },
       count: count ?? Math.round(40 + velocity * 40),
-      speed: 0.9 + velocity * 1.4,
+      speed: (0.9 + velocity * 1.4) * Math.max(0.25, speedMod),
     });
   }
 

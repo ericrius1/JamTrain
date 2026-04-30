@@ -10,6 +10,7 @@ import {
 } from './harmony';
 import { keyDirector } from './keyDirector';
 import { clamp } from './math';
+import { orbLfo } from './orbLfo';
 import type { HandPose, PlayerPose } from './types';
 import type { InstrumentId, OrbEnvelopeSettings, OrbGestureState, VoiceState } from './instruments';
 import { DEFAULT_ORB_ENVELOPE, voiceStateZero } from './instruments';
@@ -145,6 +146,9 @@ type OrbVoice = {
   lastSparkAt: number;
   lastHitCount: number;
   lastNoteIdx: number;
+  // Gesture-derived filter target; LFO modulates around these each frame.
+  baseFilterHz: number;
+  baseFilterQ: number;
 };
 
 type StarlaceVoice = {
@@ -1110,6 +1114,8 @@ export class HandSynthEngine {
       lastSparkAt: -Infinity,
       lastHitCount: 0,
       lastNoteIdx: -1,
+      baseFilterHz: 3400,
+      baseFilterQ: 0.68,
     };
   }
 
@@ -1171,9 +1177,8 @@ export class HandSynthEngine {
       orb.subGain.gain.rampTo(sub, PARAM_RAMP * 1.4);
       orb.shimmerGain.gain.rampTo(shimmer, PARAM_RAMP);
 
-      const filterHz = 520 + depth * 1150 + speed * 2400 + heightN * 820;
-      orb.filter.frequency.rampTo(clamp(filterHz, 420, 5600), PARAM_RAMP);
-      orb.filter.Q.rampTo(0.62 + depth * 0.42 + speed * 0.75, PARAM_RAMP);
+      orb.baseFilterHz = clamp(520 + depth * 1150 + speed * 2400 + heightN * 820, 420, 5600);
+      orb.baseFilterQ = 0.62 + depth * 0.42 + speed * 0.75;
       orb.panner.pan.rampTo(clamp((player === 'local' ? -0.10 : 0.10) + gesture.x * 0.36, -0.85, 0.85), PARAM_RAMP);
 
       const sparkGap = 0.22 - speed * 0.09;
@@ -1200,6 +1205,21 @@ export class HandSynthEngine {
       orb.tension += (0.35 - orb.tension) * (1 - Math.exp(-delta * 4));
       orb.pulse = Math.max(0, orb.pulse - delta * 3.0);
     }
+
+    // LFO mod around the gesture-derived base. Cutoff: exponential ±depth
+    // octaves so equal-perceptual sweep up/down. Resonance: additive to Q.
+    // Always applied so a subsequent strike already lands on a wobbling filter.
+    const lfoVal = orbLfo.value;
+    const lfoDepth = orbLfo.depth;
+    let modHz = orb.baseFilterHz;
+    let modQ = orb.baseFilterQ;
+    if (orbLfo.target === 'cutoff') {
+      modHz = clamp(orb.baseFilterHz * Math.pow(2, lfoVal * lfoDepth), 200, 7000);
+    } else {
+      modQ = clamp(orb.baseFilterQ + lfoVal * lfoDepth * 8, 0.3, 14);
+    }
+    orb.filter.frequency.rampTo(modHz, PARAM_RAMP);
+    orb.filter.Q.rampTo(modQ, PARAM_RAMP);
 
     // Wet send rises with energy — more reverb tail when actively playing.
     const wet = clamp(0.22 + orb.energy * 0.42 + (gestureActive ? gesture.depth * 0.10 : 0), 0, 0.82);

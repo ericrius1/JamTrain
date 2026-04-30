@@ -43,8 +43,7 @@ export class DevOverlay {
     Object.assign(this.infoPanel.style, {
       position: 'fixed',
       top: '8px',
-      left: '50%',
-      transform: 'translateX(-50%)',
+      right: '8px',
       padding: '4px 10px',
       font: '12px/1.2 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
       color: '#e0e0e0',

@@ -24,6 +24,7 @@ import { HumanoidRig } from './rig/HumanoidRig';
 import { RobotMotionController, type RobotPerformanceContext } from './robotMotion';
 import { ScenerySystem } from './scenery';
 import { keyDirector } from './keyDirector';
+import { orbLfo } from './orbLfo';
 import { hashString } from './seedRandom';
 import { fingerJointNames, fingerNames, handednesses, type Handedness, type PlayerPose, type Vec3Data } from './types';
 import { WebRTCClient } from './webrtc';
@@ -68,6 +69,11 @@ const ROBOT_JAM_ORB_LISTEN_GAP = 0.18;
 const ROBOT_JAM_STARLACE_LISTEN_GAP = 0.32;
 // Cap simultaneous robot voices so phrases can layer without stacking up forever.
 const ROBOT_JAM_MAX_CONCURRENT = 6;
+// Visual hand target bias for the robot stand-in. The sound still lands on the
+// real note target, but the puppet hand is aimed a little closer to the robot
+// so the illustrated palm reads as behind the pad instead of punching through it.
+const ROBOT_HAND_TARGET_BACKSET = 0.11;
+const ROBOT_HAND_TARGET_LOOKAHEAD = 0.62;
 // Beat-tracking window: keep last N detected backing-track beats to estimate tempo.
 const ROBOT_JAM_BEAT_HISTORY = 8;
 // Tempo lock requires median interval variance under this fraction.
@@ -324,6 +330,9 @@ export class Game {
   private readonly remoteRightPalm = new THREE.Vector3();
   private readonly robotInstrumentTargets: Record<Handedness, Vec3Data[]> = { left: [], right: [] };
   private readonly robotJamStrikeTarget: Vec3Data = { x: 0, y: 0, z: 0 };
+  private readonly robotFocusedWorldTargets: THREE.Vector3[] = [];
+  private readonly robotFocusedWorldTargetIndices: number[] = [];
+  private readonly robotTargetWorldScratch = new THREE.Vector3();
   private hiddenStartedAt: number | null = null;
   private frameRenderListeners = new Set<() => void>();
   constructor(
@@ -1351,7 +1360,7 @@ export class Game {
       trackedHands: this.handTracker.getTrackedHands(),
     });
     const remoteFromNetwork = this.poseSession.getRemotePose();
-    const robotPerformance = this.partnerPresent ? undefined : this.updateRobotInstrumentTargets();
+    const robotPerformance = this.partnerPresent ? undefined : this.updateRobotInstrumentTargets(elapsed);
     const robotHands = this.robotMotion.update(this.motionElapsed, motionDelta, localPose, robotPerformance);
     const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, {
       isRobot: true,
@@ -1370,9 +1379,13 @@ export class Game {
     this.localRig.update(localPose, delta, 0);
     this.remoteRig.update(remotePose, delta, robotTarget);
 
+    orbLfo.tick(motionDelta);
     this.updatePlayerVisuals(motionDelta, elapsed);
     const beat = this.backingTrackAnalyzer.tick(performance.now());
-    if (beat) this.sculptor.triggerRipple(beat.intensity);
+    if (beat) {
+      this.sculptor.triggerRipple(beat.intensity);
+      this.ingestBackingTrackBeat(elapsed);
+    }
     this.sculptor.update(delta);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
@@ -1442,7 +1455,9 @@ export class Game {
       return;
     }
 
-    if (this.robotJamActive.length > 0 || this.robotJamPending.length > 0) {
+    // Note-count cap so phrases can layer without runaway stacking.
+    const concurrent = this.robotJamActive.length + this.robotJamPending.length;
+    if (concurrent >= ROBOT_JAM_MAX_CONCURRENT) {
       this.robotJamStep = slotIndex;
       this.scheduleNextRobotJam(elapsed);
       return;
@@ -1452,19 +1467,96 @@ export class Game {
     const phraseIndex = Math.floor(slotIndex / Math.max(1, ROBOT_JAM_SLOTS_PER_BAR * ROBOT_JAM_PHRASE_BARS));
     const seed = slotIndex * 17.17 + phraseIndex * 5.31 + this.roomSeed * 0.029;
     const motion = this.robotMotion.params;
-    const event = this.pickRobotJamEvent(instrument, slotIndex, seed, humanState);
     this.robotJamStep = slotIndex;
 
+    // When player is silent and we're at a downbeat with no active phrase,
+    // launch a multi-slot melodic line (only meaningful for starlace; orb
+    // already lays a chord pad via its slot-0 event).
+    if (
+      instrument === 'starlace'
+      && humanState.mode === 'silent'
+      && slotIndex > this.robotJamPhraseEndsAtSlot
+      && positiveModulo(slotIndex, ROBOT_JAM_SLOTS_PER_BAR) === 0
+      && hash(seed + 13.7) < 0.78
+    ) {
+      const launched = this.queueRobotJamMelodicPhrase(elapsed, slotIndex, seed);
+      if (launched > 0) {
+        this.robotJamPhraseEndsAtSlot = slotIndex + launched - 1;
+        this.scheduleNextRobotJam(elapsed);
+        return;
+      }
+    }
+
+    const event = this.pickRobotJamEvent(instrument, slotIndex, seed, humanState);
     if (event) {
       const densityScale = (instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : 1)
-        * humanState.densityScale
-        * humanState.quietBoost;
+        * humanState.densityScale;
       const playChance = clamp(motion.density * densityScale * event.chance, 0, 0.98);
       if (hash(seed + 0.97) < playChance) {
         this.queueRobotJamGesture(elapsed, instrument, slotIndex, seed, event);
       }
     }
     this.scheduleNextRobotJam(elapsed);
+  }
+
+  /**
+   * Build a 4–8 note melodic line over upcoming slots using the current
+   * chord's tones + colors + a motif. Notes are queued as pending with
+   * staggered startAt; returns the number of slots consumed.
+   */
+  private queueRobotJamMelodicPhrase(elapsed: number, slotIndex: number, seed: number): number {
+    const motion = this.robotMotion.params;
+    const slotSec = this.effectiveSlotSec();
+    const beatSec = slotSec * ROBOT_JAM_SLOTS_PER_BEAT;
+    const chord = this.robotJamChordForSlot(slotIndex);
+    const motifSet = ROBOT_JAM_STARLACE_MOTIFS[
+      positiveModulo(Math.floor(seed * 0.13), ROBOT_JAM_STARLACE_MOTIFS.length)
+    ] ?? ROBOT_JAM_STARLACE_MOTIFS[0];
+    const root = chord.tones[0] ?? chord.root;
+    // Phrase length: 5–8 notes, with rhythm = 1 or 2 slots between hits.
+    const phraseLen = 5 + Math.floor(hash(seed + 21.1) * 4); // 5..8
+    const ridingHigh = hash(seed + 22.2) > 0.4;
+
+    let cursorSlots = 0;
+    let added = 0;
+    const visual = this.playerVisuals.remote;
+    if (!visual?.triggerMidiNoteOn) return 0;
+
+    for (let i = 0; i < phraseLen; i += 1) {
+      const motifOffset = motifSet[positiveModulo(i, motifSet.length)] ?? 0;
+      const accent = i === 0 ? 0 : hash(seed + i * 4.71) > 0.65 ? 1 : 0;
+      const degree = root + (ridingHigh ? 7 : 0) + motifOffset + accent;
+      const startAt = elapsed + cursorSlots * slotSec;
+      // Hold ~1.4 slots so notes overlap a tiny bit, building melodic flow.
+      const holdSec = beatSec * lerp(0.55, 1.10, hash(seed + i * 5.13));
+      const velocity = clamp(0.36 + hash(seed + i * 7.91) * 0.20 - i * 0.012, 0.22, 0.74);
+      const noteNumber = 36 + clamp(degree, 0, 25);
+      const sourceId = `robot-phrase:${slotIndex}:${i}`;
+      this.robotJamPending.push({
+        instrument: 'starlace',
+        noteNumber,
+        sourceId,
+        startAt,
+        releaseAt: startAt + holdSec,
+        velocity,
+        seed: seed + i * 3.07,
+      });
+      added += 1;
+      // Rhythm: most notes 1 slot apart, occasionally 2 slots for breath.
+      cursorSlots += hash(seed + i * 9.13) > 0.78 ? 2 : 1;
+      // Don't blow past phrase budget.
+      if (cursorSlots >= ROBOT_JAM_SLOTS_PER_BAR * 2) break;
+    }
+
+    // Apply density gating to whole phrase, not per-note, so silent-mode
+    // produces continuous lines rather than fragmented chance-gated notes.
+    const phraseChance = clamp(motion.density * 1.1, 0.4, 0.98);
+    if (hash(seed + 0.97) > phraseChance) {
+      // Roll back this phrase if density says no — drop the just-pushed pending entries.
+      this.robotJamPending.splice(this.robotJamPending.length - added, added);
+      return 0;
+    }
+    return Math.max(1, cursorSlots);
   }
 
   /**
@@ -1528,27 +1620,34 @@ export class Game {
 
     this.lockedTempoBpm = bpm;
     this.lockedPhaseAnchor = elapsed;
-    // Realign the next-fire moment so we don't trigger a stray off-grid note
-    // right after the lock changes the slot math.
+    // Slot index is computed relative to the anchor — resetting it keeps
+    // robotJamStep and robotJamPhraseEndsAtSlot from pointing into the past
+    // and silently skipping the next ~30 slots after a lock.
+    this.robotJamStep = -1;
+    this.robotJamPhraseEndsAtSlot = -1;
     this.robotJamNextAt = 0;
   }
 
+  private effectiveSlotSec(): number {
+    const bpm = this.lockedTempoBpm ?? Math.max(this.robotMotion.params.tempo, 1);
+    return (60 / bpm) / ROBOT_JAM_SLOTS_PER_BEAT;
+  }
+
   private scheduleNextRobotJam(elapsed: number): void {
-    const motion = this.robotMotion.params;
-    const beatSec = 60 / Math.max(motion.tempo, 1);
-    const slotSec = beatSec / ROBOT_JAM_SLOTS_PER_BEAT;
-    // Quantize to next slot boundary in elapsed time so notes line up across calls.
-    const slotIndex = Math.floor(elapsed / slotSec + 1e-4) + 1;
-    let nextAt = slotIndex * slotSec;
+    const slotSec = this.effectiveSlotSec();
+    const anchor = this.lockedPhaseAnchor;
+    // Quantize to next slot boundary relative to the locked phase anchor so
+    // the robot's grid aligns with the backing-track downbeats once locked.
+    const slotIndex = Math.floor((elapsed - anchor) / slotSec + 1e-4) + 1;
+    let nextAt = anchor + slotIndex * slotSec;
     // Apply swing to off-beat (odd) slots: delay by up to swing * slotSec.
-    if (slotIndex % 2 === 1) nextAt += motion.swing * slotSec;
+    if (slotIndex % 2 === 1) nextAt += this.robotMotion.params.swing * slotSec;
     this.robotJamNextAt = nextAt;
   }
 
   private robotJamSlotIndex(elapsed: number): number {
-    const beatSec = 60 / Math.max(this.robotMotion.params.tempo, 1);
-    const slotSec = beatSec / ROBOT_JAM_SLOTS_PER_BEAT;
-    return Math.max(0, Math.floor(elapsed / slotSec + 1e-4));
+    const slotSec = this.effectiveSlotSec();
+    return Math.max(0, Math.floor((elapsed - this.lockedPhaseAnchor) / slotSec + 1e-4));
   }
 
   private pickRobotJamEvent(
@@ -1571,7 +1670,8 @@ export class Game {
   ): RobotJamEvent | null {
     if (human.sinceLastNote < ROBOT_JAM_ORB_LISTEN_GAP) return null;
     const slotInBar = positiveModulo(slotIndex, ROBOT_JAM_SLOTS_PER_BAR);
-    const activeHuman = human.activity > ROBOT_JAM_HUMAN_ACTIVE || human.recentlyPlayed;
+    const isActive = human.mode === 'active';
+    const isSilent = human.mode === 'silent';
     const root = chord.tones[0] ?? chord.root;
     const third = chord.tones[1] ?? chord.root + 2;
     const fifth = chord.tones[2] ?? chord.root + 4;
@@ -1579,34 +1679,32 @@ export class Game {
     const color = chord.colors[0] ?? chord.root + 8;
 
     if (slotInBar === 0) {
-      const spacious = !activeHuman && human.sinceLastNote > ROBOT_JAM_QUIET_AFTER;
-      const degrees = activeHuman
+      const degrees = isActive
         ? [third, seventh]
-        : spacious && hash(seed + 0.35) > 0.34
+        : isSilent && hash(seed + 0.35) > 0.30
           ? [root + 7, third + 7, seventh, color]
           : [root, fifth, seventh];
       return {
         degrees: this.normalizeRobotJamDegrees(degrees),
-        holdBeats: activeHuman ? 1.15 : spacious ? 3.25 : 2.05,
-        velocity: activeHuman ? 0.30 + hash(seed + 2.7) * 0.10 : 0.38 + hash(seed + 2.7) * 0.16,
+        holdBeats: isActive ? 1.15 : isSilent ? 3.25 : 2.05,
+        velocity: isActive ? 0.28 + hash(seed + 2.7) * 0.08 : 0.38 + hash(seed + 2.7) * 0.16,
         strumBeats: 0.10 + hash(seed + 3.1) * 0.07,
-        chance: activeHuman ? 0.54 : spacious ? 0.96 : 0.82,
+        chance: isActive ? 0.62 : isSilent ? 0.96 : 0.82,
       };
     }
 
     if (slotInBar === ROBOT_JAM_SLOTS_PER_BEAT * 2) {
-      if (activeHuman && hash(seed + 0.61) < 0.58) return null;
       const useColor = hash(seed + 0.83) > 0.48;
       return {
         degrees: this.normalizeRobotJamDegrees(useColor ? [third, color] : [fifth, seventh]),
-        holdBeats: activeHuman ? 0.75 : 1.35 + hash(seed + 1.9) * 0.45,
-        velocity: activeHuman ? 0.26 + hash(seed + 4.2) * 0.10 : 0.34 + hash(seed + 4.2) * 0.14,
+        holdBeats: isActive ? 0.75 : 1.35 + hash(seed + 1.9) * 0.45,
+        velocity: isActive ? 0.24 + hash(seed + 4.2) * 0.08 : 0.34 + hash(seed + 4.2) * 0.14,
         strumBeats: 0.07 + hash(seed + 4.8) * 0.06,
-        chance: activeHuman ? 0.30 : 0.56,
+        chance: isActive ? 0.36 : isSilent ? 0.78 : 0.56,
       };
     }
 
-    if (!activeHuman && (slotInBar === ROBOT_JAM_SLOTS_PER_BAR - 2 || slotInBar === ROBOT_JAM_SLOTS_PER_BAR - 1)) {
+    if (!isActive && (slotInBar === ROBOT_JAM_SLOTS_PER_BAR - 2 || slotInBar === ROBOT_JAM_SLOTS_PER_BAR - 1)) {
       const slotsToNextBar = ROBOT_JAM_SLOTS_PER_BAR - slotInBar;
       const next = this.robotJamChordForSlot(slotIndex + slotsToNextBar);
       const nextThird = next.tones[1] ?? next.root + 2;
@@ -1616,7 +1714,7 @@ export class Game {
         holdBeats: 0.42 + hash(seed + 5.9) * 0.22,
         velocity: 0.28 + hash(seed + 6.3) * 0.12,
         strumBeats: 0,
-        chance: human.sinceLastNote > ROBOT_JAM_QUIET_AFTER ? 0.44 : 0.24,
+        chance: isSilent ? 0.66 : 0.40,
       };
     }
 
@@ -1631,10 +1729,16 @@ export class Game {
   ): RobotJamEvent | null {
     if (human.sinceLastNote < ROBOT_JAM_STARLACE_LISTEN_GAP) return null;
     const slotInBar = positiveModulo(slotIndex, ROBOT_JAM_SLOTS_PER_BAR);
-    const activeHuman = human.activity > ROBOT_JAM_HUMAN_ACTIVE || human.recentlyPlayed;
-    const allowed = activeHuman
-      ? slotInBar === 5 || slotInBar === 7
-      : slotInBar % 2 === 1 || slotInBar === 2 || slotInBar === 6;
+    const isActive = human.mode === 'active';
+    const isSilent = human.mode === 'silent';
+    // 'active' → only ghost-hits on offbeats. 'leading' → most odd slots + 2,6.
+    // 'silent' → every slot is fair game (the dedicated phrase generator
+    // handles bar-aligned runs; this picker fills in between).
+    const allowed = isActive
+      ? slotInBar === 3 || slotInBar === 5 || slotInBar === 7
+      : isSilent
+        ? true
+        : slotInBar % 2 === 1 || slotInBar === 2 || slotInBar === 6;
     if (!allowed) return null;
 
     const motifSet = ROBOT_JAM_STARLACE_MOTIFS[
@@ -1644,13 +1748,13 @@ export class Game {
     const motifOffset = motifSet[positiveModulo(phraseStep, motifSet.length)] ?? 0;
     const highAnchor = chord.root + 7 + motifOffset;
     const neighbor = hash(seed + 7.2) > 0.56 ? 2 : -1;
-    const twoNote = !activeHuman && hash(seed + 7.7) > 0.76;
+    const twoNote = !isActive && hash(seed + 7.7) > 0.72;
     return {
       degrees: this.normalizeRobotJamDegrees(twoNote ? [highAnchor, highAnchor + neighbor] : [highAnchor]),
-      holdBeats: activeHuman ? 0.58 + hash(seed + 8.1) * 0.25 : 0.92 + hash(seed + 8.1) * 0.78,
-      velocity: activeHuman ? 0.30 + hash(seed + 8.8) * 0.14 : 0.38 + hash(seed + 8.8) * 0.20,
+      holdBeats: isActive ? 0.42 + hash(seed + 8.1) * 0.20 : 0.92 + hash(seed + 8.1) * 0.78,
+      velocity: isActive ? 0.24 + hash(seed + 8.8) * 0.10 : 0.38 + hash(seed + 8.8) * 0.20,
       strumBeats: twoNote ? 0.14 + hash(seed + 9.2) * 0.08 : 0,
-      chance: activeHuman ? 0.34 : human.sinceLastNote > ROBOT_JAM_QUIET_AFTER ? 0.74 : 0.52,
+      chance: isActive ? 0.30 : isSilent ? 0.78 : 0.58,
     };
   }
 
@@ -1684,16 +1788,17 @@ export class Game {
     seed: number,
     event: RobotJamEvent,
   ): number {
-    const beatSec = 60 / Math.max(this.robotMotion.params.tempo, 1);
+    const beatSec = this.effectiveSlotSec() * ROBOT_JAM_SLOTS_PER_BEAT;
     const maxStrum = ROBOT_JAM_STRUM_MAX_OFFSET;
     const strum = event.degrees.length > 1
       ? Math.min(maxStrum, beatSec * event.strumBeats)
       : 0;
     const hold = beatSec * event.holdBeats;
 
-    this.robotJamPending = event.degrees.map((degree, index) => {
+    let added = 0;
+    event.degrees.forEach((degree, index) => {
       const startAt = elapsed + index * strum;
-      return {
+      this.robotJamPending.push({
         instrument,
         noteNumber: 36 + degree,
         sourceId: `robot:${gestureIndex}:${index}:${degree}`,
@@ -1701,9 +1806,10 @@ export class Game {
         releaseAt: startAt + hold,
         velocity: clamp(event.velocity * (0.92 + hash(seed + index * 1.91 + 0.67) * 0.18) - index * 0.025, 0.18, 0.82),
         seed: seed + index * 3.07,
-      };
+      });
+      added += 1;
     });
-    return this.robotJamPending.length;
+    return added;
   }
 
   private startDueRobotJamNotes(elapsed: number): void {
@@ -1732,7 +1838,11 @@ export class Game {
     if (!targets?.length) return;
     const hand: Handedness = hash(seed + 1.03) < 0.5 ? 'left' : 'right';
     const index = positiveModulo(Math.round(noteNumber) - 36, targets.length);
-    this.remoteRig.worldToPosePoint(hand, targets[index], this.robotJamStrikeTarget);
+    this.remoteRig.worldToPosePoint(
+      hand,
+      this.robotHandTargetWorldPoint(targets[index], this.robotTargetWorldScratch),
+      this.robotJamStrikeTarget,
+    );
     this.robotMotion.cueStrike(hand, this.robotJamStrikeTarget, clamp(velocity, 0, 1), elapsed);
   }
 
@@ -1760,17 +1870,23 @@ export class Game {
     visual?.triggerMidiNoteOff?.(note.noteNumber, note.sourceId);
   }
 
-  private updateRobotInstrumentTargets(): RobotPerformanceContext | undefined {
+  private updateRobotInstrumentTargets(elapsed: number): RobotPerformanceContext | undefined {
     const worldTargets = this.playerVisuals.remote?.getPerformanceTargets?.();
     if (!worldTargets?.length) return undefined;
 
-    const count = Math.min(worldTargets.length, 32);
+    const focusedTargets = this.collectRobotFocusedWorldTargets(worldTargets, elapsed);
+    const sourceTargets = focusedTargets.length > 0 ? focusedTargets : worldTargets;
+    const count = Math.min(sourceTargets.length, 32);
     for (const hand of handednesses) {
       const targets = this.robotInstrumentTargets[hand];
       targets.length = 0;
       for (let i = 0; i < count; i += 1) {
         const out = targets[i] ?? { x: 0, y: 0, z: 0 };
-        this.remoteRig.worldToPosePoint(hand, worldTargets[i], out);
+        this.remoteRig.worldToPosePoint(
+          hand,
+          this.robotHandTargetWorldPoint(sourceTargets[i], this.robotTargetWorldScratch),
+          out,
+        );
         targets[i] = out;
       }
       targets.length = count;
@@ -1780,6 +1896,43 @@ export class Game {
       instrument: this.playerInstruments.remote,
       targets: this.robotInstrumentTargets,
     };
+  }
+
+  private collectRobotFocusedWorldTargets(worldTargets: readonly THREE.Vector3[], elapsed: number): readonly THREE.Vector3[] {
+    this.robotFocusedWorldTargets.length = 0;
+    this.robotFocusedWorldTargetIndices.length = 0;
+    const addNoteTarget = (note: RobotJamNote): void => {
+      if (note.instrument !== this.playerInstruments.remote) return;
+      const index = this.robotTargetIndexForNote(note.noteNumber, worldTargets.length);
+      if (index < 0 || this.robotFocusedWorldTargetIndices.includes(index)) return;
+      const target = worldTargets[index];
+      if (!target) return;
+      this.robotFocusedWorldTargetIndices.push(index);
+      this.robotFocusedWorldTargets.push(target);
+    };
+
+    for (const note of this.robotJamActive) {
+      if (note.releaseAt >= elapsed - 0.05) addNoteTarget(note);
+    }
+    for (const note of this.robotJamPending) {
+      if (note.startAt <= elapsed + ROBOT_HAND_TARGET_LOOKAHEAD && note.releaseAt >= elapsed - 0.05) {
+        addNoteTarget(note);
+      }
+    }
+
+    return this.robotFocusedWorldTargets;
+  }
+
+  private robotTargetIndexForNote(noteNumber: number, targetCount: number): number {
+    if (targetCount <= 0 || !Number.isFinite(noteNumber)) return -1;
+    return positiveModulo(Math.round(noteNumber) - 36, targetCount);
+  }
+
+  private robotHandTargetWorldPoint(point: THREE.Vector3, target = new THREE.Vector3()): THREE.Vector3 {
+    const dir = this.multiplayer.partnerSeatIndex === 0 ? 1 : -1;
+    target.copy(point);
+    target.z += dir * ROBOT_HAND_TARGET_BACKSET;
+    return target;
   }
 
   private updateVisualContacts(

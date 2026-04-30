@@ -64,8 +64,8 @@ const BLENDING_LOOKUP: Record<BlendingMode, THREE.Blending> = {
   none: THREE.NoBlending,
 };
 
-const PARTICLE_COUNT = 1024288;
-// const PARTICLE_COUNT = 524288;
+// const PARTICLE_COUNT = 1024288;
+const PARTICLE_COUNT = 524288;
 
 
 // Spawn queue is a TSL uniform array sized to fit a WebGPU UBO (~64KB),
@@ -91,10 +91,13 @@ export const SCULPTOR_DEFS = {
   fieldSphereRadius:  { default: 1.0,   min: 0.2,   max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'sphere radius' },
   fieldSphereCenterY: { default: 0.12,  min: -0.5,  max: 1.1,  step: 0.01,  folder: 'Field Bounds', label: 'center height' },
   volumeAutoEnabled:  { type: 'boolean' as const, default: true,             folder: 'Field Bounds', label: 'auto cycle' },
-  volumeAutoCycleS:   { default: 50,    min: 5,     max: 240,  step: 0.5,    folder: 'Field Bounds', label: 'cycle s' },
+  volumeAutoCycleS:   { default: 5,     min: 1,     max: 20,   step: 0.5,    folder: 'Field Bounds', label: 'cycle s' },
   volumeAutoSteps:    { default: 10,    min: 2,     max: 40,   step: 1,      folder: 'Field Bounds', label: 'steps' },
   volumeAutoMin:      { default: 0.2,   min: 0.05,  max: 2.5,  step: 0.01,   folder: 'Field Bounds', label: 'cycle min' },
   volumeAutoMax:      { default: 0.5,   min: 0.05,  max: 2.5,  step: 0.01,   folder: 'Field Bounds', label: 'cycle max' },
+  centerYAutoEnabled: { type: 'boolean' as const, default: true,             folder: 'Field Bounds', label: 'height auto' },
+  centerYAutoCycleS:  { default: 12,    min: 1,     max: 60,   step: 0.5,    folder: 'Field Bounds', label: 'height cycle s' },
+  centerYAutoAmp:     { default: 0.05,  min: 0,     max: 0.5,  step: 0.005,  folder: 'Field Bounds', label: 'height amp' },
 
   fieldRotationRate:  { default: 10,   min: 0,     max: 20,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
   fieldDebugDensity:  { default: 20,    min: 3,     max: 30,   step: 1,     folder: 'Field Shape', label: 'debug density' },
@@ -279,6 +282,8 @@ export class EnergySculptor implements EnergySink {
   private elapsed = 0;
   private volumeAutoElapsed = 0;
   private volumeAutoOverride: number | null = null;
+  private centerYAutoElapsed = 0;
+  private centerYAutoOverride: number | null = null;
 
   // Decorative scene elements.
   private static TIMER_SEGMENTS = 96;
@@ -485,6 +490,7 @@ export class EnergySculptor implements EnergySink {
     // by the field plus the lifetime-based settling controls.
     this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
     this.tickVolumeAuto(delta);
+    this.tickCenterYAuto(delta);
     this.tickRipple(delta);
     this.updateProjectorRing();
     this.tickSampleRotation();
@@ -1278,7 +1284,7 @@ export class EnergySculptor implements EnergySink {
     const baseScale = this.volumeAutoOverride ?? this.params.fieldVolumeScale;
     const scale = Math.max(0.01, baseScale);
     this.fieldSphereRadiusUniform.value = this.params.fieldSphereRadius * scale;
-    this.fieldSphereCenterYUniform.value = this.params.fieldSphereCenterY;
+    this.fieldSphereCenterYUniform.value = this.centerYAutoOverride ?? this.params.fieldSphereCenterY;
   }
 
   // Stepped triangular wave on the field volume scale. Cycle = up-then-down
@@ -1306,6 +1312,29 @@ export class EnergySculptor implements EnergySink {
     const next = Math.min(max, Math.max(min, value));
     if (next !== this.volumeAutoOverride) {
       this.volumeAutoOverride = next;
+      this.applyFieldVolumeParams();
+    }
+  }
+
+  // Smooth sine oscillation of the field-bound center height around the
+  // user-set base value. Amplitude is small by default so the field gently
+  // drifts up and down rather than visibly hopping.
+  private tickCenterYAuto(delta: number): void {
+    if (!this.params.centerYAutoEnabled || this.params.centerYAutoAmp <= 0) {
+      if (this.centerYAutoOverride !== null) {
+        this.centerYAutoOverride = null;
+        this.applyFieldVolumeParams();
+      }
+      this.centerYAutoElapsed = 0;
+      return;
+    }
+    const cycle = Math.max(0.5, this.params.centerYAutoCycleS);
+    this.centerYAutoElapsed = (this.centerYAutoElapsed + delta) % cycle;
+    const phase = (this.centerYAutoElapsed / cycle) * TAU;
+    const offset = Math.sin(phase) * this.params.centerYAutoAmp;
+    const next = this.params.fieldSphereCenterY + offset;
+    if (next !== this.centerYAutoOverride) {
+      this.centerYAutoOverride = next;
       this.applyFieldVolumeParams();
     }
   }
