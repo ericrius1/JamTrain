@@ -1210,6 +1210,12 @@ export class Game {
     const delta = Math.min((now - this.lastFrameAt) / 1000, 0.05);
     const elapsed = (now - this.startedAt) / 1000;
     this.lastFrameAt = now;
+    // Lerp the idle-motion clock scale toward its target (0.05 during intro,
+    // 1.0 after exitIntroMode). motionElapsed is the slowed clock the visible
+    // procedural motion (robot hands, instrument bobbing) reads from.
+    this.motionFactor += (this.motionFactorTarget - this.motionFactor) * (1 - Math.exp(-delta / MOTION_FACTOR_TAU));
+    this.motionElapsed += delta * this.motionFactor;
+    const motionDelta = delta * this.motionFactor;
     const localSeat = this.multiplayer.localSeatIndex;
     const partnerSeat = this.multiplayer.partnerSeatIndex;
     const hands = this.handTracker.update(elapsed, localSeat);
@@ -1219,7 +1225,7 @@ export class Game {
     });
     const remoteFromNetwork = this.poseSession.getRemotePose();
     const robotPerformance = this.partnerPresent ? undefined : this.updateRobotInstrumentTargets();
-    const robotHands = this.robotMotion.update(elapsed, delta, localPose, robotPerformance);
+    const robotHands = this.robotMotion.update(this.motionElapsed, motionDelta, localPose, robotPerformance);
     const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, {
       isRobot: true,
       inputSource: 'robot',
@@ -1237,7 +1243,7 @@ export class Game {
     this.localRig.update(localPose, delta, 0);
     this.remoteRig.update(remotePose, delta, robotTarget);
 
-    this.updatePlayerVisuals(delta, elapsed);
+    this.updatePlayerVisuals(motionDelta, elapsed);
     this.sculptor.update(delta);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
@@ -1459,6 +1465,7 @@ export class Game {
   exitIntroMode(): void {
     if (!this.introActive) return;
     this.introActive = false;
+    this.motionFactorTarget = 1.0;
     this.handTracker.setPointerInputEnabled(true);
     this.handSynth.setMouseInputEnabled(true);
     this.scenery.setSkyLifeEnabled(true);
