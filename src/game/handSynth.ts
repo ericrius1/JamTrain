@@ -153,6 +153,7 @@ type StarlaceVoice = {
   glint: any;       // quiet nail/string edge on stronger gestures
   auraSynth: any;   // sustained sympathetic resonance behind the samples
   auraGain: any;
+  chorus: any;      // stereo movement on the dry path for a richer body
   filter: any;
   panner: any;
   dryGain: any;
@@ -167,6 +168,7 @@ type StarlaceVoice = {
   tension: number;
   auraActive: boolean;
   auraChordKey: string;
+  auraHoldStart: number;
   lastHitCount: number;
   lastNoteIdx: number;
   lastChordIndex: number;
@@ -1344,27 +1346,30 @@ export class HandSynthEngine {
     const Tone = this.tone!;
     const panner = new Tone.Panner(key === 'local' ? -0.20 : 0.20).connect(this.starlaceBus ?? this.master);
     const dryGain = new Tone.Gain(0).connect(panner);
-    const reverbReturn = new Tone.Gain(0.64).connect(panner);
+    const reverbReturn = new Tone.Gain(0.78).connect(panner);
     const reverb = new Tone.Reverb({
-      decay: 5.8,
-      preDelay: 0.035,
+      decay: 7.4,
+      preDelay: 0.045,
       wet: 1,
     }).connect(reverbReturn);
     const echo = new Tone.FeedbackDelay({
-      delayTime: 0.215,
-      feedback: 0.23,
-      wet: 0.72,
+      delayTime: 0.235,
+      feedback: 0.27,
+      wet: 0.78,
     }).connect(reverb);
     const wetSend = new Tone.Gain(0);
     wetSend.connect(reverb);
     wetSend.connect(echo);
+    const chorus = new Tone.Chorus(0.42, 3.4, 0.45).connect(dryGain);
+    chorus.wet.value = 0.55;
+    chorus.start();
     const filter = new Tone.Filter({
       frequency: 5200,
       type: 'lowpass',
       rolloff: -12,
       Q: 0.72,
     });
-    filter.connect(dryGain);
+    filter.connect(chorus);
     filter.connect(wetSend);
 
     let resolveSamples!: () => void;
@@ -1407,11 +1412,11 @@ export class HandSynthEngine {
       voice: Tone.Synth,
       options: {
         oscillator: { type: 'triangle2' } as any,
-        envelope: { attack: 0.44, decay: 0.48, sustain: 0.22, release: Math.max(1.5, this.params.starlaceDecay * 0.82) },
+        envelope: { attack: 1.05, decay: 0.95, sustain: 0.42, release: Math.max(2.2, this.params.starlaceDecay * 1.20) },
         portamento: 0.06,
       },
     } as any).connect(auraGain);
-    auraSynth.volume.value = this.params.starlaceDb - 27;
+    auraSynth.volume.value = this.params.starlaceDb - 19;
     auraSynth.maxPolyphony = 12;
 
     return {
@@ -1420,6 +1425,7 @@ export class HandSynthEngine {
       glint,
       auraSynth,
       auraGain,
+      chorus,
       filter,
       panner,
       dryGain,
@@ -1434,6 +1440,7 @@ export class HandSynthEngine {
       tension: 0.35,
       auraActive: false,
       auraChordKey: '',
+      auraHoldStart: -Infinity,
       lastHitCount: 0,
       lastNoteIdx: -1,
       lastChordIndex: -1,
@@ -1467,6 +1474,7 @@ export class HandSynthEngine {
         }
         starlace.auraActive = true;
         starlace.auraChordKey = auraChordKey;
+        starlace.auraHoldStart = this.elapsed;
         starlace.lastAuraRetuneAt = this.elapsed;
       } else if (
         auraChordKey !== starlace.auraChordKey &&
@@ -1477,11 +1485,18 @@ export class HandSynthEngine {
           starlace.auraSynth.triggerAttack(auraChord, this.tone.now() + 0.015);
         } catch { /* best-effort retune */ }
         starlace.auraChordKey = auraChordKey;
+        starlace.auraHoldStart = this.elapsed;
         starlace.lastAuraRetuneAt = this.elapsed;
       }
     } else {
       this.releaseStarlaceAura(starlace, false);
     }
+
+    // Bloom 0..1 over a few seconds while the aura is held — drives slow
+    // filter open, chorus widening, and aura swell so a sustained chord
+    // evolves instead of sitting still like a plain analog patch.
+    const auraHoldTime = starlace.auraActive ? Math.max(0, this.elapsed - starlace.auraHoldStart) : 0;
+    const bloom = clamp(auraHoldTime / 3.2, 0, 1);
 
     const glow = clamp(this.params.starlaceGlow, 0, 1);
     const brightness = clamp(this.params.starlaceBrightness, 0, 1);
@@ -1490,16 +1505,27 @@ export class HandSynthEngine {
       1250 +
       starlace.expression * 820 +
       starlace.energy * 1700 +
-      starlace.tension * 760
+      starlace.tension * 760 +
+      bloom * 720
     ) * (0.72 + brightness * 0.58);
     starlace.filter.frequency.rampTo(clamp(filterHz, 850, 6400), PARAM_RAMP);
     starlace.filter.Q.rampTo(0.76 + starlace.tension * 1.15, PARAM_RAMP);
     starlace.panner.pan.rampTo(clamp((player === 'local' ? -0.18 : 0.18) + (starlace.expression - 0.5) * 0.32, -0.85, 0.85), PARAM_RAMP);
     starlace.sampler.volume.rampTo?.(this.params.starlaceDb - 1, PARAM_RAMP);
     starlace.sampler.release = this.starlaceSampleRelease();
-    starlace.auraGain.gain.rampTo(clamp(starlace.energy * (0.08 + glow * 0.14), 0, 0.24), PARAM_RAMP * 2);
-    starlace.wetSend.gain.rampTo(clamp(0.15 + starlace.energy * 0.34 + glow * 0.10, 0, 0.76) * this.params.reverbWetMax * space, PARAM_RAMP * 2);
-    starlace.echo.feedback.rampTo?.(clamp(0.16 + starlace.energy * 0.16 + space * 0.07, 0.12, 0.38), PARAM_RAMP * 2);
+    starlace.auraGain.gain.rampTo(
+      clamp(starlace.energy * (0.10 + glow * 0.18) * (0.32 + bloom * 0.78), 0, 0.36),
+      PARAM_RAMP * 2,
+    );
+    starlace.wetSend.gain.rampTo(
+      clamp(0.18 + starlace.energy * 0.34 + glow * 0.10 + bloom * 0.18, 0, 0.92) * this.params.reverbWetMax * space,
+      PARAM_RAMP * 2,
+    );
+    starlace.echo.feedback.rampTo?.(clamp(0.18 + starlace.energy * 0.16 + space * 0.07 + bloom * 0.06, 0.14, 0.42), PARAM_RAMP * 2);
+    if (starlace.chorus) {
+      starlace.chorus.depth = clamp(0.42 + bloom * 0.42, 0.35, 0.92);
+      starlace.chorus.wet.rampTo?.(clamp(0.45 + bloom * 0.30, 0, 0.85), PARAM_RAMP * 2);
+    }
     starlace.dryGain.gain.rampTo(0.92, PARAM_RAMP);
 
     starlace.pulse = Math.max(0, starlace.pulse - delta * 3.0);
@@ -1546,6 +1572,7 @@ export class HandSynthEngine {
     starlace.glint?.dispose?.();
     starlace.auraSynth?.dispose?.();
     starlace.auraGain?.dispose?.();
+    starlace.chorus?.dispose?.();
     starlace.filter?.dispose?.();
     starlace.panner?.dispose?.();
     starlace.dryGain?.dispose?.();

@@ -47,14 +47,10 @@ const INTRO_MOTION_FACTOR = 0.05;
 // Exponential time constant (seconds) for the lerp from intro speed to 1.0
 // after exitIntroMode. ~3s reaches >95%.
 const MOTION_FACTOR_TAU = 1.0;
-const ROBOT_JAM_MIN_DELAY = 1.85;
-const ROBOT_JAM_MAX_DELAY = 4.6;
-const ROBOT_STARLACE_JAM_MIN_DELAY = 2.35;
-const ROBOT_STARLACE_JAM_MAX_DELAY = 5.8;
-const ROBOT_JAM_SHORT_HOLD = 0.18;
-const ROBOT_JAM_LONG_HOLD_MIN = 0.68;
-const ROBOT_JAM_LONG_HOLD_MAX = 1.55;
-const ROBOT_JAM_STRUM_MAX_OFFSET = 0.16;
+const ROBOT_JAM_STRUM_MAX_OFFSET = 0.10;
+// Sub-beat grid: notes land on quarter-beat slots so density=1 isn't a wall of sound.
+const ROBOT_JAM_SLOTS_PER_BEAT = 2;
+const ROBOT_JAM_STARLACE_DENSITY_SCALE = 0.7;
 // Scale-degree patterns. harmony.ts is locked to C major, so these stay
 // diatonic while still letting the robot imply simple chords.
 const ROBOT_JAM_SCALE_ROOTS = [0, 1, 3, 4, 5] as const;
@@ -1298,36 +1294,46 @@ export class Game {
     const visual = this.playerVisuals.remote;
     if (!visual?.triggerMidiNoteOn) return;
     if (this.robotJamNextAt <= 0) {
-      this.scheduleNextRobotJam(elapsed, 1.0);
+      this.scheduleNextRobotJam(elapsed);
       return;
     }
     if (this.robotJamActive.length > 0 || this.robotJamPending.length > 0 || elapsed < this.robotJamNextAt) return;
 
     const instrument = this.playerInstruments.remote;
-    const noteCount = this.queueRobotJamGesture(elapsed, instrument);
-    this.scheduleNextRobotJam(elapsed, noteCount > 1 ? 0.85 : 0);
+    const slotIndex = this.robotJamStep;
+    const seed = slotIndex * 17.17 + this.roomSeed * 0.029;
+    const motion = this.robotMotion.params;
+    const densityScale = instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : 1;
+    const shouldPlay = hash(seed + 0.97) < motion.density * densityScale;
+    if (shouldPlay) {
+      this.queueRobotJamGesture(elapsed, instrument, slotIndex, seed);
+    }
+    this.robotJamStep += 1;
+    this.scheduleNextRobotJam(elapsed);
   }
 
-  private scheduleNextRobotJam(elapsed: number, extraDelay = 0): void {
-    const starlace = this.playerInstruments.remote === 'starlace';
-    const min = starlace ? ROBOT_STARLACE_JAM_MIN_DELAY : ROBOT_JAM_MIN_DELAY;
-    const max = starlace ? ROBOT_STARLACE_JAM_MAX_DELAY : ROBOT_JAM_MAX_DELAY;
-    const breath = this.robotJamStep % 5 === 4 ? 1.25 : 0;
-    const swing = hash(this.robotJamStep * 13.73 + this.roomSeed * 0.031);
-    this.robotJamNextAt = elapsed + extraDelay + min + swing * (max - min) + breath;
+  private scheduleNextRobotJam(elapsed: number): void {
+    const motion = this.robotMotion.params;
+    const beatSec = 60 / Math.max(motion.tempo, 1);
+    const slotSec = beatSec / ROBOT_JAM_SLOTS_PER_BEAT;
+    // Quantize to next slot boundary in elapsed time so notes line up across calls.
+    const slotIndex = Math.floor(elapsed / slotSec + 1e-4) + 1;
+    let nextAt = slotIndex * slotSec;
+    // Apply swing to off-beat (odd) slots: delay by up to swing * slotSec.
+    if (slotIndex % 2 === 1) nextAt += motion.swing * slotSec;
+    this.robotJamNextAt = nextAt;
   }
 
-  private queueRobotJamGesture(elapsed: number, instrument: InstrumentId): number {
-    const gestureIndex = this.robotJamStep;
-    const seed = gestureIndex * 17.17 + this.roomSeed * 0.029;
+  private queueRobotJamGesture(elapsed: number, instrument: InstrumentId, gestureIndex: number, seed: number): number {
     const shape = this.pickRobotJamShape(seed);
     const root = ROBOT_JAM_SCALE_ROOTS[Math.floor(hash(seed + 0.11) * ROBOT_JAM_SCALE_ROOTS.length)] ?? 0;
+    const beatSec = 60 / Math.max(this.robotMotion.params.tempo, 1);
     const longHold = hash(seed + 0.29) > 0.65;
     const strum = shape.length > 1 ? ROBOT_JAM_STRUM_MAX_OFFSET * (0.35 + hash(seed + 0.41) * 0.65) : 0;
 
     this.robotJamPending = shape.map((degreeOffset, index) => {
       const startAt = elapsed + index * strum;
-      const hold = this.robotJamHoldDuration(instrument, seed, longHold);
+      const hold = this.robotJamHoldDuration(beatSec, seed, longHold);
       return {
         instrument,
         noteNumber: 36 + root + degreeOffset,
@@ -1338,7 +1344,6 @@ export class Game {
         seed: seed + index * 3.07,
       };
     });
-    this.robotJamStep += 1;
     return this.robotJamPending.length;
   }
 
@@ -1350,9 +1355,10 @@ export class Game {
     return ROBOT_JAM_CHORD_SHAPES[3 + Math.floor(hash(seed + 1.31) * 2)] ?? ROBOT_JAM_CHORD_SHAPES[2];
   }
 
-  private robotJamHoldDuration(_instrument: InstrumentId, seed: number, longHold: boolean): number {
-    if (!longHold) return ROBOT_JAM_SHORT_HOLD + hash(seed + 2.17) * 0.18;
-    return ROBOT_JAM_LONG_HOLD_MIN + hash(seed + 2.17) * (ROBOT_JAM_LONG_HOLD_MAX - ROBOT_JAM_LONG_HOLD_MIN);
+  private robotJamHoldDuration(beatSec: number, seed: number, longHold: boolean): number {
+    // Short = ~half beat, long = 1.5–3 beats. Scales with tempo so hold:beat ratio stays musical.
+    if (!longHold) return beatSec * (0.4 + hash(seed + 2.17) * 0.25);
+    return beatSec * (1.5 + hash(seed + 2.17) * 1.5);
   }
 
   private startDueRobotJamNotes(elapsed: number): void {

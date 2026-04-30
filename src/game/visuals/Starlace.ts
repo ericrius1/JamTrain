@@ -15,10 +15,10 @@ import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments'
 import { clamp, hash } from '../math';
 
 export const STARLACE_DEFS = {
-  width:           { default: 0.78,  min: 0.36, max: 1.35, step: 0.01,  label: 'width' },
-  height:          { default: 0.62,  min: 0.24, max: 1.05, step: 0.01,  label: 'height' },
-  depth:           { default: 0.42,  min: 0.00, max: 0.80, step: 0.005, label: 'depth' },
-  nodeRadius:      { default: 0.022, min: 0.006, max: 0.05, step: 0.001, label: 'star size' },
+  width:           { default: 0.58,  min: 0.36, max: 1.35, step: 0.01,  label: 'width' },
+  height:          { default: 0.40,  min: 0.18, max: 1.05, step: 0.01,  label: 'height' },
+  depth:           { default: 0.32,  min: 0.00, max: 0.80, step: 0.005, label: 'depth' },
+  nodeRadius:      { default: 0.016, min: 0.006, max: 0.05, step: 0.001, label: 'star size' },
   contactRadius:   { default: 0.085, min: 0.025, max: 0.18, step: 0.001, label: 'hand contact' },
   hitCooldown:     { default: 0.065, min: 0.02,  max: 0.35, step: 0.005, label: 'cooldown s' },
   pulseDecay:      { default: 4.8,   min: 1,     max: 14,   step: 0.1,   label: 'star fade' },
@@ -619,12 +619,13 @@ export class Starlace implements PlayerVisual {
   }
 
   private createNodes(): void {
-    // Three horizontal rows mirror the three keyboard rows so each key plucks
-    // its dedicated node. Bottom row z-m (7), home row a-l (9), top row q-p
-    // (10). Each row spans the harp's width; depth (z) and small v jitter
-    // give the cluster volume without breaking the row mapping.
+    // Two horizontal rows mirror the two keyboard rows so each key plucks
+    // its dedicated node. Home row a-l (9) sits below top row q-p (10).
+    // Each row spans the harp's width; depth (z) and small v jitter give
+    // the cluster volume without breaking the row mapping. Rows skew
+    // downward so the top row stays below the player's chin.
     const rowCounts = Starlace.KEY_ROWS.map(r => r.length);
-    const rowVs = [-0.36, 0.0, 0.36];
+    const rowVs = [-0.55, 0.05];
     let i = 0;
     for (let r = 0; r < rowCounts.length; r += 1) {
       const count = rowCounts[r];
@@ -701,10 +702,56 @@ export class Starlace implements PlayerVisual {
       degree[p.i] += 1;
       degree[p.j] += 1;
     }
+    this.addCrossRowEdges(seen);
     this.adjacency = Array.from({ length: this.nodes.length }, () => []);
     for (const [a, b] of this.edges) {
       this.adjacency[a].push(b);
       this.adjacency[b].push(a);
+    }
+  }
+
+  private addCrossRowEdges(seen: Set<string>): void {
+    // Three rows form three horizontal slices. Sprinkle a few cross-row
+    // links so the slices read as one woven lace, not three stacked strips.
+    const rowCounts = Starlace.KEY_ROWS.map(r => r.length);
+    const rowStarts: number[] = [];
+    let acc = 0;
+    for (const c of rowCounts) {
+      rowStarts.push(acc);
+      acc += c;
+    }
+    const linksPerPair = 4;
+    for (let r = 0; r < rowCounts.length - 1; r += 1) {
+      const aStart = rowStarts[r];
+      const aCount = rowCounts[r];
+      const bStart = rowStarts[r + 1];
+      const bCount = rowCounts[r + 1];
+      for (let k = 0; k < linksPerPair; k += 1) {
+        const t = (k + 0.5) / linksPerPair;
+        const i = aStart + Math.min(aCount - 1, Math.floor(t * aCount));
+        const a = this.nodes[i];
+        let bestJ = -1;
+        let bestD = Infinity;
+        for (let j = bStart; j < bStart + bCount; j += 1) {
+          const b = this.nodes[j];
+          const du = a.u - b.u;
+          const dv = a.v - b.v;
+          const dz = (a.z - b.z) * 1.15;
+          const d = Math.sqrt(du * du + dv * dv + dz * dz);
+          if (d < bestD) {
+            bestD = d;
+            bestJ = j;
+          }
+        }
+        if (bestJ < 0) continue;
+        const lo = Math.min(i, bestJ);
+        const hi = Math.max(i, bestJ);
+        const key = `${lo}:${hi}`;
+        if (seen.has(key)) continue;
+        this.edges.push([lo, hi]);
+        this.edgeDistances.push(bestD);
+        seen.add(key);
+      }
     }
   }
 
@@ -1280,11 +1327,10 @@ export class Starlace implements PlayerVisual {
     }
   }
 
-  // Three keyboard rows map directly to dedicated nodes. Indices 0..6 = bottom
-  // row (z-m), 7..15 = home row (a-l), 16..25 = top row (q-p). Node count
-  // matches: see STARLACE_KEY_ROWS / NODE_COUNT in createNodes.
+  // Two keyboard rows map directly to dedicated nodes. Indices 0..8 = home
+  // row (a-l), 9..18 = top row (q-p). Bottom row (z-m) is reserved for
+  // debug shortcuts (c camera, n reset, m robot mute) and not an instrument.
   private static readonly KEY_ROWS: ReadonlyArray<ReadonlyArray<string>> = [
-    ['z', 'x', 'c', 'v', 'b', 'n', 'm'],
     ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
     ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
   ];

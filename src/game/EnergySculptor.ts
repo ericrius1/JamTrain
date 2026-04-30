@@ -90,8 +90,8 @@ export const SCULPTOR_DEFS = {
   blendingMode:       { type: 'select' as const, default: 'additive' as const, options: BLENDING_OPTIONS, folder: 'Particles', label: 'blending' },
 
   fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Affinity', label: 'field strength' },
-  fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay start' },
-  fieldFalloffEnd:    { default: 0.5,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay end' },
+  fieldFalloffStart:  { default: 0.0,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay start' },
+  fieldFalloffEnd:    { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay end' },
   finalFieldEffect:   { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final affinity' },
 
   fieldVolumeScale:   { default: 0.55,  min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },

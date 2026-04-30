@@ -3,8 +3,7 @@ import type { InstrumentId } from './instruments';
 import { clamp, cloneVec, hash, lerp, lerpVec, vec } from './math';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PlayerPose, type Vec3Data } from './types';
 
-type RobotMotionMode = 'auto' | 'still' | 'solo' | 'mirror' | 'complement' | 'opposite';
-type RobotMotionKind = Exclude<RobotMotionMode, 'auto'>;
+type RobotMotionKind = 'still' | 'solo' | 'mirror' | 'complement' | 'opposite';
 
 type RobotMotionPhase = {
   kind: RobotMotionKind;
@@ -47,27 +46,29 @@ type RobotPerformanceIntent = {
 };
 
 export const ROBOT_MOTION_DEFS = {
-  mode:            { type: 'select',  default: 'auto', options: { auto: 'auto', still: 'still', solo: 'solo', mirror: 'mirror', complement: 'complement', opposite: 'opposite' }, folder: 'Behavior' },
-  stillness:       { default: 0.34,   min: 0,    max: 0.9,  step: 0.01, folder: 'Behavior', label: 'stillness' },
-  sequenceSpeed:   { default: 1,      min: 0.25, max: 2.5,  step: 0.01, folder: 'Behavior', label: 'sequence speed' },
-  playerInfluence: { default: 0.56,   min: 0,    max: 1,    step: 0.01, folder: 'Behavior', label: 'player follow' },
-
-  motionScale:    { default: 0.78,  min: 0, max: 1.6,  step: 0.01,  folder: 'Gesture', label: 'motion scale' },
-  idleMotion:     { default: 0.08,  min: 0, max: 0.5,  step: 0.01,  folder: 'Gesture', label: 'idle motion' },
-  handLift:       { default: 0.12,  min: 0, max: 0.28, step: 0.005, folder: 'Gesture', label: 'hand lift' },
-  handDrift:      { default: 0.055, min: 0, max: 0.2,  step: 0.005, folder: 'Gesture', label: 'hand drift' },
-  fingerActivity: { default: 0.34,  min: 0, max: 1.1,  step: 0.01,  folder: 'Gesture', label: 'fingers' },
-
-  holdMinSeconds: { default: 1.25, min: 0.2, max: 6,  step: 0.05, folder: 'Timing', label: 'hold min' },
-  holdMaxSeconds: { default: 3.1,  min: 0.2, max: 8,  step: 0.05, folder: 'Timing', label: 'hold max' },
-  moveMinSeconds: { default: 2.4,  min: 0.5, max: 8,  step: 0.05, folder: 'Timing', label: 'move min' },
-  moveMaxSeconds: { default: 5.2,  min: 0.5, max: 10, step: 0.05, folder: 'Timing', label: 'move max' },
-
-  handSmooth:   { default: 0.72, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'hand smooth' },
-  fingerSmooth: { default: 0.84, min: 0, max: 1, step: 0.01, folder: 'Smoothing', label: 'finger smooth' },
+  tempo:        { default: 92,   min: 50,  max: 160, step: 1,    label: 'tempo (BPM)' },
+  density:      { default: 0.55, min: 0.1, max: 1,   step: 0.01, label: 'density' },
+  swing:        { default: 0.18, min: 0,   max: 0.5, step: 0.01, label: 'swing' },
+  gestureSize:  { default: 0.78, min: 0.2, max: 1.6, step: 0.01, label: 'gesture size' },
+  playerFollow: { default: 0.56, min: 0,   max: 1,   step: 0.01, label: 'player follow' },
 } as const;
 
-export type RobotMotionParams = ParamsOf<typeof ROBOT_MOTION_DEFS> & { mode: RobotMotionMode };
+const ROBOT_MOTION_CONST = {
+  stillness: 0.18,
+  sequenceSpeed: 1,
+  idleMotion: 0.10,
+  handLift: 0.12,
+  handDrift: 0.055,
+  fingerActivity: 0.42,
+  holdMinSeconds: 0.9,
+  holdMaxSeconds: 2.2,
+  moveMinSeconds: 1.6,
+  moveMaxSeconds: 3.4,
+  handSmooth: 0.72,
+  fingerSmooth: 0.84,
+} as const;
+
+export type RobotMotionParams = ParamsOf<typeof ROBOT_MOTION_DEFS>;
 
 const fingerSpread: Record<FingerName, number> = {
   thumb: -0.24,
@@ -91,11 +92,10 @@ export class RobotMotionController {
   private previousHands?: Record<Handedness, HandPose>;
   private strikeCues: Partial<Record<Handedness, RobotStrikeCue>> = {};
   private performanceGestures: Partial<Record<Handedness, RobotPerformanceGesture>> = {};
-  private manualKind?: RobotMotionKind;
   private phase: RobotMotionPhase = {
     kind: 'still',
     startedAt: 0,
-    duration: ROBOT_MOTION_DEFS.holdMinSeconds.default,
+    duration: ROBOT_MOTION_CONST.holdMinSeconds,
     seed: 0.37,
     index: 0,
   };
@@ -115,8 +115,7 @@ export class RobotMotionController {
   ): Record<Handedness, HandPose> {
     const kind = this.resolveKind(elapsed);
     const phaseProgress = clamp((elapsed - this.phase.startedAt) / Math.max(this.phase.duration, 0.001), 0, 1);
-    const manualMode = this.params.mode !== 'auto';
-    const moveEnvelope = kind === 'still' ? 0 : manualMode ? 1 : Math.sin(phaseProgress * Math.PI);
+    const moveEnvelope = kind === 'still' ? 0 : Math.sin(phaseProgress * Math.PI);
     const target = this.makeTargetHands(elapsed, kind, moveEnvelope, playerPose, performance);
     const smoothed = this.smoothHands(target, delta);
     this.previousHands = smoothed;
@@ -139,15 +138,6 @@ export class RobotMotionController {
   }
 
   private resolveKind(elapsed: number): RobotMotionKind {
-    if (this.params.mode !== 'auto') {
-      if (this.manualKind !== this.params.mode) {
-        this.manualKind = this.params.mode;
-        this.phase = this.createPhase(this.params.mode, elapsed, this.phase.index + 1);
-      }
-      return this.params.mode;
-    }
-
-    this.manualKind = undefined;
     while (elapsed - this.phase.startedAt >= this.phase.duration) {
       this.phase = this.createNextAutoPhase(this.phase.startedAt + this.phase.duration);
     }
@@ -157,7 +147,7 @@ export class RobotMotionController {
   private createNextAutoPhase(startedAt: number): RobotMotionPhase {
     const index = this.phase.index + 1;
     const chance = hash(index * 11.71 + this.phase.seed * 3.03);
-    if (this.phase.kind !== 'still' && chance < this.params.stillness) {
+    if (this.phase.kind !== 'still' && chance < ROBOT_MOTION_CONST.stillness) {
       return this.createPhase('still', startedAt, index);
     }
 
@@ -168,9 +158,9 @@ export class RobotMotionController {
 
   private createPhase(kind: RobotMotionKind, startedAt: number, index: number): RobotMotionPhase {
     const seed = hash(index * 29.31 + (kind === 'still' ? 1.7 : 9.4));
-    const min = kind === 'still' ? this.params.holdMinSeconds : this.params.moveMinSeconds;
-    const max = kind === 'still' ? this.params.holdMaxSeconds : this.params.moveMaxSeconds;
-    const speed = Math.max(this.params.sequenceSpeed, 0.05);
+    const min = kind === 'still' ? ROBOT_MOTION_CONST.holdMinSeconds : ROBOT_MOTION_CONST.moveMinSeconds;
+    const max = kind === 'still' ? ROBOT_MOTION_CONST.holdMaxSeconds : ROBOT_MOTION_CONST.moveMaxSeconds;
+    const speed = ROBOT_MOTION_CONST.sequenceSpeed;
     const duration = lerp(Math.min(min, max), Math.max(min, max), hash(seed * 41.8 + index)) / speed;
 
     return {
@@ -190,8 +180,8 @@ export class RobotMotionController {
     performance?: RobotPerformanceContext
   ): Record<Handedness, HandPose> {
     const hands = {} as Record<Handedness, HandPose>;
-    const stillnessAlive = kind === 'still' ? this.params.idleMotion : 0.22;
-    const motionAmount = this.params.motionScale * (stillnessAlive + moveEnvelope * (1 - stillnessAlive));
+    const stillnessAlive = kind === 'still' ? ROBOT_MOTION_CONST.idleMotion : 0.22;
+    const motionAmount = this.params.gestureSize * (stillnessAlive + moveEnvelope * (1 - stillnessAlive));
 
     for (const handedness of handednesses) {
       hands[handedness] = this.makeTargetHand(
@@ -220,8 +210,8 @@ export class RobotMotionController {
     const side = handedness === 'left' ? -1 : 1;
     const handIndex = handedness === 'left' ? 0 : 1;
     const seed = this.phase.seed * 100 + handIndex * 7.9;
-    const drift = this.params.handDrift * motionAmount;
-    const lift = this.params.handLift * motionAmount;
+    const drift = ROBOT_MOTION_CONST.handDrift * motionAmount;
+    const lift = ROBOT_MOTION_CONST.handLift * motionAmount;
     const baseX = side * 0.46;
     const baseY = 0.56;
     const baseZ = 0.12;
@@ -239,7 +229,7 @@ export class RobotMotionController {
       const delayedWave = Math.sin(elapsed * (0.22 + hash(seed + index * 2.4) * 0.2) + seed * 1.7 + index);
       const fingerPulse = smoothPulse((elapsed * (0.07 + hash(seed + index * 8.3) * 0.08) + hash(seed + index * 5.6)) % 1);
       curls[finger] = clamp(
-        0.24 + wave * 0.1 * motionAmount + delayedWave * 0.08 * moveEnvelope + fingerPulse * this.params.fingerActivity * 0.24 * motionAmount,
+        0.24 + wave * 0.1 * motionAmount + delayedWave * 0.08 * moveEnvelope + fingerPulse * ROBOT_MOTION_CONST.fingerActivity * 0.24 * motionAmount,
         0.06,
         0.88
       );
@@ -515,7 +505,7 @@ export class RobotMotionController {
     const sourceHandedness = kind === 'mirror' || kind === 'complement' ? oppositeHand(handedness) : handedness;
     const source = playerPose.hands[sourceHandedness];
     const sourceSide = sourceHandedness === 'left' ? -1 : 1;
-    const influence = this.params.playerInfluence * (0.25 + moveEnvelope * 0.75);
+    const influence = this.params.playerFollow * (0.25 + moveEnvelope * 0.75);
     const sourceX = clamp(source.palm.x - sourceSide * 0.49, -0.38, 0.38);
     const sourceY = clamp(source.palm.y - 0.72, -0.38, 0.46);
     const sourceZ = clamp(source.palm.z - 0.1, -0.35, 0.35);
@@ -565,8 +555,8 @@ export class RobotMotionController {
     if (!this.previousHands) return cloneHands(target);
 
     const hands = {} as Record<Handedness, HandPose>;
-    const handAmount = smoothingAmount(this.params.handSmooth, delta);
-    const fingerAmount = smoothingAmount(this.params.fingerSmooth, delta);
+    const handAmount = smoothingAmount(ROBOT_MOTION_CONST.handSmooth, delta);
+    const fingerAmount = smoothingAmount(ROBOT_MOTION_CONST.fingerSmooth, delta);
 
     for (const handedness of handednesses) {
       const previous = this.previousHands[handedness];
