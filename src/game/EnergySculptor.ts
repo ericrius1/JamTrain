@@ -65,13 +65,13 @@ const BLENDING_LOOKUP: Record<BlendingMode, THREE.Blending> = {
 };
 
 // const PARTICLE_COUNT = 1024288;
-const PARTICLE_COUNT = 524288;
+const PARTICLE_COUNT = 131072;
 
 
 // Spawn queue is a TSL uniform array sized to fit a WebGPU UBO (~64KB),
 // large enough that no realistic per-frame burst hits it. The only
 // user-visible cap on particles is the total pool size.
-const SPAWN_QUEUE_CAPACITY = 4096;
+const SPAWN_QUEUE_CAPACITY = 2048;
 const DEFAULT_ATTRACTOR_HOLD_SECONDS = 20;
 const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 
@@ -91,7 +91,7 @@ export const SCULPTOR_DEFS = {
   fieldSphereRadius:  { default: 1.0,   min: 0.2,   max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'sphere radius' },
   fieldSphereCenterY: { default: 0.12,  min: -0.5,  max: 1.1,  step: 0.01,  folder: 'Field Bounds', label: 'center height' },
   volumeAutoEnabled:  { type: 'boolean' as const, default: true,             folder: 'Field Bounds', label: 'auto cycle' },
-  volumeAutoCycleS:   { default: 5,     min: 1,     max: 20,   step: 0.5,    folder: 'Field Bounds', label: 'cycle s' },
+  volumeAutoCycleS:   { default: 50,     min: 1,     max: 100,   step: 0.5,    folder: 'Field Bounds', label: 'cycle s' },
   volumeAutoSteps:    { default: 10,    min: 2,     max: 40,   step: 1,      folder: 'Field Bounds', label: 'steps' },
   volumeAutoMin:      { default: 0.2,   min: 0.05,  max: 2.5,  step: 0.01,   folder: 'Field Bounds', label: 'cycle min' },
   volumeAutoMax:      { default: 0.5,   min: 0.05,  max: 2.5,  step: 0.01,   folder: 'Field Bounds', label: 'cycle max' },
