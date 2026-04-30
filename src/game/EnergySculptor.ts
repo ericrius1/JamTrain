@@ -48,6 +48,24 @@ const ATTRACTOR_OPTIONS = {
   dadras: 'dadras',
 } as const satisfies Record<string, AttractorMode>;
 
+type BlendingMode = 'additive' | 'normal' | 'subtractive' | 'multiply' | 'none';
+
+const BLENDING_OPTIONS = {
+  additive: 'additive',
+  normal: 'normal',
+  subtractive: 'subtractive',
+  multiply: 'multiply',
+  none: 'none',
+} as const satisfies Record<string, BlendingMode>;
+
+const BLENDING_LOOKUP: Record<BlendingMode, THREE.Blending> = {
+  additive: THREE.AdditiveBlending,
+  normal: THREE.NormalBlending,
+  subtractive: THREE.SubtractiveBlending,
+  multiply: THREE.MultiplyBlending,
+  none: THREE.NoBlending,
+};
+
 const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
   thomas: 'Thomas',
   lorenz: 'Lorenz',
@@ -65,11 +83,12 @@ const DEFAULT_ATTRACTOR_HOLD_SECONDS = 20;
 const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 
 export const SCULPTOR_DEFS = {
-  particleCount:      { default: 100000, min: 4096, max: 2000000, step: 256, label: 'particle pool', hidden: false },
+  particleCount:      { default: 300000, min: 4096, max: 300000, step: 256, label: 'particle count', hidden: false },
   particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'fade start' },
+  blendingMode:       { type: 'select' as const, default: 'additive' as const, options: BLENDING_OPTIONS, folder: 'Particles', label: 'blending' },
 
   fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Affinity', label: 'field strength' },
   fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay start' },
@@ -335,6 +354,10 @@ export class EnergySculptor implements EnergySink {
         stretchScale: v => { this.stretchScaleUniform.value = v; },
         particleLifetime: v => { this.applyParticleLifetime(v); },
         opacityFadeStart: v => { this.opacityFadeStartUniform.value = v; },
+        blendingMode: v => {
+          this.material.blending = BLENDING_LOOKUP[v as BlendingMode];
+          this.material.needsUpdate = true;
+        },
         fieldFalloffStart: v => { this.fieldFalloffStartUniform.value = v; },
         fieldFalloffEnd: v => { this.fieldFalloffEndUniform.value = v; },
         finalFieldEffect: v => { this.finalFieldEffectUniform.value = v; },
@@ -873,7 +896,7 @@ export class EnergySculptor implements EnergySink {
     const geometry = new THREE.PlaneGeometry(1, 1);
     const material = new THREE.SpriteNodeMaterial({
       transparent: true,
-      blending: THREE.AdditiveBlending,
+      blending: BLENDING_LOOKUP[this.params.blendingMode as BlendingMode],
       depthWrite: false,
     });
 
