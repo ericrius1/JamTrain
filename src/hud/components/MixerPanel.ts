@@ -22,6 +22,22 @@ const VOICE_SVG = `
   <line x1="8.5" y1="22" x2="15.5" y2="22"/>
 </svg>`;
 
+const MIDI_SVG = `
+<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="6" width="18" height="12" rx="1.5"/>
+  <line x1="8" y1="6" x2="8" y2="13"/>
+  <line x1="12" y1="6" x2="12" y2="13"/>
+  <line x1="16" y1="6" x2="16" y2="13"/>
+</svg>`;
+
+export type MidiButtonState =
+  | { kind: 'idle' }
+  | { kind: 'unsupported' }
+  | { kind: 'connecting' }
+  | { kind: 'enabled'; inputs: string[] }
+  | { kind: 'denied' }
+  | { kind: 'error'; message: string };
+
 export class MixerPanel {
   readonly el: HTMLDivElement;
   private musicSlider: HTMLInputElement;
@@ -33,15 +49,40 @@ export class MixerPanel {
   private musicListeners = new Set<(value: number) => void>();
   private backingListeners = new Set<(value: number) => void>();
   private voiceListeners = new Set<(value: number) => void>();
+  private midiButton: HTMLButtonElement;
+  private midiTooltip: HTMLSpanElement;
+  private midiClickListeners = new Set<() => void>();
+  private midiState: MidiButtonState = { kind: 'idle' };
 
   constructor(opts: { music: number; backing: number; voice: number }) {
     this.el = document.createElement('div');
     this.el.className = 'mixer-panel plaque';
 
+    const titleRow = document.createElement('div');
+    titleRow.className = 'mixer-panel-title-row';
+
     const title = document.createElement('div');
     title.className = 'mixer-panel-title';
     title.textContent = 'Mix';
-    this.el.appendChild(title);
+    titleRow.appendChild(title);
+
+    this.midiButton = document.createElement('button');
+    this.midiButton.type = 'button';
+    this.midiButton.className = 'mixer-panel-midi-button';
+    this.midiButton.innerHTML = MIDI_SVG;
+    this.midiButton.setAttribute('aria-label', 'Connect MIDI device');
+    this.midiTooltip = document.createElement('span');
+    this.midiTooltip.className = 'mixer-panel-midi-tooltip';
+    this.midiButton.appendChild(this.midiTooltip);
+    this.midiButton.addEventListener('click', e => {
+      e.stopPropagation();
+      if (this.midiState.kind === 'unsupported' || this.midiState.kind === 'connecting') return;
+      for (const l of this.midiClickListeners) l();
+    });
+    titleRow.appendChild(this.midiButton);
+
+    this.el.appendChild(titleRow);
+    this.applyMidiState();
 
     const musicRow = this.buildRow({
       label: 'Instruments',
@@ -112,6 +153,63 @@ export class MixerPanel {
 
   onVoiceChange(listener: (value: number) => void): void {
     this.voiceListeners.add(listener);
+  }
+
+  onMidiClick(listener: () => void): void {
+    this.midiClickListeners.add(listener);
+  }
+
+  setMidiState(state: MidiButtonState): void {
+    this.midiState = state;
+    this.applyMidiState();
+  }
+
+  private applyMidiState(): void {
+    const state = this.midiState;
+    this.midiButton.classList.remove(
+      'mixer-panel-midi-button--idle',
+      'mixer-panel-midi-button--connecting',
+      'mixer-panel-midi-button--enabled',
+      'mixer-panel-midi-button--error',
+      'mixer-panel-midi-button--disabled',
+    );
+    let tooltip: string;
+    let modifier: string;
+    let disabled = false;
+    switch (state.kind) {
+      case 'idle':
+        tooltip = 'Connect MIDI device';
+        modifier = 'mixer-panel-midi-button--idle';
+        break;
+      case 'connecting':
+        tooltip = 'Requesting MIDI access…';
+        modifier = 'mixer-panel-midi-button--connecting';
+        disabled = true;
+        break;
+      case 'enabled':
+        tooltip = state.inputs.length > 0
+          ? `MIDI: ${state.inputs.join(', ')}`
+          : 'MIDI ready — plug in a device';
+        modifier = 'mixer-panel-midi-button--enabled';
+        break;
+      case 'denied':
+        tooltip = 'MIDI access blocked. Allow it from the site settings to retry.';
+        modifier = 'mixer-panel-midi-button--error';
+        break;
+      case 'unsupported':
+        tooltip = 'Web MIDI not supported in this browser';
+        modifier = 'mixer-panel-midi-button--disabled';
+        disabled = true;
+        break;
+      case 'error':
+        tooltip = `MIDI error: ${state.message}`;
+        modifier = 'mixer-panel-midi-button--error';
+        break;
+    }
+    this.midiButton.classList.add(modifier);
+    this.midiButton.disabled = disabled;
+    this.midiButton.setAttribute('aria-label', tooltip);
+    this.midiTooltip.textContent = tooltip;
   }
 
   private buildRow(opts: { label: string; ariaLabel?: string; icon: string; value: number }): {

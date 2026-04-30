@@ -1068,6 +1068,13 @@
   pointer-events: auto;
   border-radius: 4px;
 }
+.mixer-panel-title-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
 .mixer-panel-title {
   font-family: 'IM Fell English SC', serif;
   font-size: 11px;
@@ -1075,7 +1082,85 @@
   text-transform: uppercase;
   color: var(--sun);
   text-align: center;
-  margin-bottom: 8px;
+}
+.mixer-panel-midi-button {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid rgba(200, 154, 75, 0.28);
+  border-radius: 3px;
+  color: rgba(200, 154, 75, 0.55);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.mixer-panel-midi-button svg {
+  width: 14px;
+  height: 14px;
+  pointer-events: none;
+}
+.mixer-panel-midi-button:hover:not(:disabled) {
+  color: var(--sun);
+  border-color: rgba(214, 164, 90, 0.7);
+  background: rgba(214, 164, 90, 0.08);
+}
+.mixer-panel-midi-button:focus-visible {
+  outline: 1px solid var(--sun);
+  outline-offset: 2px;
+}
+.mixer-panel-midi-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+.mixer-panel-midi-button--enabled {
+  color: var(--brass);
+  border-color: rgba(214, 164, 90, 0.85);
+  background: rgba(214, 164, 90, 0.12);
+}
+.mixer-panel-midi-button--connecting {
+  color: var(--sun);
+  border-color: rgba(214, 164, 90, 0.6);
+  animation: midi-pulse 1.2s ease-in-out infinite;
+}
+.mixer-panel-midi-button--error {
+  color: #c97070;
+  border-color: rgba(201, 112, 112, 0.55);
+}
+.mixer-panel-midi-tooltip {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding: 4px 8px;
+  background: rgba(20, 14, 8, 0.94);
+  border: 1px solid rgba(200, 154, 75, 0.4);
+  border-radius: 3px;
+  color: var(--parchment);
+  font-family: 'IM Fell English SC', serif;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: none;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.mixer-panel-midi-button:hover .mixer-panel-midi-tooltip,
+.mixer-panel-midi-button:focus-visible .mixer-panel-midi-tooltip {
+  opacity: 1;
+}
+@keyframes midi-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
 }
 .mixer-panel-row {
   display: flex;

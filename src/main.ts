@@ -419,6 +419,14 @@ async function createRuntime(): Promise<RuntimeApi> {
     avPrefs.voiceVolume = value;
   });
 
+  hud.setMidiState(game.getMidiState());
+  game.onMidiStateChange(state => hud.setMidiState(state));
+  hud.onMidiConnect(() => {
+    void game.enableMidi().catch(err => {
+      console.warn('[jam-train] MIDI enable failed', err);
+    });
+  });
+
   const handleRobotMuteKey = (e: KeyboardEvent): void => {
     if (e.key !== 'm' && e.key !== 'M') return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;

@@ -5,7 +5,7 @@ import { JamAudioGraph } from './audioGraph';
 import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
-import { MidiInputController, type MidiNoteEvent } from './midiInput';
+import { MidiInputController, type MidiNoteEvent, type MidiState } from './midiInput';
 import { clamp, hash } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { Drum } from './visuals/Drum';
@@ -243,7 +243,7 @@ export class Game {
     this.setupCabinLightingPane();
     this.handTracker = new HandTracker(ui.inputStatus);
     this.audioGraph = new JamAudioGraph();
-    this.handSynth = new HandSynthEngine(this.audioGraph, canvas, this.paneDock);
+    this.handSynth = new HandSynthEngine(this.audioGraph, canvas);
     this.midiInput = new MidiInputController({
       onNoteOn: note => this.handleMidiNoteOn(note),
       onNoteOff: note => this.handleMidiNoteOff(note),
@@ -373,7 +373,18 @@ export class Game {
   async startAudio(): Promise<void> {
     await this.audioGraph.start();
     await this.handSynth.start();
-    await this.midiInput.start();
+  }
+
+  async enableMidi(): Promise<void> {
+    await this.midiInput.enable();
+  }
+
+  getMidiState(): MidiState {
+    return this.midiInput.getState();
+  }
+
+  onMidiStateChange(listener: (state: MidiState) => void): () => void {
+    return this.midiInput.onStateChange(listener);
   }
 
   connectMultiplayer(): void {

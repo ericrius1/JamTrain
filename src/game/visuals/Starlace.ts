@@ -31,9 +31,13 @@ export const STARLACE_DEFS = {
   maxTurnRate:     { default: 0.72,  min: 0.05,  max: 6,    step: 0.01,  label: 'max turn rad/s' },
   danceAmount:     { default: 0.030, min: 0,     max: 0.16, step: 0.001, label: 'dance amount' },
   danceSpeed:      { default: 0.14,  min: 0,     max: 1.2,  step: 0.01,  label: 'dance speed' },
-  keyWalkInterval: { default: 0.34,  min: 0.18,  max: 0.75, step: 0.005, label: 'key walk step s' },
-  keyPhraseJumps:  { default: 5,     min: 0,     max: 12,   step: 1,     label: 'held jumps' },
-  keyChordMaxNotes:{ default: 3,     min: 1,     max: 3,    step: 1,     label: 'held chord notes' },
+  keyWalkInterval: { default: 0.27,  min: 0.08,  max: 0.75, step: 0.005, label: 'jump tempo s' },
+  keyPhraseJumps:  { default: 8,     min: 2,     max: 24,   step: 1,     label: 'phrase turns' },
+  keyChordMaxNotes:{ default: 3,     min: 1,     max: 3,    step: 1,     label: 'arp width' },
+  keyRhythmSwing:  { default: 0.64,  min: 0,     max: 1,    step: 0.01,  label: 'rhythm swing' },
+  keyTempoDrift:   { default: 0.58,  min: 0,     max: 1,    step: 0.01,  label: 'tempo drift' },
+  keyPathWander:   { default: 0.72,  min: 0,     max: 1,    step: 0.01,  label: 'path wander' },
+  keyEdgeFollow:   { default: 0.66,  min: 0,     max: 1,    step: 0.01,  label: 'edge follow' },
   coolColor:       { type: 'color', default: '#5fb6c4', label: 'cool stars' },
   warmColor:       { type: 'color', default: '#e56f67', label: 'warm stars' },
   goldColor:       { type: 'color', default: '#edae4a', label: 'gold links' },
@@ -1223,7 +1227,12 @@ export class Starlace implements PlayerVisual {
     node.pulse = Math.min(1, node.pulse + 0.78 + velocity * 0.52);
   }
 
-  private fireKeyboardChord(state: KeyboardPathState, nodeIndices: readonly number[], chordSize: 1 | 2 | 3): void {
+  private fireKeyboardChord(
+    state: KeyboardPathState,
+    nodeIndices: readonly number[],
+    chordSize: 1 | 2 | 3,
+    rootIndex: number,
+  ): void {
     if (nodeIndices.length === 0) return;
     const rootNodeIndex = nodeIndices[0];
     const rootNode = this.nodes[rootNodeIndex];
@@ -1247,13 +1256,13 @@ export class Starlace implements PlayerVisual {
     if (this.onPluckCallback) {
       this.onPluckCallback({
         nodeIndex: rootNodeIndex,
-        noteIndex: state.homeNoteIndex,
-        frequency: this.hzTable[state.homeNoteIndex] ?? this.hzTable[rootNode.noteIndex],
+        noteIndex: rootIndex,
+        frequency: this.hzTable[rootIndex] ?? this.hzTable[rootNode.noteIndex],
         velocity,
         worldPosition: rootNode.world.clone(),
         x: clamp(rootNode.u + 0.5, 0, 1),
         y: clamp(rootNode.v + 0.5, 0, 1),
-        chordRootIndex: state.homeNoteIndex,
+        chordRootIndex: rootIndex,
         chordSize,
         phraseStep: state.step,
       });
@@ -1371,11 +1380,12 @@ export class Starlace implements PlayerVisual {
     let fired = 0;
     for (const [key, state] of this.keyboardPaths) {
       if (this.elapsed < state.nextAt) continue;
-      if (state.step >= state.totalStages) {
+      if (!this.keyboardHeldKeys.has(key)) {
         this.keyboardPaths.delete(key);
         continue;
       }
 
+      this.refreshKeyboardPhrase(state);
       const firedCount = this.fireKeyboardStage(state);
       if (firedCount > 0) {
         state.step += 1;
@@ -1385,11 +1395,6 @@ export class Starlace implements PlayerVisual {
         continue;
       }
 
-      if (state.step >= state.totalStages) {
-        this.keyboardPaths.delete(key);
-        if (fired >= MAX_HITS_PER_FRAME) return;
-        continue;
-      }
       const delay = this.keyboardStepDelay(state);
       state.nextAt = Math.max(state.nextAt + delay, this.elapsed + delay * 0.65);
       if (fired >= MAX_HITS_PER_FRAME) return;
@@ -1397,14 +1402,33 @@ export class Starlace implements PlayerVisual {
   }
 
   private fireKeyboardStage(state: KeyboardPathState): number {
-    const chordSize = this.keyboardChordSizeForStage(state.step, state.totalStages);
-    const nodes = this.pickKeyboardChordNodes(state, chordSize);
+    const phraseLength = Math.max(1, state.totalStages);
+    const stageInPhrase = positiveModulo(state.step, phraseLength);
+    const rootIndex = this.keyboardStageRootIndex(state, stageInPhrase);
+    const chordSize = this.keyboardChordSizeForStage(stageInPhrase, phraseLength);
+    const nodes = this.pickKeyboardChordNodes(state, chordSize, rootIndex);
     if (nodes.length === 0) return 0;
     state.previousNode = state.currentNode;
     state.currentNode = nodes[0];
     for (const nodeIndex of nodes) this.rememberKeyboardNode(state, nodeIndex);
-    this.fireKeyboardChord(state, nodes, chordSize);
+    this.fireKeyboardChord(state, nodes, chordSize, rootIndex);
     return nodes.length;
+  }
+
+  private refreshKeyboardPhrase(state: KeyboardPathState): void {
+    const phraseLength = this.keyboardPhraseJumps() + 1;
+    state.totalStages = phraseLength;
+    if (state.step <= 0 || positiveModulo(state.step, phraseLength) !== 0) return;
+
+    state.phraseSeed = hash(
+      state.phraseSeed * 17.19 +
+      state.step * 0.37 +
+      state.currentNode * 3.11 +
+      this.elapsed * 0.07,
+    );
+    if (state.recentNodes.length > 3) {
+      state.recentNodes.splice(0, state.recentNodes.length - 3);
+    }
   }
 
   private keyboardHomeNoteIndex(keyIndex: number): number {
@@ -1431,8 +1455,8 @@ export class Starlace implements PlayerVisual {
     return best;
   }
 
-  private pickKeyboardChordNodes(state: KeyboardPathState, chordSize: 1 | 2 | 3): number[] {
-    const noteIndexes = this.keyboardChordNoteIndexes(state.homeNoteIndex, chordSize);
+  private pickKeyboardChordNodes(state: KeyboardPathState, chordSize: 1 | 2 | 3, rootIndex: number): number[] {
+    const noteIndexes = this.keyboardChordNoteIndexes(rootIndex, chordSize);
     const picked: number[] = [];
     let anchor = state.currentNode;
 
@@ -1448,6 +1472,20 @@ export class Starlace implements PlayerVisual {
     return picked;
   }
 
+  private keyboardStageRootIndex(state: KeyboardPathState, stageInPhrase: number): number {
+    const phraseLength = Math.max(1, state.totalStages);
+    const wander = clamp(this.params.keyPathWander, 0, 1);
+    const phraseOffsets = [0, 2, 4, 2, 5, 4, 3, 1, 0, -1, 2, 4, 5] as const;
+    const shapeOffset = phraseOffsets[stageInPhrase % phraseOffsets.length] ?? 0;
+    const drift = Math.round((hash(state.phraseSeed * 31.7 + state.step * 5.93) - 0.5) * 4 * wander);
+    const currentNode = this.nodes[state.currentNode];
+    const nodePull = currentNode
+      ? Math.round((currentNode.noteIndex - state.homeNoteIndex) * 0.35 * wander)
+      : 0;
+    const returnHome = stageInPhrase > phraseLength * 0.72 ? Math.round(-2 * wander) : 0;
+    return clamp(state.homeNoteIndex + shapeOffset + drift + nodePull + returnHome, 0, this.hzTable.length - 1);
+  }
+
   private pickKeyboardChordNode(
     noteIndex: number,
     state: KeyboardPathState,
@@ -1461,6 +1499,14 @@ export class Starlace implements PlayerVisual {
     const fallback = candidates.length > 0 ? candidates : this.nodes.map((_, i) => i);
     const anchor = this.nodes[anchorIndex] ?? this.nodes[state.currentNode];
     const direct = new Set(this.adjacency[anchorIndex] ?? []);
+    const secondHop = new Set<number>();
+    for (const nb of direct) {
+      for (const hop of this.adjacency[nb] ?? []) {
+        if (hop !== anchorIndex && !direct.has(hop)) secondHop.add(hop);
+      }
+    }
+    const wander = clamp(this.params.keyPathWander, 0, 1);
+    const edgeFollow = clamp(this.params.keyEdgeFollow, 0, 1);
 
     let best = -1;
     let bestScore = Infinity;
@@ -1471,11 +1517,15 @@ export class Starlace implements PlayerVisual {
       const recentIndex = state.recentNodes.lastIndexOf(index);
       const recentPenalty = recentIndex < 0
         ? 0
-        : 0.85 + (recentIndex / Math.max(1, state.recentNodes.length - 1)) * 0.65;
-      const graphBonus = direct.has(index) ? -0.34 : 0;
-      const returnPenalty = index === state.previousNode ? 0.58 : 0;
+        : (0.80 + (recentIndex / Math.max(1, state.recentNodes.length - 1)) * 0.70) * (1 - wander * 0.24);
+      const graphScore = direct.has(index)
+        ? -0.22 - edgeFollow * 1.12
+        : secondHop.has(index)
+          ? -0.08 - edgeFollow * 0.46
+          : edgeFollow * 0.28;
+      const returnPenalty = index === state.previousNode ? 0.70 + edgeFollow * 0.25 : 0;
       const pitchPenalty = Math.abs(node.noteIndex - noteIndex) * 1.7;
-      const distancePenalty = anchor ? anchor.world.distanceTo(node.world) * 2.1 : 0;
+      const distancePenalty = anchor ? anchor.world.distanceTo(node.world) * (2.35 - wander * 1.20) : 0;
       const phase = state.step * 9.17 + picked.length * 4.33 + state.phraseSeed * 27.9;
       const score =
         pickedPenalty +
@@ -1483,9 +1533,9 @@ export class Starlace implements PlayerVisual {
         distancePenalty +
         recentPenalty +
         returnPenalty +
-        graphBonus +
+        graphScore +
         node.pulse * 0.22 +
-        hash(index * 41.11 + phase) * 0.30;
+        hash(index * 41.11 + phase) * (0.16 + wander * 0.86);
 
       if (score >= bestScore) continue;
       best = index;
@@ -1515,7 +1565,7 @@ export class Starlace implements PlayerVisual {
   }
 
   private keyboardPhraseJumps(): number {
-    return Math.max(0, Math.round(clamp(this.params.keyPhraseJumps, 0, 12)));
+    return Math.round(clamp(this.params.keyPhraseJumps, 2, 24));
   }
 
   private keyboardChordMaxNotes(): 1 | 2 | 3 {
@@ -1530,13 +1580,21 @@ export class Starlace implements PlayerVisual {
   }
 
   private keyboardStepDelay(state: KeyboardPathState): number {
-    const base = clamp(this.params.keyWalkInterval, 0.18, 0.75);
+    const base = clamp(this.params.keyWalkInterval, 0.08, 0.75);
     const stageIndex = Math.max(0, state.step - 1);
+    const phraseLength = Math.max(1, state.totalStages);
+    const stageInPhrase = positiveModulo(stageIndex, phraseLength);
+    const phraseCycle = Math.floor(stageIndex / phraseLength);
     const patternIndex = stageIndex % Starlace.KEYBOARD_ECHO_DELAY_FACTORS.length;
-    const repeats = Math.floor(stageIndex / Starlace.KEYBOARD_ECHO_DELAY_FACTORS.length);
-    const tighten = Math.max(0.84, 1 - repeats * 0.06);
-    const humanize = (hash(state.phraseSeed * 13.71 + state.step * 19.37) - 0.5) * base * 0.10;
-    return clamp(base * Starlace.KEYBOARD_ECHO_DELAY_FACTORS[patternIndex] * tighten + humanize, 0.12, 0.86);
+    const rhythm = clamp(this.params.keyRhythmSwing, 0, 1);
+    const drift = clamp(this.params.keyTempoDrift, 0, 1);
+    const swing = stageInPhrase % 2 === 0 ? 1 + rhythm * 0.26 : 1 - rhythm * 0.22;
+    const phraseWave = 1 + Math.sin((stageInPhrase / phraseLength) * TAU + state.phraseSeed * TAU) * drift * 0.30;
+    const breath = stageInPhrase === 0 && phraseCycle > 0 ? 1 + drift * 0.38 : 1;
+    const rush = stageInPhrase > phraseLength * 0.56 ? 1 - drift * 0.24 : 1;
+    const humanize = (hash(state.phraseSeed * 13.71 + state.step * 19.37) - 0.5) * base * (0.08 + rhythm * 0.14);
+    const factor = Starlace.KEYBOARD_ECHO_DELAY_FACTORS[patternIndex] * swing * phraseWave * breath * rush;
+    return clamp(base * factor + humanize, 0.07, 0.95);
   }
 
   private keyboardPathVelocity(state: KeyboardPathState): number {
@@ -1546,8 +1604,11 @@ export class Starlace implements PlayerVisual {
     const accent = state.step <= 0
       ? 0.12
       : Starlace.KEYBOARD_ECHO_VELOCITY_OFFSETS[patternIndex] ?? 0;
+    const phraseAccent = positiveModulo(state.step, Math.max(1, state.totalStages)) === 0
+      ? clamp(this.params.keyRhythmSwing, 0, 1) * 0.10
+      : 0;
     const base = 0.38 + state.velocity * 0.38;
-    return clamp(base + accent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.14, 0.34, 0.95);
+    return clamp(base + accent + phraseAccent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.14, 0.34, 0.95);
   }
 
   private emitStreak(node: StarNode, velocity: number): void {

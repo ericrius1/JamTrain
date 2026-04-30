@@ -7,7 +7,7 @@ import type { HandTracker } from '../game/handTracking';
 import { createCornerFiligree } from './components/CornerFiligree';
 import { SharePopover } from './components/SharePopover';
 import { AnnouncementToast } from './components/AnnouncementToast';
-import { MixerPanel } from './components/MixerPanel';
+import { MixerPanel, type MidiButtonState } from './components/MixerPanel';
 import { INSTRUMENTS, type InstrumentId } from '../game/instruments';
 import { InstrumentPicker } from './components/InstrumentPicker';
 import { CreaturePicker } from './components/CreaturePicker';
@@ -256,6 +256,14 @@ export class Hud {
 
   onVoiceVolumeChange(listener: (value: number) => void): void {
     this.mixerPanel.onVoiceChange(listener);
+  }
+
+  onMidiConnect(listener: () => void): void {
+    this.mixerPanel.onMidiClick(listener);
+  }
+
+  setMidiState(state: MidiButtonState): void {
+    this.mixerPanel.setMidiState(state);
   }
 
   setRoom(room: string): void {

@@ -15,6 +15,14 @@ export type MidiNoteEvent = {
   channel: number;
 };
 
+export type MidiState =
+  | { kind: 'idle' }
+  | { kind: 'unsupported' }
+  | { kind: 'connecting' }
+  | { kind: 'enabled'; inputs: string[] }
+  | { kind: 'denied' }
+  | { kind: 'error'; message: string };
+
 type MidiInputControllerOptions = {
   onNoteOn: (event: MidiNoteEvent) => void;
   onNoteOff: (event: MidiNoteEvent) => void;
@@ -24,19 +32,38 @@ export class MidiInputController {
   private started = false;
   private listeners = new Map<string, Listener[]>();
   private activeNotes = new Map<string, MidiNoteEvent>();
+  private state: MidiState = WebMidi.supported ? { kind: 'idle' } : { kind: 'unsupported' };
+  private stateListeners = new Set<(state: MidiState) => void>();
 
   constructor(private readonly opts: MidiInputControllerOptions) {}
 
-  async start(): Promise<void> {
+  getState(): MidiState {
+    return this.state;
+  }
+
+  onStateChange(listener: (state: MidiState) => void): () => void {
+    this.stateListeners.add(listener);
+    return () => this.stateListeners.delete(listener);
+  }
+
+  async enable(): Promise<void> {
     if (this.started) return;
     if (!WebMidi.supported) {
-      console.info('[midi] Web MIDI is not supported in this browser');
+      this.setState({ kind: 'unsupported' });
       return;
     }
 
+    this.setState({ kind: 'connecting' });
     try {
       await WebMidi.enable({ sysex: false });
     } catch (err) {
+      const denied =
+        err instanceof Error && /denied|NotAllowedError|SecurityError/i.test(err.message);
+      if (denied) {
+        this.setState({ kind: 'denied' });
+      } else {
+        this.setState({ kind: 'error', message: err instanceof Error ? err.message : 'unknown' });
+      }
       console.warn('[midi] Web MIDI access was not granted', err);
       return;
     }
@@ -45,6 +72,7 @@ export class MidiInputController {
     this.attachInputs();
     WebMidi.addListener('portschanged', this.handlePortsChanged);
     this.logInputs();
+    this.publishEnabledState();
   }
 
   dispose(): void {
@@ -57,7 +85,19 @@ export class MidiInputController {
   private handlePortsChanged = (): void => {
     this.attachInputs();
     this.logInputs();
+    this.publishEnabledState();
   };
+
+  private setState(state: MidiState): void {
+    this.state = state;
+    for (const l of this.stateListeners) l(state);
+  }
+
+  private publishEnabledState(): void {
+    if (!this.started) return;
+    const inputs = WebMidi.inputs.map(input => input.name || input.id || 'MIDI input');
+    this.setState({ kind: 'enabled', inputs });
+  }
 
   private attachInputs(): void {
     const liveIds = new Set(WebMidi.inputs.map(input => input.id));

@@ -59,26 +59,23 @@ const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
   dadras: 'Dadras',
 };
 
-// The spawn queue is baked into TSL uniform arrays and the emit compute
-// dispatch size, so changing the live stream cap rebuilds that small emit
-// pipeline. The particle pool itself stays fixed.
-const DEFAULT_MAX_SPAWNS_PER_FRAME = 256;
-const MIN_CONFIGURABLE_SPAWNS_PER_FRAME = 16;
-const MAX_CONFIGURABLE_SPAWNS_PER_FRAME = 2048;
+// Spawn queue is a TSL uniform array sized to fit a WebGPU UBO (~64KB),
+// large enough that no realistic per-frame burst hits it. The only
+// user-visible cap on particles is the total pool size.
+const SPAWN_QUEUE_CAPACITY = 4096;
 const DEFAULT_ATTRACTOR_HOLD_SECONDS = 20;
 const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 
 export const SCULPTOR_DEFS = {
   particleCount:      { default: 100000, min: 4096, max: 2000000, step: 256, label: 'particle pool', hidden: false },
-  maxSpawnsPerFrame:  { default: DEFAULT_MAX_SPAWNS_PER_FRAME, min: MIN_CONFIGURABLE_SPAWNS_PER_FRAME, max: MAX_CONFIGURABLE_SPAWNS_PER_FRAME, step: 16, folder: 'Particles', label: 'stream cap / frame' },
   particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'opacity fade starts at life' },
 
   fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Affinity', label: 'field strength' },
-  fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay starts at life' },
-  fieldFalloffEnd:    { default: 0.7,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final reached at life' },
+  fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay start' },
+  fieldFalloffEnd:    { default: 0.7,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay end' },
   finalFieldEffect:   { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final affinity' },
 
   fieldVolumeScale:   { default: 0.55,  min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
@@ -133,7 +130,6 @@ export class EnergySculptor implements EnergySink {
   private material!: THREE.SpriteNodeMaterial;
 
   private count: number;
-  private spawnQueueCapacity = DEFAULT_MAX_SPAWNS_PER_FRAME;
   private spawnCursorCpu = 0;
   private pendingEmits: EmitRequest[] = [];
 
@@ -203,9 +199,11 @@ export class EnergySculptor implements EnergySink {
 
   // Lifetime-keyed field affinity. A particle keeps full field influence until
   // normalizedAge reaches fieldFalloffStart, then eases to finalFieldEffect by
-  // fieldFalloffEnd and holds that affinity for the rest of its life. If
-  // finalFieldEffect is exactly 0 and the falloff has completed, velocity is
-  // zeroed so it freezes instead of drifting on residual velocity.
+  // fieldFalloffEnd and holds that affinity for the rest of its life. Affinity
+  // is purely a flow-strength multiplier — particle lifetime is independent
+  // and a particle never dies from low affinity. At finalFieldEffect=0 the
+  // settle drag (proportional to 1-fieldEffect) bleeds momentum to ~0 over
+  // ~1s, so particles drift to a stop in place instead of being yanked there.
   private fieldFalloffStartUniform = uniform(0.0);
   private fieldFalloffEndUniform = uniform(0.2);
   private finalFieldEffectUniform = uniform(0.0);
@@ -293,7 +291,6 @@ export class EnergySculptor implements EnergySink {
     this.center = center.clone();
     this.params = { ...Object.fromEntries(Object.entries(SCULPTOR_DEFS).map(([k, d]) => [k, d.default])) } as SculptorParams;
     this.count = this.params.particleCount;
-    this.spawnQueueCapacity = clampSpawnQueueCapacity(this.params.maxSpawnsPerFrame);
 
     this.allocateBuffers();
     this.allocateSpawnQueue();
@@ -331,7 +328,6 @@ export class EnergySculptor implements EnergySink {
         projectorBaseY: () => this.layoutProjectorRings(),
         particleSize: v => { this.particleSizeUniform.value = v; },
         particleOpacity: v => { this.particleOpacityUniform.value = v; },
-        maxSpawnsPerFrame: v => { this.applyMaxSpawnsPerFrame(v); },
         speedGlow: v => { this.speedGlowUniform.value = v; },
         stretchScale: v => { this.stretchScaleUniform.value = v; },
         particleLifetime: v => { this.applyParticleLifetime(v); },
@@ -660,7 +656,7 @@ export class EnergySculptor implements EnergySink {
     this.spawnVelArray = [];
     this.spawnColorArray = [];
     this.spawnMetaArray = [];
-    for (let i = 0; i < this.spawnQueueCapacity; i += 1) {
+    for (let i = 0; i < SPAWN_QUEUE_CAPACITY; i += 1) {
       this.spawnPosArray.push(new THREE.Vector3());
       this.spawnVelArray.push(new THREE.Vector3());
       this.spawnColorArray.push(new THREE.Vector3());
@@ -677,7 +673,7 @@ export class EnergySculptor implements EnergySink {
     const velocities = this.velocitiesBuffer;
     const colors = this.colorsBuffer;
     const meta = this.metaBuffer;
-    const spawnQueueCapacity = this.spawnQueueCapacity;
+    const spawnQueueCapacity = SPAWN_QUEUE_CAPACITY;
     const spawnSearchSteps = Math.ceil(this.count / spawnQueueCapacity);
 
     // Emit pass: only write into dead slots. Dropping overflow is preferable to
@@ -799,11 +795,6 @@ export class EnergySculptor implements EnergySink {
       const falloffRaw = lifeT.sub(falloffStart).div(falloffFinalAt.sub(falloffStart).max(0.0001)).clamp(0, 1);
       const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
       const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
-      // Below ~2% field influence, recoupling to a new attractor reads as a bug,
-      // not as intentional drift. Treat it as settled so field transitions cannot
-      // sweep old particles back into motion.
-      const freezeWhenSettled = fieldEffect.lessThanEqual(0.02);
-      const fieldCoupled = fieldEffect.greaterThan(0.02);
 
       // The field is the only sculpting force. Treat it as a velocity field
       // with light inertia instead of a raw acceleration so Thomas particles
@@ -837,7 +828,7 @@ export class EnergySculptor implements EnergySink {
       // The sphere is a guardrail, not the sculpture. Outside the radius we
       // softly remove outward radial velocity and add a small inward drift;
       // only well beyond the guardrail do we clamp as an escape hatch.
-      If(fieldCoupled.and(outsideT.greaterThan(0)), () => {
+      If(outsideT.greaterThan(0), () => {
         const outwardSpeed = radialSpeed.max(0);
         const inwardSpeed = outsideT.mul(0.38).mul(fieldEffect);
         newVel.assign(newVel.sub(sphereNormal.mul(outwardSpeed.mul(outsideT))).sub(sphereNormal.mul(inwardSpeed)));
@@ -847,16 +838,10 @@ export class EnergySculptor implements EnergySink {
       const hardDist = hardFromSphereCenter.length();
       const hardRadius = sphereRadius.mul(1.18);
       const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
-      If(fieldCoupled.and(hardDist.greaterThan(hardRadius)), () => {
+      If(hardDist.greaterThan(hardRadius), () => {
         const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
         containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)));
         newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
-      });
-
-      // Settled particles are independent of field and guardrail changes.
-      If(freezeWhenSettled, () => {
-        containedPos.assign(pos);
-        newVel.assign(vec3(0));
       });
 
       // Age update. Particle death is only age >= lifeMax; field affinity never
@@ -1308,18 +1293,9 @@ export class EnergySculptor implements EnergySink {
     this.lifeMaxUniform.value = lifetime;
   }
 
-  private applyMaxSpawnsPerFrame(value = this.params.maxSpawnsPerFrame): void {
-    const next = clampSpawnQueueCapacity(value);
-    this.params.maxSpawnsPerFrame = next;
-    if (next === this.spawnQueueCapacity && this.spawnPosArray.length === next) return;
-    this.spawnQueueCapacity = next;
-    this.allocateSpawnQueue();
-    this.buildComputePipelines();
-  }
-
   private fillSpawnQueue(): void {
     let cursor = 0;
-    const frameCap = this.spawnQueueCapacity;
+    const frameCap = SPAWN_QUEUE_CAPACITY;
     const lifeBase = Math.max(MIN_PARTICLE_LIFETIME, this.lifeMaxUniform.value);
     const sphereRadius = this.fieldSphereRadiusUniform.value;
     const sphereCenterY = this.fieldSphereCenterYUniform.value;
@@ -1516,7 +1492,3 @@ function clampRange(value: number, min: number, max: number, fallback: number): 
   return Math.max(min, Math.min(max, value));
 }
 
-function clampSpawnQueueCapacity(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_MAX_SPAWNS_PER_FRAME;
-  return Math.max(MIN_CONFIGURABLE_SPAWNS_PER_FRAME, Math.min(MAX_CONFIGURABLE_SPAWNS_PER_FRAME, Math.round(value)));
-}
