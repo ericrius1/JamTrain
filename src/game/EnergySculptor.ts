@@ -64,7 +64,9 @@ const BLENDING_LOOKUP: Record<BlendingMode, THREE.Blending> = {
   none: THREE.NoBlending,
 };
 
-const PARTICLE_COUNT = 524288;
+const PARTICLE_COUNT = 1024288;
+// const PARTICLE_COUNT = 524288;
+
 
 const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
   thomas: 'Thomas',
@@ -94,9 +96,14 @@ export const SCULPTOR_DEFS = {
   fieldFalloffEnd:    { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay end' },
   finalFieldEffect:   { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final affinity' },
 
-  fieldVolumeScale:   { default: 0.55,  min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
+  fieldVolumeScale:   { default: 0.55,  min: 0.05,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
   fieldSphereRadius:  { default: 1.0,   min: 0.2,   max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'sphere radius' },
   fieldSphereCenterY: { default: 0.12,  min: -0.5,  max: 1.1,  step: 0.01,  folder: 'Field Bounds', label: 'center height' },
+  volumeAutoEnabled:  { type: 'boolean' as const, default: true,             folder: 'Field Bounds', label: 'auto cycle' },
+  volumeAutoCycleS:   { default: 50,    min: 5,     max: 240,  step: 0.5,    folder: 'Field Bounds', label: 'cycle s' },
+  volumeAutoSteps:    { default: 10,    min: 2,     max: 40,   step: 1,      folder: 'Field Bounds', label: 'steps' },
+  volumeAutoMin:      { default: 0.2,   min: 0.05,  max: 2.5,  step: 0.01,   folder: 'Field Bounds', label: 'cycle min' },
+  volumeAutoMax:      { default: 0.5,   min: 0.05,  max: 2.5,  step: 0.01,   folder: 'Field Bounds', label: 'cycle max' },
 
   fieldRotationRate:  { default: 10,   min: 0,     max: 20,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
   fieldDebugDensity:  { default: 20,    min: 3,     max: 30,   step: 1,     folder: 'Field Shape', label: 'debug density' },
@@ -268,6 +275,8 @@ export class EnergySculptor implements EnergySink {
   private attractorCyclePhase: 'hold' | 'transition' = 'hold';
   private synchronyBoost = 0;
   private elapsed = 0;
+  private volumeAutoElapsed = 0;
+  private volumeAutoOverride: number | null = null;
 
   // Decorative scene elements.
   private static TIMER_SEGMENTS = 96;
