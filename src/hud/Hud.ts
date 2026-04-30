@@ -15,8 +15,8 @@ import { type CreatureId } from '../game/creatures';
 import { ControlsPanel } from './components/ControlsPanel';
 
 // Default mix balance. Plenty of slider headroom on either side.
-export const DEFAULT_MUSIC_VOLUME = .85;
-export const DEFAULT_STARLACE_VOLUME = 1.0;
+export const DEFAULT_MUSIC_VOLUME = 1.0;
+export const DEFAULT_STARLACE_VOLUME = 0.71;
 export const DEFAULT_ORB_VOLUME = 1.0;
 export const DEFAULT_BACKING_TRACK_VOLUME = 0.55;
 export const DEFAULT_VOICE_VOLUME = 0.7;
@@ -152,6 +152,7 @@ export class Hud {
       voice: DEFAULT_VOICE_VOLUME,
     });
     this.remotePanel.setRemoteVolume(DEFAULT_VOICE_VOLUME);
+    this.mixerPanel.el.classList.add('hidden');
     this.uiEl.appendChild(this.mixerPanel.el);
 
     this.localInstrumentPicker = new InstrumentPicker({
@@ -238,6 +239,10 @@ export class Hud {
 
   onShareVideoToggle(listener: () => void): void {
     this.localPanel.onShareVideoClick(listener);
+  }
+
+  setMixerVisible(visible: boolean): void {
+    this.mixerPanel.el.classList.toggle('hidden', !visible);
   }
 
   setMixerValues(music: number, starlace: number, orb: number, backing: number, voice: number): void {

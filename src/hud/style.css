@@ -1067,6 +1067,7 @@
   pointer-events: auto;
   border-radius: 4px;
 }
+.mixer-panel.hidden { display: none; }
 .mixer-panel-title-row {
   position: relative;
   display: flex;

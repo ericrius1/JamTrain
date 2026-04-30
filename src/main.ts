@@ -358,11 +358,11 @@ async function createRuntime(): Promise<RuntimeApi> {
     visible => {
       if (!visible) game.setCameraMode('game');
       game.setDebugVisible(visible);
+      hud.setMixerVisible(visible);
     },
     () => {
       game.setCameraMode(game.getCameraMode() === 'game' ? 'orbit' : 'game');
     },
-    () => game.getAliveParticleCount(),
   );
 
   hud.setHandTracker(game.handTracker);

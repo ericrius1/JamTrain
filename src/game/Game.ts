@@ -613,6 +613,7 @@ export class Game {
         }
       }
       this.backingTrackAnalyzer.setSculptor(sculptor);
+      this.updateSculptorRingTint();
       this.refreshArchetype();
     } else {
       const sculptor = this.sculptor;
@@ -784,10 +785,6 @@ export class Game {
 
   setDebugVisible(visible: boolean): void {
     this.sculptor?.setDebugVisible(visible);
-  }
-
-  getAliveParticleCount(): number {
-    return this.sculptor?.getAliveParticleCount() ?? 0;
   }
 
   setCameraMode(mode: CameraMode): void {
@@ -1373,6 +1370,34 @@ export class Game {
     if (count === this.localOrbCount) return;
     this.localOrbCount = count;
     for (const listener of this.localOrbCountListeners) listener(count);
+    this.updateSculptorRingTint();
+  }
+
+  // Default = punchy purple matched to the robot robe's hue range, used when
+  // no orbs are out so the FFT ring still reads as "this purple orb color."
+  private static readonly DEFAULT_RING_TINT = '#8a4fd6';
+  private static readonly _ringTintScratch = new THREE.Color();
+  private static readonly _ringTintHsl = { h: 0, s: 0, l: 0 };
+
+  private updateSculptorRingTint(): void {
+    const sculptor = this.sculptor;
+    if (!sculptor) return;
+    if (this.localOrbCount > 0) {
+      const robe = CREATURE_ROBE_COLORS[this.playerCreatures.local];
+      const c = Game._ringTintScratch.set(robe);
+      c.getHSL(Game._ringTintHsl);
+      // Robe colors are intentionally dark (~#12233b lion, #402147 robot); on
+      // top of additive blending they'd read as muddy, so push lightness +
+      // saturation to land in the same vivid range as the orb tip glow.
+      c.setHSL(
+        Game._ringTintHsl.h,
+        Math.min(1, Game._ringTintHsl.s * 1.05 + 0.10),
+        Math.min(1, Game._ringTintHsl.l + 0.45),
+      );
+      sculptor.setRingTintColor(c);
+    } else {
+      sculptor.setRingTintColor(Game.DEFAULT_RING_TINT);
+    }
   }
 
   private async swapPlayerVisual(player: PlayerSlot, id: InstrumentId): Promise<void> {
@@ -1496,6 +1521,7 @@ export class Game {
     for (const visual of Object.values(this.playerVisualCache[player])) {
       visual?.setCreature?.(id);
     }
+    if (player === 'local') this.updateSculptorRingTint();
   }
 
   private setupCabinPane(): void {

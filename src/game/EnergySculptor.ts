@@ -152,11 +152,6 @@ export class EnergySculptor implements EnergySink {
   private pendingEmits: EmitRequest[] = [];
   private pendingCount = 0;
 
-  // CPU-side bookkeeping for the live-particle counter shown in DevOverlay.
-  // Each emit batch records the in-flight count and lifetime captured at spawn
-  // time; `getAliveParticleCount` prunes expired batches and sums the rest.
-  private aliveBatches: { spawnedAt: number; count: number; lifeMax: number }[] = [];
-
   // Per-particle GPU storage. Packed to keep the hot path at three storage
   // reads/writes instead of four:
   // positionAge = (position.xyz, age seconds)
@@ -516,24 +511,6 @@ export class EnergySculptor implements EnergySink {
 
   getSynchronyBoost(): number {
     return this.synchronyBoost;
-  }
-
-  // Approximate live-particle count for the DevOverlay readout. Drops batches
-  // whose lifetime has elapsed and caps the total at the GPU pool size, since
-  // the spawn ring buffer overwrites older live particles when it wraps.
-  getAliveParticleCount(): number {
-    const now = this.elapsed;
-    let writeIdx = 0;
-    let total = 0;
-    for (let i = 0; i < this.aliveBatches.length; i += 1) {
-      const batch = this.aliveBatches[i];
-      if (now - batch.spawnedAt >= batch.lifeMax) continue;
-      this.aliveBatches[writeIdx] = batch;
-      writeIdx += 1;
-      total += batch.count;
-    }
-    this.aliveBatches.length = writeIdx;
-    return Math.min(total, this.count);
   }
 
   // Toggle the field debug visualization. Hooked from main.ts/Game so it
@@ -1679,7 +1656,6 @@ export class EnergySculptor implements EnergySink {
       this.activeSlotCountUniform.value = this.activeSlotCountCpu;
       this.mesh.count = this.activeSlotCountCpu;
       this.mesh.visible = true;
-      this.aliveBatches.push({ spawnedAt: this.elapsed, count: cursor, lifeMax: lifeBase });
     }
   }
 
