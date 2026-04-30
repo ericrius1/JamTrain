@@ -47,6 +47,10 @@ export const DRUM_DEFS = {
   ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
   pyramidRowSpacing: { default: 0.105, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
   heldStreamAmount:  { default: 10, min: 0, max: 100, step: 0.05, folder: 'Emission', label: 'emission rate' },
+  envAttack:         { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 1.5, step: 0.001, folder: 'Envelope', label: 'attack s' },
+  envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
+  envSustain:        { default: DEFAULT_ORB_ENVELOPE.sustain, min: 0,     max: 1,   step: 0.01,  folder: 'Envelope', label: 'sustain' },
+  envRelease:        { default: DEFAULT_ORB_ENVELOPE.release, min: 0.01,  max: 5.0, step: 0.01,  folder: 'Envelope', label: 'release s' },
 } as const;
 
 export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
@@ -67,10 +71,6 @@ const DRUM_RUNTIME = {
   hitVelMin: 0.012,
   anchorSmoothing: 8.0,
   hitTintAmount: 0.85,
-  envAttack: DEFAULT_ORB_ENVELOPE.attack,
-  envDecay: DEFAULT_ORB_ENVELOPE.decay,
-  envSustain: DEFAULT_ORB_ENVELOPE.sustain,
-  envRelease: DEFAULT_ORB_ENVELOPE.release,
 } as const;
 
 const DRUM_ROBE_COOL = new THREE.Color('#6faec8');
@@ -740,10 +740,10 @@ export class Drum implements PlayerVisual {
 
   private currentEnvelope(): OrbEnvelopeSettings {
     return {
-      attack: Math.max(0.002, DRUM_RUNTIME.envAttack),
-      decay: Math.max(0.002, DRUM_RUNTIME.envDecay),
-      sustain: clamp(DRUM_RUNTIME.envSustain, 0, 1),
-      release: Math.max(0.002, DRUM_RUNTIME.envRelease),
+      attack: Math.max(0.002, this.params.envAttack),
+      decay: Math.max(0.002, this.params.envDecay),
+      sustain: clamp(this.params.envSustain, 0, 1),
+      release: Math.max(0.002, this.params.envRelease),
     };
   }
 

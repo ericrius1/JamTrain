@@ -94,7 +94,6 @@ export const SCULPTOR_DEFS = {
   speedGlow:          { default: 0.7,   min: 0,     max: 2,    step: 0.01,  folder: 'Appearance', label: 'speed glow' },
   stretchScale:       { default: 0.06,  min: 0,     max: 0.4,  step: 0.005, folder: 'Appearance', label: 'accel stretch' },
 
-  dissolveBurstSpeed:   { default: 4.2,   min: 0,    max: 16,   step: 0.1,   folder: 'Projector', label: 'dissolve burst' },
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
   projectorRingCount:   { default: 5,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
   projectorRingSpacing: { default: 0.020, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
@@ -169,8 +168,6 @@ export class EnergySculptor implements EnergySink {
   private worldScaleUniform = uniform(0.014);
   private lifeMaxUniform = uniform(28);
   private opacityFadeStartUniform = uniform(0.90);
-  private dissolveModeUniform = uniform(0);
-  private dissolveBurstUniform = uniform(6);
   private centerUniform = uniform(new THREE.Vector3());
   private speedGlowUniform = uniform(0.7);
   private stretchScaleUniform = uniform(0.06);
@@ -251,8 +248,6 @@ export class EnergySculptor implements EnergySink {
   private attractorCycleIndex = 0;
   private attractorCycleElapsed = 0;
   private attractorCyclePhase: 'hold' | 'transition' = 'hold';
-  private roundProgress = 0;
-  private dissolveMode = 0;
   private synchronyBoost = 0;
   private elapsed = 0;
 
@@ -315,7 +310,6 @@ export class EnergySculptor implements EnergySink {
     this.particleOpacityUniform.value = this.params.particleOpacity;
     this.applyParticleLifetime();
     this.opacityFadeStartUniform.value = this.params.opacityFadeStart;
-    this.dissolveBurstUniform.value = this.params.dissolveBurstSpeed;
     this.speedGlowUniform.value = this.params.speedGlow;
     this.stretchScaleUniform.value = this.params.stretchScale;
     this.fieldFalloffStartUniform.value = this.params.fieldFalloffStart;
@@ -359,7 +353,6 @@ export class EnergySculptor implements EnergySink {
         attractorOverride: v => { this.setAttractorOverride(v as AttractorMode); },
         attractorHoldSeconds: v => { this.applyAttractorHoldSeconds(v); },
         attractorTransitionSeconds: v => { this.applyAttractorTransitionSeconds(v); },
-        dissolveBurstSpeed: v => { this.dissolveBurstUniform.value = v; },
       },
     });
     this.syncAttractorCycleIndex();
@@ -369,7 +362,6 @@ export class EnergySculptor implements EnergySink {
   // ---------------------------------------------------------------------- emit
 
   emit(req: EmitRequest): void {
-    if (this.dissolveMode > 0) return;
     this.pendingEmits.push(req);
   }
 
@@ -412,26 +404,12 @@ export class EnergySculptor implements EnergySink {
     this.updateAttractorDebugMessage();
   }
 
-  setRoundProgress(progress: number): void {
-    this.roundProgress = Math.max(0, progress);
-  }
-
   fireSynchrony(): void {
     this.synchronyBoost = 1;
   }
 
   getSynchronyBoost(): number {
     return this.synchronyBoost;
-  }
-
-  beginDissolve(): void {
-    this.dissolveMode = 1;
-    this.dissolveModeUniform.value = 1;
-  }
-
-  endDissolve(): void {
-    this.dissolveMode = 0;
-    this.dissolveModeUniform.value = 0;
   }
 
   // Toggle the field debug visualization. Hooked from main.ts/Game so it
@@ -846,11 +824,6 @@ export class EnergySculptor implements EnergySink {
         .clamp(0, 1);
       newVel.assign(mix(newVel, vec3(0), settleDrag));
 
-      // Dissolve burst: blow particles outward away from origin and shorten life.
-      const dm = this.dissolveModeUniform;
-      const outward = pos.normalize().mul(this.dissolveBurstUniform).mul(this.worldScaleUniform);
-      newVel.assign(mix(newVel, outward, dm));
-
       const containedPos = pos.add(newVel.mul(this.dtUniform)).toVar();
       const sphereCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
       const fromSphereCenter = containedPos.sub(sphereCenter);
@@ -864,8 +837,7 @@ export class EnergySculptor implements EnergySink {
       // The sphere is a guardrail, not the sculpture. Outside the radius we
       // softly remove outward radial velocity and add a small inward drift;
       // only well beyond the guardrail do we clamp as an escape hatch.
-      const containActive = dm.lessThan(0.5);
-      If(containActive.and(fieldCoupled).and(outsideT.greaterThan(0)), () => {
+      If(fieldCoupled.and(outsideT.greaterThan(0)), () => {
         const outwardSpeed = radialSpeed.max(0);
         const inwardSpeed = outsideT.mul(0.38).mul(fieldEffect);
         newVel.assign(newVel.sub(sphereNormal.mul(outwardSpeed.mul(outsideT))).sub(sphereNormal.mul(inwardSpeed)));
@@ -875,22 +847,21 @@ export class EnergySculptor implements EnergySink {
       const hardDist = hardFromSphereCenter.length();
       const hardRadius = sphereRadius.mul(1.18);
       const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
-      If(containActive.and(fieldCoupled).and(hardDist.greaterThan(hardRadius)), () => {
+      If(fieldCoupled.and(hardDist.greaterThan(hardRadius)), () => {
         const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
         containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)));
         newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
       });
 
       // Settled particles are independent of field and guardrail changes.
-      If(containActive.and(freezeWhenSettled), () => {
+      If(freezeWhenSettled, () => {
         containedPos.assign(pos);
         newVel.assign(vec3(0));
       });
 
       // Age update. Particle death is only age >= lifeMax; field affinity never
       // changes lifeMax or the aging rate.
-      const ageStep = this.ageDtUniform.mul(float(1).add(dm.mul(2.0)));
-      const newAge = m.x.add(ageStep);
+      const newAge = m.x.add(this.ageDtUniform);
       const lifeMax = m.y;
 
       // Signed acceleration along the path, low-passed across frames so the
@@ -1035,8 +1006,7 @@ export class EnergySculptor implements EnergySink {
 
   private updateProjectorRing(): void {
     if (!this.projectorRingMaterial) return;
-    const build = Math.min(1, this.roundProgress);
-    this.projectorRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.12 + build * 0.18;
+    this.projectorRingMaterial.opacity = 0.18;
     this.positionProjectorRings(this.elapsed);
   }
 

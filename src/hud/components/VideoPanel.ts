@@ -57,12 +57,15 @@ export class VideoPanel {
   private cameraButton?: HTMLButtonElement;
   private shareButton?: HTMLButtonElement;
   private micButton?: HTMLButtonElement;
+  private micHint?: HTMLDivElement;
   private emptyOverlay?: HTMLDivElement;
   private toolbar?: HTMLDivElement;
   private shareWarnOverlay?: HTMLDivElement;
   private shareWarnHeading?: HTMLDivElement;
   private cameraEnabled = false;
   private shareVideoEnabled = false;
+  private micArmed = false;
+  private micTransmitting = false;
   private partnerPresent = false;
   private cameraListeners = new Set<() => void>();
   private shareVideoListeners = new Set<() => void>();
@@ -137,6 +140,12 @@ export class VideoPanel {
     toolbar.append(this.cameraButton, this.shareButton, this.micButton);
 
     this.wrapper.appendChild(toolbar);
+
+    const hint = document.createElement('div');
+    hint.className = 'video-panel-mic-hint hidden';
+    hint.innerHTML = `<span class="key">Space</span><span class="text">hold to talk</span>`;
+    this.wrapper.appendChild(hint);
+    this.micHint = hint;
   }
 
   private buildEmptyOverlay(): void {
@@ -194,7 +203,24 @@ export class VideoPanel {
   }
 
   setMicEnabled(enabled: boolean): void {
+    this.micArmed = enabled;
     this.micButton?.classList.toggle('enabled', enabled);
+    if (!enabled) this.micTransmitting = false;
+    this.refreshMicHint();
+  }
+
+  setMicTransmitting(transmitting: boolean): void {
+    this.micTransmitting = transmitting && this.micArmed;
+    this.micButton?.classList.toggle('transmitting', this.micTransmitting);
+    this.refreshMicHint();
+  }
+
+  private refreshMicHint(): void {
+    if (!this.micHint) return;
+    this.micHint.classList.toggle('hidden', !this.micArmed);
+    this.micHint.classList.toggle('live', this.micTransmitting);
+    const text = this.micHint.querySelector('.text');
+    if (text) text.textContent = this.micTransmitting ? 'live' : 'hold to talk';
   }
 
   onCameraClick(listener: () => void): void {

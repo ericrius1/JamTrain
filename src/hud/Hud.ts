@@ -212,6 +212,10 @@ export class Hud {
     this.localPanel.setMicEnabled(enabled);
   }
 
+  setMicTransmitting(transmitting: boolean): void {
+    this.localPanel.setMicTransmitting(transmitting);
+  }
+
   setCameraEnabled(enabled: boolean): void {
     this.localPanel.setCameraEnabled(enabled);
   }

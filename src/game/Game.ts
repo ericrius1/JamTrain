@@ -10,7 +10,6 @@ import { clamp, hash } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { Drum } from './visuals/Drum';
 import { Starlace } from './visuals/Starlace';
-import { RoundDirector } from './RoundDirector';
 import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
@@ -180,8 +179,6 @@ export class Game {
   };
   private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'starlace' };
   private playerCreatures: Record<PlayerSlot, CreatureId> = { local: 'lion', remote: 'robot' };
-  private pendingPartnerInstrument: InstrumentId | null = null;
-  private roundDirector!: RoundDirector;
   private sculptor!: EnergySculptor;
   private lastDrumHitAt = -10;
   private lastStarlacePluckAt = -10;
@@ -327,35 +324,10 @@ export class Game {
     this.createCabin();
     await this.renderer.init();
     this.setupOrbitControls();
-    this.roundDirector = new RoundDirector(this.paneDock);
     this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.renderer, this.paneDock);
-    this.roundDirector.onPlayingStart(() => {
-      // endDissolve must run first. If anything below throws (e.g. an instrument
-      // swap rejects), emit() would otherwise stay gated on dissolveMode > 0
-      // and every drum hit / pluck would silently produce no particles even
-      // though audio plays.
-      this.sculptor.endDissolve();
-      try {
-        if (this.pendingPartnerInstrument && this.pendingPartnerInstrument !== this.playerInstruments.remote) {
-          if (this.introActive) {
-            this.installPlayerVisualImmediate('remote', this.pendingPartnerInstrument);
-          } else {
-            void this.swapPlayerVisual('remote', this.pendingPartnerInstrument).then(() => this.refreshArchetype());
-          }
-        }
-        this.pendingPartnerInstrument = null;
-        this.refreshArchetype();
-      } catch (err) {
-        console.warn('[Game] onPlayingStart listener failed', err);
-      }
-    });
-    this.roundDirector.onDissolvingStart(() => {
-      this.sculptor.beginDissolve();
-    });
     this.installPlayerVisuals();
     await this.prewarmPlayerVisuals();
     this.refreshArchetype();
-    this.roundDirector.start();
     this.setupPlayersPane();
     this.setupInstrumentsPane();
     this.handTracker.attachPane(this.paneDock);
@@ -546,7 +518,6 @@ export class Game {
     this.robotMotion.dispose();
     this.scenery.dispose();
     this.sculptor?.dispose();
-    this.roundDirector?.dispose();
     this.disposePlayerVisuals();
     this.midiInput.dispose();
     this.handSynth.dispose();
@@ -1192,7 +1163,6 @@ export class Game {
     const delta = Math.min((now - this.lastFrameAt) / 1000, 0.05);
     const elapsed = (now - this.startedAt) / 1000;
     this.lastFrameAt = now;
-    this.roundDirector.tick(delta);
     const localSeat = this.multiplayer.localSeatIndex;
     const partnerSeat = this.multiplayer.partnerSeatIndex;
     const hands = this.handTracker.update(elapsed, localSeat);
@@ -1221,7 +1191,6 @@ export class Game {
     this.remoteRig.update(remotePose, delta, robotTarget);
 
     this.updatePlayerVisuals(delta, elapsed);
-    this.sculptor.setRoundProgress(this.roundDirector.snapshot().progress);
     this.sculptor.update(delta);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);

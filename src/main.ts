@@ -441,16 +441,21 @@ async function createRuntime(): Promise<RuntimeApi> {
     if (!started || !game.getMicEnabled()) return;
     e.preventDefault();
     game.setMicTransmitting(true);
+    hud.setMicTransmitting(true);
   };
   const handlePushToTalkUp = (e: KeyboardEvent): void => {
     if (e.code !== 'Space') return;
     if (isTextTarget(e.target)) return;
     game.setMicTransmitting(false);
+    hud.setMicTransmitting(false);
   };
   // Releasing focus while the key is held would otherwise leave the mic stuck
   // open; clear the transmit state on blur and visibility loss too.
   const stopPushToTalk = (): void => {
-    if (started) game.setMicTransmitting(false);
+    if (started) {
+      game.setMicTransmitting(false);
+      hud.setMicTransmitting(false);
+    }
   };
   window.addEventListener('keydown', handlePushToTalkDown);
   window.addEventListener('keyup', handlePushToTalkUp);
