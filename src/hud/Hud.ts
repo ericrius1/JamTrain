@@ -18,7 +18,7 @@ import { ControlsPanel } from './components/ControlsPanel';
 export const DEFAULT_MUSIC_VOLUME = .85;
 export const DEFAULT_STARLACE_VOLUME = 1.0;
 export const DEFAULT_ORB_VOLUME = 1.0;
-export const DEFAULT_BACKING_TRACK_VOLUME = 0.22;
+export const DEFAULT_BACKING_TRACK_VOLUME = 0.55;
 export const DEFAULT_VOICE_VOLUME = 0.7;
 
 export type HudCallbacks = {

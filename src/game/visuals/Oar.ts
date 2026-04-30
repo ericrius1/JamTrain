@@ -38,10 +38,10 @@ import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 type OarPalette = 'local' | 'remote';
 
 export const OAR_DEFS = {
-  pyramidStartHeight: { default: 0.00, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
-  orbRadius:         { default: 0.025, min: 0.015, max: 0.32, step: 0.001, label: 'orb radius' },
+  orbRadius:         { default: 0.034, min: 0.015, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.055, min: 0.03, max: 0.50, step: 0.002, label: 'orb spacing' },
-  pyramidRowSpacing: { default: 0.062, min: 0.04, max: 0.50, step: 0.005, label: 'height spacing' },
+  pyramidStartHeight: { default: -0.10, min: -0.5, max: 0.5, step: 0.005, label: 'bottom height' },
+  pyramidRowSpacing: { default: 0.062, min: 0.04, max: 0.50, step: 0.005, folder: 'Layout', label: 'row spacing' },
   heldStreamAmount:  { default: 10, min: 0, max: 10000, step: 1, folder: 'Emission', label: 'emission rate' },
   envAttack:         { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 1.5, step: 0.001, folder: 'Envelope', label: 'attack s' },
   envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
