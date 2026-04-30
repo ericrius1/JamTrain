@@ -947,7 +947,7 @@ export class EnergySculptor implements EnergySink {
       color: this.params.timerRingColor,
       transparent: true,
       opacity: 0.55,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       depthWrite: false,
     });
     this.rebuildProjectorRings();
@@ -1042,7 +1042,7 @@ export class EnergySculptor implements EnergySink {
       vertexColors: true,
       transparent: true,
       opacity: 0.7,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       depthWrite: false,
     });
     this.fieldDebugLines = new THREE.LineSegments(this.fieldDebugGeom, this.fieldDebugMaterial);

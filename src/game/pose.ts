@@ -19,7 +19,7 @@ export const CAMERA_HAND_LOCAL_Y_SCALE = 1.35;
 // fixed neutral hand pose; this single half-range controls how far the hands
 // can travel above and below that pose.
 export const POSE_DEFS = {
-  verticalRange: { default: 0.2, min: 0, max: 1.4, step: 0.01, label: 'range' },
+  verticalRange: { default: 0.4, min: 0, max: 1.4, step: 0.01, label: 'range' },
 } as const;
 
 export type PoseParams = ParamsOf<typeof POSE_DEFS>;

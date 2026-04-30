@@ -144,6 +144,7 @@ const POINTER_HIT_VELOCITY_MOTION_RANGE = 0.06;
 const POINTER_HIT_VELOCITY_DOWN_BOOST = 0.03;
 const POINTER_HIT_VELOCITY_CLICK_BOOST = 0.08;
 const POINTER_HIT_VELOCITY_MAX = 0.38;
+const POINTER_HELD_SOURCE_ID = 'pointer:primary';
 
 type AnyNode = any;
 
@@ -338,6 +339,7 @@ export class Drum implements PlayerVisual {
   private pointerInside = false;
   private pointerGlow = 0;
   private pointerClickQueued = false;
+  private pointerHeldOrb = -1;
   // Per-orb "ray currently inside this orb" — flips false→true to fire entry hits.
   // Sized in rebuildOrbs() so it tracks pyramidBaseRow.
   private pointerOrbInside: boolean[] = [];
@@ -853,6 +855,7 @@ export class Drum implements PlayerVisual {
   private attachPointerEvents(canvas: HTMLCanvasElement): void {
     const clearPointer = () => {
       if (this.pointerDown) return;
+      this.releasePointerHeldOrb();
       this.pointerInside = false;
       this.pointerClickQueued = false;
       this.pointerNdcPrevValid = false;
@@ -886,9 +889,11 @@ export class Drum implements PlayerVisual {
     };
     this.pointerUpListener = () => {
       this.pointerDown = false;
+      this.releasePointerHeldOrb();
     };
     this.pointerLeaveListener = () => {
       this.pointerDown = false;
+      this.releasePointerHeldOrb();
       clearPointer();
     };
 
@@ -903,6 +908,8 @@ export class Drum implements PlayerVisual {
     if (this.pointerDownListener) window.removeEventListener('pointerdown', this.pointerDownListener, true);
     if (this.pointerUpListener) window.removeEventListener('pointerup', this.pointerUpListener, true);
     if (this.pointerLeaveListener) window.removeEventListener('pointercancel', this.pointerLeaveListener, true);
+    this.pointerDown = false;
+    this.releasePointerHeldOrb();
     this.pointerMoveListener = undefined;
     this.pointerDownListener = undefined;
     this.pointerUpListener = undefined;
@@ -1035,6 +1042,7 @@ export class Drum implements PlayerVisual {
   private updatePointerGesture(delta: number): void {
     const camera = this.camera;
     if (!camera || !this.canvas) {
+      this.releasePointerHeldOrb();
       this.emitGesture(false, _pointerLocal.set(0, 0, 0), 0, 0, 0);
       return;
     }
@@ -1082,7 +1090,8 @@ export class Drum implements PlayerVisual {
     const hasActiveHit = this.raycastPointer(this.pointerNdc, camera, this.pointerCurrentHit);
     const activeOrb = hasActiveHit ? this.pointerCurrentHit.orbIndex : -1;
     const velocity = this.pointerVelocity(ndcSpeed, clickQueued);
-    const activelyStriking = clickQueued || ndcSpeed > POINTER_GESTURE_MOTION_NDC_PER_SEC;
+    this.updatePointerHeldOrb(activeOrb, velocity);
+    const activelyStriking = !this.isPointerHeldOrbActive() && (clickQueued || ndcSpeed > POINTER_GESTURE_MOTION_NDC_PER_SEC);
 
     // A swipe can skip over a small orb between animation frames. Sample the
     // pointer path in NDC and fire for every orb the swept ray crossed.
@@ -1094,7 +1103,7 @@ export class Drum implements PlayerVisual {
     }
 
     // Clicking while already hovering should still behave like a real strike.
-    if (clickQueued && hasActiveHit && !this.pointerFrameFired[activeOrb]) {
+    if (!this.isPointerHeldOrbActive() && clickQueued && hasActiveHit && !this.pointerFrameFired[activeOrb]) {
       this.pointerFrameFired[activeOrb] = this.firePointerHit(activeOrb, velocity, this.pointerCurrentHit.worldPoint);
     }
 
@@ -1124,11 +1133,9 @@ export class Drum implements PlayerVisual {
     this.uniforms.gesture.value.set(_pointerLocal.x, _pointerLocal.y, _pointerLocal.z, this.pointerGlow);
     this.uniforms.gestureDepth.value += (depth - this.uniforms.gestureDepth.value) * (1 - Math.exp(-delta * 10));
     this.pointerInside = true;
-    // Held drone audio only when the pointer is actively moving over an orb (or
-    // on a click). Stationary hover keeps the visual lit spot but the synth
-    // gesture is gated off so auraSynth/subSynth/shimmerSynth don't ring
-    // forever on idle hover.
-    const moving = ndcSpeed > POINTER_GESTURE_MOTION_NDC_PER_SEC || clickQueued;
+    // Pointer-down mirrors a held key. Stationary hover still only lights the
+    // orb; it does not keep the synth gesture active unless the user is pressing.
+    const moving = this.pointerDown || ndcSpeed > POINTER_GESTURE_MOTION_NDC_PER_SEC || clickQueued;
     this.emitGesture(moving, _pointerLocal, depth, radial, speed);
   }
 
@@ -1190,6 +1197,32 @@ export class Drum implements PlayerVisual {
     if (this.elapsed - orb.lastHitAt <= DRUM_RUNTIME.hitCooldown) return false;
     this.dispatchHit(orbIndex, velocity, worldPoint, true);
     return true;
+  }
+
+  private updatePointerHeldOrb(orbIndex: number, velocity: number): void {
+    if (!this.pointerDown) {
+      this.releasePointerHeldOrb();
+      return;
+    }
+    if (orbIndex < 0 || orbIndex === this.pointerHeldOrb) return;
+    const hit = this.pointerCurrentHit;
+    if (hit.orbIndex !== orbIndex) return;
+    this.releasePointerHeldOrb();
+    this.dispatchHit(orbIndex, Math.max(velocity, 0.28), hit.worldPoint, true, undefined, {
+      held: true,
+      sourceId: POINTER_HELD_SOURCE_ID,
+    });
+    this.pointerHeldOrb = orbIndex;
+  }
+
+  private releasePointerHeldOrb(): void {
+    if (this.pointerHeldOrb < 0 && !this.heldSources.has(POINTER_HELD_SOURCE_ID)) return;
+    this.releaseHeldSource(POINTER_HELD_SOURCE_ID);
+    this.pointerHeldOrb = -1;
+  }
+
+  private isPointerHeldOrbActive(): boolean {
+    return this.pointerHeldOrb >= 0 && this.heldSources.has(POINTER_HELD_SOURCE_ID);
   }
 
   private dispatchHit(

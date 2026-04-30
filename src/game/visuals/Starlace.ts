@@ -341,7 +341,7 @@ export class Starlace implements PlayerVisual {
       color: 0xffffff,
       transparent: true,
       opacity: 0.64,
-      blending: THREE.AdditiveBlending,
+      blending: THREE.NormalBlending,
       depthWrite: false,
       vertexColors: true,
     });
@@ -1030,6 +1030,8 @@ export class Starlace implements PlayerVisual {
     if (this.pointerDownListener) window.removeEventListener('pointerdown', this.pointerDownListener, true);
     if (this.pointerUpListener) window.removeEventListener('pointerup', this.pointerUpListener, true);
     if (this.pointerCancelListener) window.removeEventListener('pointercancel', this.pointerCancelListener, true);
+    this.pointerDown = false;
+    this.releasePointerHold();
     this.pointerMoveListener = undefined;
     this.pointerDownListener = undefined;
     this.pointerUpListener = undefined;
@@ -1055,6 +1057,7 @@ export class Starlace implements PlayerVisual {
   private processPointer(delta: number): void {
     const camera = this.camera;
     if (!camera || !this.canvas) {
+      this.releasePointerHold();
       this.clearPointerState();
       return;
     }
@@ -1091,7 +1094,9 @@ export class Starlace implements PlayerVisual {
 
     const activeNode = this.pickPointerNode(this.pointerNdc, camera);
     const velocity = this.pointerVelocity(ndcSpeed, clickQueued);
-    const activelyStriking = clickQueued || ndcSpeed > POINTER_PLUCK_MOTION_NDC_PER_SEC;
+    this.updatePointerHold(activeNode, velocity);
+    const pointerHoldActive = this.isPointerHoldActive();
+    const activelyStriking = !pointerHoldActive && (clickQueued || ndcSpeed > POINTER_PLUCK_MOTION_NDC_PER_SEC);
 
     if (activelyStriking) {
       for (let i = 0; i < this.nodes.length; i += 1) {
@@ -1100,7 +1105,7 @@ export class Starlace implements PlayerVisual {
       }
     }
 
-    if (clickQueued && activeNode >= 0 && !this.pointerFrameFired[activeNode]) {
+    if (!pointerHoldActive && clickQueued && activeNode >= 0 && !this.pointerFrameFired[activeNode]) {
       this.pointerFrameFired[activeNode] = this.firePointerNode(activeNode, velocity);
     }
 
@@ -1149,6 +1154,31 @@ export class Starlace implements PlayerVisual {
     if (!node || this.elapsed - node.lastHitAt < this.params.hitCooldown) return false;
     this.fireNode(nodeIndex, velocity);
     return true;
+  }
+
+  private updatePointerHold(nodeIndex: number, velocity: number): void {
+    if (!this.pointerDown) {
+      this.releasePointerHold();
+      return;
+    }
+    if (nodeIndex < 0 || nodeIndex === this.pointerHeldNode) return;
+    const node = this.nodes[nodeIndex];
+    if (!node) return;
+    this.releasePointerHold();
+    const keyIndex = clamp(node.noteIndex, 0, Starlace.KEY_MAP.length - 1);
+    if (this.startKeyboardPath(POINTER_HOLD_KEY, keyIndex, velocity, nodeIndex)) {
+      this.pointerHeldNode = nodeIndex;
+    }
+  }
+
+  private releasePointerHold(): void {
+    this.keyboardPaths.delete(POINTER_HOLD_KEY);
+    this.keyboardHeldKeys.delete(POINTER_HOLD_KEY);
+    this.pointerHeldNode = -1;
+  }
+
+  private isPointerHoldActive(): boolean {
+    return this.pointerHeldNode >= 0 && this.pointerDown && this.keyboardHeldKeys.has(POINTER_HOLD_KEY);
   }
 
   private processContacts(contacts: readonly HandContactPoint[], delta: number): void {
@@ -1364,9 +1394,12 @@ export class Starlace implements PlayerVisual {
     return `midi:${sourceId ?? Math.round(noteNumber)}`;
   }
 
-  private startKeyboardPath(key: string, keyIndex: number, velocity = 0.74): boolean {
-    const homeNoteIndex = this.keyboardHomeNoteIndex(keyIndex);
-    const startNode = this.pickKeyboardStartNode(homeNoteIndex);
+  private startKeyboardPath(key: string, keyIndex: number, velocity = 0.74, startNodeIndex?: number): boolean {
+    const explicitStartNode = startNodeIndex !== undefined ? this.nodes[startNodeIndex] : undefined;
+    const homeNoteIndex = explicitStartNode
+      ? clamp(explicitStartNode.noteIndex, 0, this.hzTable.length - 1)
+      : this.keyboardHomeNoteIndex(keyIndex);
+    const startNode = explicitStartNode ? startNodeIndex! : this.pickKeyboardStartNode(homeNoteIndex);
     if (startNode < 0) return false;
 
     const state: KeyboardPathState = {
