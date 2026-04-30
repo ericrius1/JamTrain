@@ -4,11 +4,13 @@ import type { IllustratedPuppetSpec } from './IllustratedPuppetAvatar';
 const LION_ROOT = '/puppets/lion';
 const ELK_ROOT = '/puppets/elk';
 const FOX_ROOT = '/puppets/fox';
+const RABBIT_ROOT = '/puppets/rabbit';
 const ROBOT_ROOT = '/puppets/robot';
 
 const LION_BODY_HEIGHT = 1.28;
 const ELK_BODY_HEIGHT = 1.42;
 const FOX_BODY_HEIGHT = 1.28;
+const RABBIT_BODY_HEIGHT = 1.42;
 const ROBOT_BODY_HEIGHT = 1.34;
 
 export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSpec>> = {
@@ -225,6 +227,84 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
         maxScale: 1.28,
         offset: [0.016, -0.002, -0.012],
         color: 0xffd2b3,
+      },
+      lanes: {
+        left: {
+          shoulder: [0.006, 0.9, -0.035],
+          targetOffset: [-0.028, -0.038, 0.12],
+          elbowOffset: [-0.014, 0.1, 0.08],
+          renderOrder: 7,
+          upper: { scale: 1.08 },
+          forearm: { scale: 1.04 },
+          hand: { scale: 0.94, offset: [0.006, -0.008, -0.002] },
+        },
+        right: {
+          shoulder: [0.05, 0.82, 0.17],
+          targetOffset: [0.018, 0, -0.01],
+          elbowOffset: [0.012, 0.06, 0.02],
+          renderOrder: 13,
+        },
+      },
+    },
+  },
+  rabbit: {
+    name: 'Rabbit',
+    body: {
+      url: `${RABBIT_ROOT}/body.webp`,
+      width: RABBIT_BODY_HEIGHT * (1048 / 1308),
+      aspect: 1308 / 1048,
+      position: [0.03, 0.84, -0.02],
+      renderOrder: 10,
+      color: 0xffffff,
+    },
+    contactShadow: {
+      size: [1.08, 0.4],
+      position: [0.024, 0.34, -0.04],
+      opacity: 0.38,
+      renderOrder: 9,
+    },
+    arms: {
+      cameraDepth: 0.03,
+      target: {
+        yScale: 0.72,
+        yOffset: 0.16,
+        zScale: 0.72,
+        zOffset: -0.02,
+        zRange: [-0.56, 0.03],
+      },
+      elbowBlend: 0.5,
+      upper: {
+        url: `${RABBIT_ROOT}/upper-arm.webp`,
+        width: 0.17,
+        aspect: 472 / 297,
+        from: { x: 0.36, y: 0.15 },
+        to: { x: 0.78, y: 0.84 },
+        minScale: 0.88,
+        maxScale: 1.7,
+        color: 0xffffff,
+      },
+      forearm: {
+        url: `${RABBIT_ROOT}/forearm.webp`,
+        width: 0.145,
+        aspect: 379 / 242,
+        from: { x: 0.28, y: 0.16 },
+        to: { x: 0.74, y: 0.82 },
+        minScale: 0.9,
+        maxScale: 1.72,
+        color: 0xffffff,
+      },
+      hand: {
+        url: `${RABBIT_ROOT}/hand-cupped.webp`,
+        width: 0.23,
+        aspect: 272 / 279,
+        from: { x: 0.26, y: 0.61 },
+        to: { x: 0.86, y: 0.25 },
+        aimDistance: 0.17,
+        aimLift: 0.006,
+        minScale: 0.88,
+        maxScale: 1.28,
+        offset: [0.016, -0.002, -0.012],
+        color: 0xffffff,
       },
       lanes: {
         left: {

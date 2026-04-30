@@ -1,5 +1,9 @@
 import type { InstrumentId } from '../../game/instruments';
-import { OAR_PAD_COUNT } from '../../game/oarControls';
+import {
+  OAR_KEY_ROW_HOME,
+  OAR_KEY_ROW_TOP,
+  OAR_PAD_COUNT,
+} from '../../game/oarControls';
 
 const STORAGE_KEY = 'jamtrain.controlsPanel.collapsed';
 const DEFAULT_OAR_ORB_COUNT = OAR_PAD_COUNT;
@@ -44,7 +48,7 @@ export class ControlsPanel {
   private summaryTitleEl: HTMLSpanElement;
   private bodyEl: HTMLDivElement;
   private current: InstrumentId = 'oar';
-  private oarOrbCount = DEFAULT_OAR_ORB_COUNT;
+  private oarOrbCount: number = DEFAULT_OAR_ORB_COUNT;
   private touchMql?: MediaQueryList;
   private touchListener?: () => void;
 
@@ -133,20 +137,24 @@ export class ControlsPanel {
 }
 
 function oarControlsForOrbCount(orbCount: number): ControlsContent {
-  const keys = oarKeyLabelsForOrbCount(orbCount);
-  const keyCount = keys.length;
-  const hint = keyCount >= orbCount
-    ? (orbCount === 1 ? 'play the pad' : `play all ${orbCount} pads`)
-    : `play ${keyCount} of ${orbCount} pads`;
+  const homeRange = rangeLabel(OAR_KEY_ROW_HOME);
+  const topRange = rangeLabel(OAR_KEY_ROW_TOP);
 
   return {
     blurb: 'Strike the piano pads to play.',
     rows: [
-      { keys, hint },
+      { keys: [homeRange, topRange], hint: `play the ${orbCount} pads` },
       { keys: ['Mouse'], hint: 'click or drag through a pad' },
       { keys: ['Hands'], hint: 'reach forward through any pad' },
     ],
   };
+}
+
+function rangeLabel(row: readonly string[]): string {
+  if (row.length === 0) return '';
+  const first = row[0].toUpperCase();
+  const last = row[row.length - 1].toUpperCase();
+  return row.length === 1 ? first : `${first}–${last}`;
 }
 
 function buildRow(entry: ControlEntry): HTMLDivElement {

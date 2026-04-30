@@ -40,10 +40,10 @@ import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 type OarPalette = 'local' | 'remote';
 
 export const OAR_DEFS = {
-  pyramidStartHeight: { default: 0.04, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
-  orbRadius:         { default: 0.038, min: 0.02, max: 0.32, step: 0.001, label: 'orb radius' },
-  ringRadius:        { default: 0.082, min: 0.04, max: 0.50, step: 0.002, label: 'orb spacing' },
-  pyramidRowSpacing: { default: 0.090, min: 0.04, max: 0.50, step: 0.005, label: 'height spacing' },
+  pyramidStartHeight: { default: 0.00, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
+  orbRadius:         { default: 0.025, min: 0.015, max: 0.32, step: 0.001, label: 'orb radius' },
+  ringRadius:        { default: 0.055, min: 0.03, max: 0.50, step: 0.002, label: 'orb spacing' },
+  pyramidRowSpacing: { default: 0.062, min: 0.04, max: 0.50, step: 0.005, label: 'height spacing' },
   heldStreamAmount:  { default: 10, min: 0, max: 10000, step: 1, folder: 'Emission', label: 'emission rate' },
   envAttack:         { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 1.5, step: 0.001, folder: 'Envelope', label: 'attack s' },
   envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
@@ -149,23 +149,29 @@ type AnyNode = any;
 // pyramids do not repeat exact pitches. The table is per-instance and tracks
 // the current key via the KeyDirector subscription set up in the constructor.
 
+// Bottom→top layer counts. Sum must equal OAR_PAD_COUNT (19). Lower indices
+// land in lower layers so frequencyForOrb() (which orders pitch by orbIndex)
+// keeps low notes at the base of the pyramid.
+const OAR_LAYER_COUNTS = [6, 5, 4, 3, 1] as const;
+const OAR_ARC_SPAN = Math.PI * 0.85;     // ~153° front-facing fan per layer
+const OAR_BASE_RADIUS_SCALE = 3.2;       // multiplier on the `ringRadius` param
+const OAR_RADIUS_FALLOFF = 0.55;         // top layers tighten toward the apex
+const OAR_DEPTH_BOW = 0.45;              // z-curvature of each arc
+
 function makeOrbOffsets(planeSpacing: number, layerSpacing: number, startHeight: number): THREE.Vector3[] {
-  // Two horizontal rows mapped to keyboard rows: home (a-l, 9 orbs) sits
-  // below top (q-p, 10 orbs). Index order matches OAR_KEY_RANGE so
-  // oarKeyboardIndexForKey lines up. Rows are skewed downward so the upper
-  // row stays under the player's chin given the default anchor (~y 0.98).
-  const counts: number[] = [OAR_KEY_ROW_HOME.length, OAR_KEY_ROW_TOP.length];
-  const yBaseline = startHeight - layerSpacing * 0.65;
+  const baseRadius = Math.max(planeSpacing, 1e-4) * OAR_BASE_RADIUS_SCALE;
+  const numLayers = OAR_LAYER_COUNTS.length;
   const offsets: THREE.Vector3[] = [];
-  for (let row = 0; row < counts.length; row += 1) {
-    const count = counts[row];
-    const y = yBaseline + row * layerSpacing;
+  for (let layer = 0; layer < numLayers; layer += 1) {
+    const count = OAR_LAYER_COUNTS[layer];
+    const layerT = numLayers <= 1 ? 0 : layer / (numLayers - 1);
+    const radius = baseRadius * (1 - layerT * OAR_RADIUS_FALLOFF);
+    const y = startHeight + layer * layerSpacing;
     for (let i = 0; i < count; i += 1) {
       const t = count <= 1 ? 0.5 : i / (count - 1);
-      const x = (t - 0.5) * planeSpacing * Math.max(1, count - 1);
-      // Slight back-to-front stagger between rows so the top row sits a hair
-      // closer to the player without overlapping the home row.
-      const z = row === 0 ? 0.012 : -0.012;
+      const angle = (t - 0.5) * OAR_ARC_SPAN;
+      const x = Math.sin(angle) * radius;
+      const z = -Math.cos(angle) * radius * OAR_DEPTH_BOW;
       offsets.push(new THREE.Vector3(x, y, z));
     }
   }

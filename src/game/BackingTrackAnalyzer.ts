@@ -23,34 +23,38 @@ export class BackingTrackAnalyzer {
   private ctx?: AudioContext;
   private analyser?: AnalyserNode;
   private source?: MediaElementAudioSourceNode;
+  private sources = new WeakMap<HTMLAudioElement, MediaElementAudioSourceNode>();
   private bins?: Uint8Array<ArrayBuffer>;
   private lowBinStart = 0;
   private lowBinEnd = 0;
   private envShort = 0;
   private envLong = 0;
   private lastBeatAt = -Infinity;
-  private attached = false;
+  private gestureResumeInstalled = false;
+  private readonly handleGestureResume = (): void => this.tryResume();
 
   attach(audio: HTMLAudioElement): boolean {
-    if (this.attached) return true;
     try {
-      const Ctor: typeof AudioContext =
-        window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!;
-      const ctx = new Ctor();
-      const src = ctx.createMediaElementSource(audio);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = FFT_SIZE;
-      analyser.smoothingTimeConstant = 0.55;
-      src.connect(analyser);
-      analyser.connect(ctx.destination);
-      const binSize = ctx.sampleRate / FFT_SIZE;
-      this.lowBinStart = Math.max(1, Math.floor(LOW_BAND_HZ_MIN / binSize));
-      this.lowBinEnd = Math.min(analyser.frequencyBinCount - 1, Math.ceil(LOW_BAND_HZ_MAX / binSize));
-      this.bins = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
-      this.ctx = ctx;
-      this.source = src;
-      this.analyser = analyser;
-      this.attached = true;
+      this.ensureGraph();
+      const analyser = this.analyser;
+      const ctx = this.ctx;
+      if (!analyser || !ctx) return false;
+
+      let src = this.sources.get(audio);
+      if (!src) {
+        src = ctx.createMediaElementSource(audio);
+        this.sources.set(audio, src);
+      }
+      if (this.source !== src) {
+        try {
+          this.source?.disconnect();
+        } catch {
+          // Some browsers throw when disconnecting a node with no outputs.
+        }
+        src.connect(analyser);
+        this.source = src;
+        this.resetEnvelope();
+      }
       this.tryResume();
       this.installGestureResume();
       return true;
@@ -58,6 +62,23 @@ export class BackingTrackAnalyzer {
       console.warn('[backing-track-analyzer] attach failed', err);
       return false;
     }
+  }
+
+  private ensureGraph(): void {
+    if (this.ctx && this.analyser && this.bins) return;
+    const Ctor: typeof AudioContext =
+      window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext!;
+    const ctx = new Ctor();
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = FFT_SIZE;
+    analyser.smoothingTimeConstant = 0.55;
+    analyser.connect(ctx.destination);
+    const binSize = ctx.sampleRate / FFT_SIZE;
+    this.lowBinStart = Math.max(1, Math.floor(LOW_BAND_HZ_MIN / binSize));
+    this.lowBinEnd = Math.min(analyser.frequencyBinCount - 1, Math.ceil(LOW_BAND_HZ_MAX / binSize));
+    this.bins = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
+    this.ctx = ctx;
+    this.analyser = analyser;
   }
 
   tick(nowMs: number): BackingTrackBeat | null {
@@ -91,9 +112,16 @@ export class BackingTrackAnalyzer {
   }
 
   private installGestureResume(): void {
-    const onGesture = (): void => this.tryResume();
-    window.addEventListener('pointerdown', onGesture, { passive: true });
-    window.addEventListener('keydown', onGesture);
+    if (this.gestureResumeInstalled) return;
+    this.gestureResumeInstalled = true;
+    window.addEventListener('pointerdown', this.handleGestureResume, { passive: true });
+    window.addEventListener('keydown', this.handleGestureResume);
+  }
+
+  private resetEnvelope(): void {
+    this.envShort = 0;
+    this.envLong = 0;
+    this.lastBeatAt = -Infinity;
   }
 
   dispose(): void {
@@ -107,8 +135,13 @@ export class BackingTrackAnalyzer {
     this.ctx = undefined;
     this.analyser = undefined;
     this.source = undefined;
+    this.sources = new WeakMap();
     this.bins = undefined;
-    this.attached = false;
+    if (this.gestureResumeInstalled) {
+      window.removeEventListener('pointerdown', this.handleGestureResume);
+      window.removeEventListener('keydown', this.handleGestureResume);
+    }
+    this.gestureResumeInstalled = false;
   }
 }
 

@@ -187,6 +187,15 @@ export class Game {
   private lastOarHitAt = -10;
   private lastStarlacePluckAt = -10;
   private lastSynchronyAt = -10;
+  // Sliding window of human note-on times (in elapsed seconds). Old entries are
+  // dropped each robot-jam tick. Drives `humanDuckActivity` so the robot
+  // listens over a few seconds of average activity instead of reacting to a
+  // single hit.
+  private humanNoteTimes: number[] = [];
+  // Smoothed 0..1 measure of how busy the human is. 0 = quiet, 1 = saturated.
+  // Multiplied into robot density to make room when the human is playing.
+  private humanDuckActivity = 0;
+  private lastRobotJamTickAt = -1;
   private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
@@ -960,6 +969,7 @@ export class Game {
           );
           this.cueRobotInstrumentStrike(player, pluck.hand, pluck.worldPosition, pluck.velocity);
           this.lastStarlacePluckAt = performance.now() / 1000;
+          if (player === 'local') this.recordHumanNote();
           this.checkSynchrony();
         },
       });
@@ -981,6 +991,7 @@ export class Game {
           }
           this.cueRobotInstrumentStrike(player, hit.hand, hit.worldPosition, hit.velocity);
           this.lastOarHitAt = performance.now() / 1000;
+          if (player === 'local') this.recordHumanNote();
           this.checkSynchrony();
         },
         onRelease: release => {
@@ -1105,6 +1116,12 @@ export class Game {
 
   private handleMidiNoteOn(note: MidiNoteEvent): void {
     this.playerVisuals.local?.triggerMidiNoteOn?.(note.noteNumber, note.velocity, note.sourceId);
+    this.recordHumanNote();
+  }
+
+  private recordHumanNote(): void {
+    const elapsed = (performance.now() - this.startedAt) / 1000;
+    this.humanNoteTimes.push(elapsed);
   }
 
   private handleMidiNoteOff(note: MidiNoteEvent): void {
@@ -1294,8 +1311,13 @@ export class Game {
     if (this.partnerPresent || this.introActive || this.robotJamMuted) {
       this.releaseRobotJamNotes();
       this.robotJamNextAt = 0;
+      this.humanNoteTimes.length = 0;
+      this.humanDuckActivity = 0;
+      this.lastRobotJamTickAt = elapsed;
       return;
     }
+
+    const duckScale = this.updateHumanDuckActivity(elapsed);
 
     this.releaseDueRobotJamNotes(elapsed);
     this.startDueRobotJamNotes(elapsed);
@@ -1312,13 +1334,38 @@ export class Game {
     const slotIndex = this.robotJamStep;
     const seed = slotIndex * 17.17 + this.roomSeed * 0.029;
     const motion = this.robotMotion.params;
-    const densityScale = instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : 1;
+    const densityScale = (instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : 1) * duckScale;
     const shouldPlay = hash(seed + 0.97) < motion.density * densityScale;
     if (shouldPlay) {
       this.queueRobotJamGesture(elapsed, instrument, slotIndex, seed);
     }
     this.robotJamStep += 1;
     this.scheduleNextRobotJam(elapsed);
+  }
+
+  /**
+   * Maintains the sliding-window count of human note-ons and returns the
+   * density multiplier the robot should apply right now (1 = no ducking,
+   * approaches `1 - humanDuckAmount` when the human is busy). The window
+   * already averages, and a small exp-smoothing time-constant on top keeps the
+   * transition buttery so a single human note never snaps the robot off.
+   */
+  private updateHumanDuckActivity(elapsed: number): number {
+    const motion = this.robotMotion.params;
+    const dt = this.lastRobotJamTickAt < 0 ? 0 : Math.max(0, elapsed - this.lastRobotJamTickAt);
+    this.lastRobotJamTickAt = elapsed;
+
+    const cutoff = elapsed - motion.humanDuckWindow;
+    let drop = 0;
+    while (drop < this.humanNoteTimes.length && this.humanNoteTimes[drop] < cutoff) drop += 1;
+    if (drop > 0) this.humanNoteTimes.splice(0, drop);
+
+    const target = clamp(this.humanNoteTimes.length / Math.max(motion.humanDuckSaturate, 1), 0, 1);
+    const tau = motion.humanDuckSmoothTau;
+    const alpha = tau > 0 && dt > 0 ? 1 - Math.exp(-dt / tau) : 1;
+    this.humanDuckActivity += (target - this.humanDuckActivity) * alpha;
+
+    return 1 - motion.humanDuckAmount * this.humanDuckActivity;
   }
 
   private scheduleNextRobotJam(elapsed: number): void {

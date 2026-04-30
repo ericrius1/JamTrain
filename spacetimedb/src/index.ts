@@ -119,8 +119,8 @@ const DEFAULT_CREATURE = 'lion';
 // 'drum' kept in the allowlist so older clients can keep talking to the
 // server until they refresh; the client normalizes legacy 'drum' → 'oar'.
 const ALLOWED_INSTRUMENTS = new Set(['oar', 'starlace', 'drum']);
-const ALLOWED_CREATURES = new Set(['lion', 'elk', 'fox', 'robot']);
-const SEAT_CREATURES = new Set(['lion', 'elk', 'fox']);
+const ALLOWED_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit', 'robot']);
+const SEAT_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit']);
 
 function cleanSeatInstrument(instrument: string): string | null {
   const clean = instrument.trim().toLowerCase();

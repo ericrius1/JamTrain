@@ -68,15 +68,6 @@ const PARTICLE_COUNT = 1024288;
 // const PARTICLE_COUNT = 524288;
 
 
-const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
-  thomas: 'Thomas',
-  lorenz: 'Lorenz',
-  aizawa: 'Aizawa',
-  halvorsen: 'Halvorsen',
-  rossler: 'Rossler',
-  dadras: 'Dadras',
-};
-
 // Spawn queue is a TSL uniform array sized to fit a WebGPU UBO (~64KB),
 // large enough that no realistic per-frame burst hits it. The only
 // user-visible cap on particles is the total pool size.
@@ -605,14 +596,13 @@ export class EnergySculptor implements EnergySink {
     const message = this.attractorDebugMessage;
     if (!message) return;
 
-    const lines = [this.getAttractorDebugLine(), ...this.getVolumeCycleDebugLines()];
-    this.setAttractorDebugText(lines.join('\n'));
+    this.setAttractorDebugText(this.getVolumeCycleDebugLines().join('\n'));
   }
 
   private getVolumeCycleDebugLines(): string[] {
     if (!this.params.volumeAutoEnabled) {
       const manual = this.params.fieldVolumeScale.toFixed(2);
-      return [`Volume cycle: off (manual ${manual})`];
+      return [`Volume: off (manual ${manual})`];
     }
     const cycle = Math.max(0.5, this.params.volumeAutoCycleS);
     const steps = Math.max(2, Math.round(this.params.volumeAutoSteps));
@@ -631,30 +621,9 @@ export class EnergySculptor implements EnergySink {
     const stepEnd = (idx + 1) * stepDur;
     const remaining = Math.max(0, stepEnd - this.volumeAutoElapsed);
     return [
-      `Volume cycle: ${current.toFixed(2)} (step ${idx + 1}/${steps}), next ${next.toFixed(2)} in ${this.formatSeconds(remaining)}`,
-      `range ${min.toFixed(2)}-${max.toFixed(2)}, +${inc.toFixed(2)}/step over ${this.formatSeconds(cycle)} cycle`,
+      `Volume: ${current.toFixed(2)} (step ${idx + 1}/${steps}), next ${next.toFixed(2)} in ${this.formatSeconds(remaining)}`,
+      `step ${this.formatSeconds(stepDur)}, full cycle ${this.formatSeconds(cycle)} (${steps} steps), range ${min.toFixed(2)}-${max.toFixed(2)} (+${inc.toFixed(2)}/step)`,
     ];
-  }
-
-  private getAttractorDebugLine(): string {
-    if (this.crossfadeRemaining > 0) {
-      const t = 1 - this.crossfadeRemaining / Math.max(this.crossfadeDuration, 0.001);
-      const progress = Math.round(Math.max(0, Math.min(1, t)) * 100);
-      const prefix = this.attractorOverride === 'cycle' ? 'Attractor cycle' : 'Attractor field';
-      const remaining = this.formatSeconds(this.crossfadeRemaining);
-      return `${prefix}: ${ATTRACTOR_LABELS[this.currentAttractor]} -> ${ATTRACTOR_LABELS[this.transitionTarget]} (${progress}%, ${remaining} left)`;
-    }
-
-    if (this.attractorOverride === 'cycle') {
-      const remaining = Math.max(0, this.attractorHoldSeconds() - this.attractorCycleElapsed);
-      return `Attractor cycle: ${ATTRACTOR_LABELS[this.currentAttractor]} holding; next ${ATTRACTOR_LABELS[this.nextCycleTarget()]} in ${this.formatSeconds(remaining)}`;
-    }
-
-    if (this.attractorOverride === 'auto') {
-      return `Attractor auto: ${ATTRACTOR_LABELS[this.currentAttractor]} from instruments`;
-    }
-
-    return `Attractor pinned: ${ATTRACTOR_LABELS[this.currentAttractor]}`;
   }
 
   private formatSeconds(value: number): string {

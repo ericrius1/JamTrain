@@ -1,14 +1,14 @@
 import './style.css';
 import { BeginGate } from './hud/components/BeginGate';
 import { registerHandposeCacheWorker } from './game/handposeCache';
-import { MidnightTrainStream } from './game/MidnightTrainStream';
+import { BackingTrackRotation } from './game/BackingTrackRotation';
 
 window.addEventListener('vite:preloadError', () => {
   window.location.reload();
 });
 
 const LOCAL_CREATURE_KEY = 'jam-train.local-creature';
-const midnightTrain = new MidnightTrainStream('/MidnightTrain.mp3');
+const backingTracks = new BackingTrackRotation();
 const INITIAL_MULTIPLAYER_SETTLE_MS = 5000;
 
 type AvPrefs = {
@@ -51,8 +51,8 @@ const beginGate = new BeginGate({
   onBegin: async conductorName => {
     // Start the streamed media before awaiting runtime work so the browser
     // sees play() as part of the All Aboard click gesture.
-    void midnightTrain.playWithFadeIn().catch(err => {
-      console.warn('[jam-train] Midnight Train playback failed', err);
+    void backingTracks.playWithFadeIn().catch(err => {
+      console.warn('[jam-train] backing track playback failed', err);
     });
 
     try {
@@ -74,7 +74,7 @@ const beginGate = new BeginGate({
         console.warn('[jam-train] begin failed', err);
       });
     } catch (err) {
-      midnightTrain.stop();
+      backingTracks.stop();
       throw err;
     }
   },
@@ -216,7 +216,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     voiceVolume: DEFAULT_VOICE_VOLUME,
   };
   const avPrefs: AvPrefs = { ...defaultAvPrefs };
-  midnightTrain.setVolume(avPrefs.backingTrackVolume);
+  backingTracks.setVolume(avPrefs.backingTrackVolume);
 
   const canvas = document.querySelector<HTMLCanvasElement>('#scene');
   if (!canvas) {
@@ -238,6 +238,9 @@ async function createRuntime(): Promise<RuntimeApi> {
   const game = new Game(canvas, urlRoom, {
     connectionStatus: connectionSink,
     inputStatus: inputSink,
+  });
+  const stopBackingTrackAnalyzer = backingTracks.onAudioElementChange(audio => {
+    game.attachBackingTrack(audio);
   });
 
   const initialDisplayRoom = game.getRoom();
@@ -425,7 +428,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     avPrefs.orbVolume = value;
   });
   hud.onBackingTrackVolumeChange(value => {
-    midnightTrain.setVolume(value);
+    backingTracks.setVolume(value);
     avPrefs.backingTrackVolume = value;
   });
   hud.onVoiceVolumeChange(value => {
@@ -503,7 +506,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     game.setMusicVolume(avPrefs.musicVolume);
     game.setStarlaceVolume(avPrefs.starlaceVolume);
     game.setOrbVolume(avPrefs.orbVolume);
-    midnightTrain.setVolume(avPrefs.backingTrackVolume);
+    backingTracks.setVolume(avPrefs.backingTrackVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
     hud.setMixerValues(avPrefs.musicVolume, avPrefs.starlaceVolume, avPrefs.orbVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
   });
@@ -532,8 +535,6 @@ async function createRuntime(): Promise<RuntimeApi> {
     });
 
     await game.startAudio();
-    const backingAudio = midnightTrain.getAudioElement();
-    if (backingAudio) game.attachBackingTrack(backingAudio);
 
     hud.setCameraEnabled(false);
     hud.setMicEnabled(false);
@@ -542,7 +543,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     game.setMusicVolume(avPrefs.musicVolume);
     game.setStarlaceVolume(avPrefs.starlaceVolume);
     game.setOrbVolume(avPrefs.orbVolume);
-    midnightTrain.setVolume(avPrefs.backingTrackVolume);
+    backingTracks.setVolume(avPrefs.backingTrackVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
     hud.setMixerValues(avPrefs.musicVolume, avPrefs.starlaceVolume, avPrefs.orbVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
 
@@ -555,13 +556,14 @@ async function createRuntime(): Promise<RuntimeApi> {
     window.removeEventListener('keydown', handlePushToTalkDown);
     window.removeEventListener('keyup', handlePushToTalkUp);
     window.removeEventListener('blur', stopPushToTalk);
+    stopBackingTrackAnalyzer();
     for (const obs of observers) obs.disconnect();
     connectionSink.remove();
     inputSink.remove();
     hud.dispose();
     dev.dispose();
     game.dispose();
-    midnightTrain.dispose();
+    backingTracks.dispose();
   }
 
   return {
