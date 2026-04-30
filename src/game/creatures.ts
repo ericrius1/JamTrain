@@ -44,8 +44,8 @@ export const CREATURES: Record<CreatureId, CreatureMeta> = {
   rabbit: {
     id: 'rabbit',
     label: 'Rabbit',
-    subtitle: 'painted · moonlit',
-    color: '#b8a0ff',
+    subtitle: 'painted · ruby',
+    color: '#d55a6c',
     iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M9.2 8.9 C 8.7 5.5 9 2.8 10.3 2.2 C 12 3.8 12.6 6.6 12.2 9.4"/><path d="M13.5 9.2 C 14 5.8 15.3 3.3 16.8 3 C 17.8 5.2 17.3 8.1 15.6 10.4"/><path d="M7 13.3 C 7 10.3 9.2 8.2 12.1 8.2 C 15.7 8.2 18.8 10.9 19.5 14.2 C 17.9 17.4 14.8 19.3 11.8 19.3 C 9 19.3 7 16.8 7 13.3 Z"/><path d="M15.4 13.5 L20 12.6 M15.5 14.8 L20.5 15.1 M15 16.1 L18.7 18"/><circle cx="12.4" cy="12.2" r="0.42" fill="currentColor"/><path d="M16.7 13.4 C17.5 13.4 18 13.7 18.3 14.2"/></svg>`,
   },
   giraffe: {
@@ -70,7 +70,7 @@ export const CREATURE_ROBE_COLORS: Record<CreatureId, string> = {
   lion: '#12233b',
   elk: '#1f4b42',
   fox: '#4a1723',
-  rabbit: '#2d275f',
+  rabbit: '#6f1026',
   giraffe: '#4f1f73',
   robot: '#402147',
 };
