@@ -688,7 +688,10 @@ export class Starlace implements PlayerVisual {
       const baseV = rowVs[r];
       const baseZ = rowZBases[r];
       for (let c = 0; c < count; c += 1) {
-        const t = count === 1 ? 0.5 : c / (count - 1);
+        // Reverse t so the lowest-index node in each row (e.g. A on home row)
+        // sits on the player/camera side and the highest-index sits window-
+        // side, matching the orb arc layout in makeOrbOffsets.
+        const t = count === 1 ? 0.5 : (count - 1 - c) / (count - 1);
         const u = (t - 0.5) * 0.92;
         const seed = hash(i * 8.31 + 3.30);
         const jitterV = (hash(i * 9.17 + 0.23) - 0.5) * 0.06;
