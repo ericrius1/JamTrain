@@ -57,19 +57,57 @@ const INTRO_MOTION_FACTOR = 0.05;
 // Exponential time constant (seconds) for the lerp from intro speed to 1.0
 // after exitIntroMode. ~3s reaches >95%.
 const MOTION_FACTOR_TAU = 1.0;
-const ROBOT_JAM_STRUM_MAX_OFFSET = 0.10;
-// Sub-beat grid: notes land on quarter-beat slots so density=1 isn't a wall of sound.
+const ROBOT_JAM_STRUM_MAX_OFFSET = 0.12;
+// Sub-beat grid: notes land on eighth-note slots so density=1 is still playable.
 const ROBOT_JAM_SLOTS_PER_BEAT = 2;
-const ROBOT_JAM_STARLACE_DENSITY_SCALE = 0.7;
-// Scale-degree patterns. harmony.ts is locked to C major, so these stay
-// diatonic while still letting the robot imply simple chords.
-const ROBOT_JAM_SCALE_ROOTS = [0, 1, 3, 4, 5] as const;
-const ROBOT_JAM_CHORD_SHAPES: readonly (readonly number[])[] = [
-  [0],
-  [0, 2],
-  [0, 2, 4],
-  [0, 3, 5],
-  [2, 4, 6],
+const ROBOT_JAM_BEATS_PER_BAR = 4;
+const ROBOT_JAM_SLOTS_PER_BAR = ROBOT_JAM_SLOTS_PER_BEAT * ROBOT_JAM_BEATS_PER_BAR;
+const ROBOT_JAM_PHRASE_BARS = 8;
+const ROBOT_JAM_STARLACE_DENSITY_SCALE = 0.78;
+const ROBOT_JAM_ORB_LISTEN_GAP = 0.36;
+const ROBOT_JAM_STARLACE_LISTEN_GAP = 0.72;
+const ROBOT_JAM_QUIET_AFTER = 2.4;
+const ROBOT_JAM_HUMAN_ACTIVE = 0.28;
+const ROBOT_JAM_IDLE_BOOST = 1.28;
+// C-major late-night progressions. Values are diatonic scale degrees, not
+// semitones, so they stay aligned with harmony.ts and the backing track.
+const ROBOT_JAM_PROGRESSIONS: readonly (readonly RobotJamChord[])[] = [
+  [
+    { root: 0, tones: [0, 2, 4, 6], colors: [8, 9] },    // Cmaj7/9
+    { root: 5, tones: [5, 7, 9, 11], colors: [12] },     // Am7
+    { root: 3, tones: [3, 5, 7, 9], colors: [10] },      // Fmaj7
+    { root: 4, tones: [4, 6, 8, 10], colors: [11, 13] }, // G7/13
+    { root: 0, tones: [0, 2, 4, 6], colors: [8, 11] },
+    { root: 2, tones: [2, 4, 6, 8], colors: [9] },       // Em7
+    { root: 5, tones: [5, 7, 9, 11], colors: [12] },
+    { root: 3, tones: [3, 5, 7, 9], colors: [10, 12] },
+  ],
+  [
+    { root: 0, tones: [0, 2, 4, 6], colors: [9] },
+    { root: 4, tones: [4, 6, 8, 10], colors: [11] },
+    { root: 5, tones: [5, 7, 9, 11], colors: [12] },
+    { root: 2, tones: [2, 4, 6, 8], colors: [9] },       // Em7
+    { root: 3, tones: [3, 5, 7, 9], colors: [10] },
+    { root: 0, tones: [0, 2, 4, 6], colors: [8] },
+    { root: 1, tones: [1, 3, 5, 7], colors: [8, 10] },   // Dm7/9
+    { root: 4, tones: [4, 6, 8, 10], colors: [11, 13] },
+  ],
+  [
+    { root: 0, tones: [0, 2, 4, 6], colors: [8, 9] },
+    { root: 5, tones: [5, 7, 9, 11], colors: [12] },
+    { root: 1, tones: [1, 3, 5, 7], colors: [8] },
+    { root: 4, tones: [4, 6, 8, 10], colors: [11] },
+    { root: 0, tones: [0, 2, 4, 6], colors: [9] },
+    { root: 5, tones: [5, 7, 9, 11], colors: [12] },
+    { root: 3, tones: [3, 5, 7, 9], colors: [10, 12] },
+    { root: 4, tones: [4, 6, 8, 10], colors: [11, 13] },
+  ],
+];
+const ROBOT_JAM_STARLACE_MOTIFS: readonly (readonly number[])[] = [
+  [4, 6, 4, 2, 0, 2],
+  [6, 5, 4, 2, 4, 1],
+  [2, 4, 6, 9, 7, 4],
+  [9, 7, 6, 4, 2, 4],
 ];
 
 const INTRO_SCENE_DEFS = {
@@ -119,6 +157,25 @@ type RobotJamPendingNote = RobotJamNote & {
   startAt: number;
   velocity: number;
   seed: number;
+};
+type RobotJamChord = {
+  root: number;
+  tones: readonly number[];
+  colors: readonly number[];
+};
+type RobotJamEvent = {
+  degrees: readonly number[];
+  holdBeats: number;
+  velocity: number;
+  strumBeats: number;
+  chance: number;
+};
+type RobotJamHumanState = {
+  activity: number;
+  densityScale: number;
+  sinceLastNote: number;
+  recentlyPlayed: boolean;
+  quietBoost: number;
 };
 type CabinPlateLayer = {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
@@ -201,6 +258,7 @@ export class Game {
   // listens over a few seconds of average activity instead of reacting to a
   // single hit.
   private humanNoteTimes: number[] = [];
+  private lastHumanNoteAt = -Infinity;
   // Smoothed 0..1 measure of how busy the human is. 0 = quiet, 1 = saturated.
   // Multiplied into robot density to make room when the human is playing.
   private humanDuckActivity = 0;
@@ -251,7 +309,7 @@ export class Game {
   private partnerPresent = false;
   private robotJamMuted = false;
   private robotJamNextAt = 0;
-  private robotJamStep = 0;
+  private robotJamStep = -1;
   private robotJamActive: RobotJamNote[] = [];
   private robotJamPending: RobotJamPendingNote[] = [];
   private readonly localLeftPalm = new THREE.Vector3();
@@ -1153,6 +1211,17 @@ export class Game {
   private recordHumanNote(): void {
     const elapsed = (performance.now() - this.startedAt) / 1000;
     this.humanNoteTimes.push(elapsed);
+    this.lastHumanNoteAt = elapsed;
+    this.duckRobotJamForHuman(elapsed);
+  }
+
+  private duckRobotJamForHuman(elapsed: number): void {
+    if (this.partnerPresent || this.introActive || this.robotJamMuted) return;
+    this.robotJamPending = [];
+    const releaseAt = elapsed + 0.18;
+    for (const note of this.robotJamActive) {
+      if (note.releaseAt > releaseAt) note.releaseAt = releaseAt;
+    }
   }
 
   private handleMidiNoteOff(note: MidiNoteEvent): void {
@@ -1177,6 +1246,7 @@ export class Game {
       if (this.playerInstruments.remote === id) return;
       this.releaseRobotJamNotes();
       this.robotJamNextAt = 0;
+      this.robotJamStep = -1;
       if (this.introActive) {
         this.installPlayerVisualImmediate(player, id);
         this.refreshArchetype();
@@ -1342,13 +1412,15 @@ export class Game {
     if (this.partnerPresent || this.introActive || this.robotJamMuted) {
       this.releaseRobotJamNotes();
       this.robotJamNextAt = 0;
+      this.robotJamStep = -1;
       this.humanNoteTimes.length = 0;
+      this.lastHumanNoteAt = -Infinity;
       this.humanDuckActivity = 0;
       this.lastRobotJamTickAt = elapsed;
       return;
     }
 
-    const duckScale = this.updateHumanDuckActivity(elapsed);
+    const humanState = this.updateHumanJamState(elapsed);
 
     this.releaseDueRobotJamNotes(elapsed);
     this.startDueRobotJamNotes(elapsed);
@@ -1359,29 +1431,46 @@ export class Game {
       this.scheduleNextRobotJam(elapsed);
       return;
     }
-    if (this.robotJamActive.length > 0 || this.robotJamPending.length > 0 || elapsed < this.robotJamNextAt) return;
+    if (elapsed < this.robotJamNextAt) return;
+
+    const slotIndex = this.robotJamSlotIndex(elapsed);
+    if (slotIndex <= this.robotJamStep) {
+      this.scheduleNextRobotJam(elapsed);
+      return;
+    }
+
+    if (this.robotJamActive.length > 0 || this.robotJamPending.length > 0) {
+      this.robotJamStep = slotIndex;
+      this.scheduleNextRobotJam(elapsed);
+      return;
+    }
 
     const instrument = this.playerInstruments.remote;
-    const slotIndex = this.robotJamStep;
-    const seed = slotIndex * 17.17 + this.roomSeed * 0.029;
+    const phraseIndex = Math.floor(slotIndex / Math.max(1, ROBOT_JAM_SLOTS_PER_BAR * ROBOT_JAM_PHRASE_BARS));
+    const seed = slotIndex * 17.17 + phraseIndex * 5.31 + this.roomSeed * 0.029;
     const motion = this.robotMotion.params;
-    const densityScale = (instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : 1) * duckScale;
-    const shouldPlay = hash(seed + 0.97) < motion.density * densityScale;
-    if (shouldPlay) {
-      this.queueRobotJamGesture(elapsed, instrument, slotIndex, seed);
+    const event = this.pickRobotJamEvent(instrument, slotIndex, seed, humanState);
+    this.robotJamStep = slotIndex;
+
+    if (event) {
+      const densityScale = (instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : 1)
+        * humanState.densityScale
+        * humanState.quietBoost;
+      const playChance = clamp(motion.density * densityScale * event.chance, 0, 0.98);
+      if (hash(seed + 0.97) < playChance) {
+        this.queueRobotJamGesture(elapsed, instrument, slotIndex, seed, event);
+      }
     }
-    this.robotJamStep += 1;
     this.scheduleNextRobotJam(elapsed);
   }
 
   /**
    * Maintains the sliding-window count of human note-ons and returns the
-   * density multiplier the robot should apply right now (1 = no ducking,
-   * approaches `1 - humanDuckAmount` when the human is busy). The window
-   * already averages, and a small exp-smoothing time-constant on top keeps the
-   * transition buttery so a single human note never snaps the robot off.
+   * listening state the robot should apply right now. The window catches
+   * sustained human activity, while sinceLastNote creates the immediate
+   * call-and-response pocket after the player starts playing.
    */
-  private updateHumanDuckActivity(elapsed: number): number {
+  private updateHumanJamState(elapsed: number): RobotJamHumanState {
     const motion = this.robotMotion.params;
     const dt = this.lastRobotJamTickAt < 0 ? 0 : Math.max(0, elapsed - this.lastRobotJamTickAt);
     this.lastRobotJamTickAt = elapsed;
@@ -1396,7 +1485,15 @@ export class Game {
     const alpha = tau > 0 && dt > 0 ? 1 - Math.exp(-dt / tau) : 1;
     this.humanDuckActivity += (target - this.humanDuckActivity) * alpha;
 
-    return 1 - motion.humanDuckAmount * this.humanDuckActivity;
+    const sinceLastNote = elapsed - this.lastHumanNoteAt;
+    const quietT = clamp((sinceLastNote - ROBOT_JAM_QUIET_AFTER) / 2.4, 0, 1);
+    return {
+      activity: this.humanDuckActivity,
+      densityScale: 1 - motion.humanDuckAmount * this.humanDuckActivity,
+      sinceLastNote,
+      recentlyPlayed: sinceLastNote < 1.15,
+      quietBoost: 1 + (ROBOT_JAM_IDLE_BOOST - 1) * quietT,
+    };
   }
 
   private scheduleNextRobotJam(elapsed: number): void {
@@ -1411,41 +1508,165 @@ export class Game {
     this.robotJamNextAt = nextAt;
   }
 
-  private queueRobotJamGesture(elapsed: number, instrument: InstrumentId, gestureIndex: number, seed: number): number {
-    const shape = this.pickRobotJamShape(seed);
-    const root = ROBOT_JAM_SCALE_ROOTS[Math.floor(hash(seed + 0.11) * ROBOT_JAM_SCALE_ROOTS.length)] ?? 0;
+  private robotJamSlotIndex(elapsed: number): number {
     const beatSec = 60 / Math.max(this.robotMotion.params.tempo, 1);
-    const longHold = hash(seed + 0.29) > 0.65;
-    const strum = shape.length > 1 ? ROBOT_JAM_STRUM_MAX_OFFSET * (0.35 + hash(seed + 0.41) * 0.65) : 0;
+    const slotSec = beatSec / ROBOT_JAM_SLOTS_PER_BEAT;
+    return Math.max(0, Math.floor(elapsed / slotSec + 1e-4));
+  }
 
-    this.robotJamPending = shape.map((degreeOffset, index) => {
+  private pickRobotJamEvent(
+    instrument: InstrumentId,
+    slotIndex: number,
+    seed: number,
+    human: RobotJamHumanState,
+  ): RobotJamEvent | null {
+    const chord = this.robotJamChordForSlot(slotIndex);
+    return instrument === 'orb'
+      ? this.pickRobotJamOrbEvent(chord, slotIndex, seed, human)
+      : this.pickRobotJamStarlaceEvent(chord, slotIndex, seed, human);
+  }
+
+  private pickRobotJamOrbEvent(
+    chord: RobotJamChord,
+    slotIndex: number,
+    seed: number,
+    human: RobotJamHumanState,
+  ): RobotJamEvent | null {
+    if (human.sinceLastNote < ROBOT_JAM_ORB_LISTEN_GAP) return null;
+    const slotInBar = positiveModulo(slotIndex, ROBOT_JAM_SLOTS_PER_BAR);
+    const activeHuman = human.activity > ROBOT_JAM_HUMAN_ACTIVE || human.recentlyPlayed;
+    const root = chord.tones[0] ?? chord.root;
+    const third = chord.tones[1] ?? chord.root + 2;
+    const fifth = chord.tones[2] ?? chord.root + 4;
+    const seventh = chord.tones[3] ?? chord.root + 6;
+    const color = chord.colors[0] ?? chord.root + 8;
+
+    if (slotInBar === 0) {
+      const spacious = !activeHuman && human.sinceLastNote > ROBOT_JAM_QUIET_AFTER;
+      const degrees = activeHuman
+        ? [third, seventh]
+        : spacious && hash(seed + 0.35) > 0.34
+          ? [root + 7, third + 7, seventh, color]
+          : [root, fifth, seventh];
+      return {
+        degrees: this.normalizeRobotJamDegrees(degrees),
+        holdBeats: activeHuman ? 1.15 : spacious ? 3.25 : 2.05,
+        velocity: activeHuman ? 0.30 + hash(seed + 2.7) * 0.10 : 0.38 + hash(seed + 2.7) * 0.16,
+        strumBeats: 0.10 + hash(seed + 3.1) * 0.07,
+        chance: activeHuman ? 0.54 : spacious ? 0.96 : 0.82,
+      };
+    }
+
+    if (slotInBar === ROBOT_JAM_SLOTS_PER_BEAT * 2) {
+      if (activeHuman && hash(seed + 0.61) < 0.58) return null;
+      const useColor = hash(seed + 0.83) > 0.48;
+      return {
+        degrees: this.normalizeRobotJamDegrees(useColor ? [third, color] : [fifth, seventh]),
+        holdBeats: activeHuman ? 0.75 : 1.35 + hash(seed + 1.9) * 0.45,
+        velocity: activeHuman ? 0.26 + hash(seed + 4.2) * 0.10 : 0.34 + hash(seed + 4.2) * 0.14,
+        strumBeats: 0.07 + hash(seed + 4.8) * 0.06,
+        chance: activeHuman ? 0.30 : 0.56,
+      };
+    }
+
+    if (!activeHuman && (slotInBar === ROBOT_JAM_SLOTS_PER_BAR - 2 || slotInBar === ROBOT_JAM_SLOTS_PER_BAR - 1)) {
+      const slotsToNextBar = ROBOT_JAM_SLOTS_PER_BAR - slotInBar;
+      const next = this.robotJamChordForSlot(slotIndex + slotsToNextBar);
+      const nextThird = next.tones[1] ?? next.root + 2;
+      const nextColor = next.colors[0] ?? next.root + 8;
+      return {
+        degrees: this.normalizeRobotJamDegrees(hash(seed + 5.4) > 0.45 ? [nextThird] : [nextColor]),
+        holdBeats: 0.42 + hash(seed + 5.9) * 0.22,
+        velocity: 0.28 + hash(seed + 6.3) * 0.12,
+        strumBeats: 0,
+        chance: human.sinceLastNote > ROBOT_JAM_QUIET_AFTER ? 0.44 : 0.24,
+      };
+    }
+
+    return null;
+  }
+
+  private pickRobotJamStarlaceEvent(
+    chord: RobotJamChord,
+    slotIndex: number,
+    seed: number,
+    human: RobotJamHumanState,
+  ): RobotJamEvent | null {
+    if (human.sinceLastNote < ROBOT_JAM_STARLACE_LISTEN_GAP) return null;
+    const slotInBar = positiveModulo(slotIndex, ROBOT_JAM_SLOTS_PER_BAR);
+    const activeHuman = human.activity > ROBOT_JAM_HUMAN_ACTIVE || human.recentlyPlayed;
+    const allowed = activeHuman
+      ? slotInBar === 5 || slotInBar === 7
+      : slotInBar % 2 === 1 || slotInBar === 2 || slotInBar === 6;
+    if (!allowed) return null;
+
+    const motifSet = ROBOT_JAM_STARLACE_MOTIFS[
+      positiveModulo(Math.floor(this.roomSeed * 0.001 + slotIndex / ROBOT_JAM_SLOTS_PER_BAR), ROBOT_JAM_STARLACE_MOTIFS.length)
+    ] ?? ROBOT_JAM_STARLACE_MOTIFS[0];
+    const phraseStep = Math.floor(slotIndex / ROBOT_JAM_SLOTS_PER_BEAT);
+    const motifOffset = motifSet[positiveModulo(phraseStep, motifSet.length)] ?? 0;
+    const highAnchor = chord.root + 7 + motifOffset;
+    const neighbor = hash(seed + 7.2) > 0.56 ? 2 : -1;
+    const twoNote = !activeHuman && hash(seed + 7.7) > 0.76;
+    return {
+      degrees: this.normalizeRobotJamDegrees(twoNote ? [highAnchor, highAnchor + neighbor] : [highAnchor]),
+      holdBeats: activeHuman ? 0.58 + hash(seed + 8.1) * 0.25 : 0.92 + hash(seed + 8.1) * 0.78,
+      velocity: activeHuman ? 0.30 + hash(seed + 8.8) * 0.14 : 0.38 + hash(seed + 8.8) * 0.20,
+      strumBeats: twoNote ? 0.14 + hash(seed + 9.2) * 0.08 : 0,
+      chance: activeHuman ? 0.34 : human.sinceLastNote > ROBOT_JAM_QUIET_AFTER ? 0.74 : 0.52,
+    };
+  }
+
+  private robotJamChordForSlot(slotIndex: number): RobotJamChord {
+    const phraseIndex = Math.floor(slotIndex / Math.max(1, ROBOT_JAM_SLOTS_PER_BAR * ROBOT_JAM_PHRASE_BARS));
+    const progressionIndex = positiveModulo(
+      Math.floor(hash(this.roomSeed * 0.071) * ROBOT_JAM_PROGRESSIONS.length) + phraseIndex,
+      ROBOT_JAM_PROGRESSIONS.length,
+    );
+    const progression = ROBOT_JAM_PROGRESSIONS[progressionIndex] ?? ROBOT_JAM_PROGRESSIONS[0];
+    const barIndex = Math.floor(slotIndex / ROBOT_JAM_SLOTS_PER_BAR);
+    return progression[positiveModulo(barIndex, progression.length)] ?? progression[0];
+  }
+
+  private normalizeRobotJamDegrees(degrees: readonly number[]): number[] {
+    const out: number[] = [];
+    for (const value of degrees) {
+      if (!Number.isFinite(value)) continue;
+      let degree = Math.round(value);
+      while (degree < 0) degree += 7;
+      while (degree > 25) degree -= 7;
+      if (!out.includes(degree)) out.push(degree);
+    }
+    return out;
+  }
+
+  private queueRobotJamGesture(
+    elapsed: number,
+    instrument: InstrumentId,
+    gestureIndex: number,
+    seed: number,
+    event: RobotJamEvent,
+  ): number {
+    const beatSec = 60 / Math.max(this.robotMotion.params.tempo, 1);
+    const maxStrum = ROBOT_JAM_STRUM_MAX_OFFSET;
+    const strum = event.degrees.length > 1
+      ? Math.min(maxStrum, beatSec * event.strumBeats)
+      : 0;
+    const hold = beatSec * event.holdBeats;
+
+    this.robotJamPending = event.degrees.map((degree, index) => {
       const startAt = elapsed + index * strum;
-      const hold = this.robotJamHoldDuration(beatSec, seed, longHold);
       return {
         instrument,
-        noteNumber: 36 + root + degreeOffset,
-        sourceId: `robot:${gestureIndex}:${index}`,
+        noteNumber: 36 + degree,
+        sourceId: `robot:${gestureIndex}:${index}:${degree}`,
         startAt,
         releaseAt: startAt + hold,
-        velocity: 0.30 + hash(seed + index * 1.91 + 0.67) * 0.32,
+        velocity: clamp(event.velocity * (0.92 + hash(seed + index * 1.91 + 0.67) * 0.18) - index * 0.025, 0.18, 0.82),
         seed: seed + index * 3.07,
       };
     });
     return this.robotJamPending.length;
-  }
-
-  private pickRobotJamShape(seed: number): readonly number[] {
-    const roll = hash(seed + 0.73);
-    if (roll < 0.56) return ROBOT_JAM_CHORD_SHAPES[0];
-    if (roll < 0.78) return ROBOT_JAM_CHORD_SHAPES[1];
-    if (roll < 0.92) return ROBOT_JAM_CHORD_SHAPES[2];
-    return ROBOT_JAM_CHORD_SHAPES[3 + Math.floor(hash(seed + 1.31) * 2)] ?? ROBOT_JAM_CHORD_SHAPES[2];
-  }
-
-  private robotJamHoldDuration(beatSec: number, seed: number, longHold: boolean): number {
-    // Short = ~half beat, long = 1.5–3 beats. Scales with tempo so hold:beat ratio stays musical.
-    if (!longHold) return beatSec * (0.4 + hash(seed + 2.17) * 0.25);
-    return beatSec * (1.5 + hash(seed + 2.17) * 1.5);
   }
 
   private startDueRobotJamNotes(elapsed: number): void {

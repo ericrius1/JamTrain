@@ -843,8 +843,8 @@ export class EnergySculptor implements EnergySink {
           const sDist = sFromCenter.length();
           const sRadius = this.fieldSphereRadiusUniform.max(0.01).mul(1.18);
           const sNormal = sFromCenter.div(sDist.max(0.0001));
-          If(sDist.greaterThan(sRadius), () => {
-            const outwardSpeed = settledVel.dot(sNormal).max(0);
+          const outwardSpeed = settledVel.dot(sNormal);
+          If(sDist.greaterThan(sRadius).and(outwardSpeed.greaterThan(0)), () => {
             settledPos.assign(sCenter.add(sNormal.mul(sRadius)));
             settledVel.assign(settledVel.sub(sNormal.mul(outwardSpeed)));
           });
@@ -909,8 +909,8 @@ export class EnergySculptor implements EnergySink {
         const hardDist = hardFromSphereCenter.length();
         const hardRadius = sphereRadius.mul(1.18);
         const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
-        If(hardDist.greaterThan(hardRadius), () => {
-          const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
+        const hardOutwardSpeed = newVel.dot(hardNormal);
+        If(hardDist.greaterThan(hardRadius).and(hardOutwardSpeed.greaterThan(0)), () => {
           containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)));
           newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
         });
@@ -1352,14 +1352,11 @@ export class EnergySculptor implements EnergySink {
       dirX /= dirLen;
       dirY /= dirLen;
       dirZ /= dirLen;
-      // Narrow spawn radius: the burst leaves the instrument as a tight stream
-      // matching the orb / starlace node it came from. Divergence is then
-      // produced by uniformly-sampled per-particle targets across the bounding
-      // sphere so trails fan out into the full volume before the field pulls
-      // them into orbits.
-      const launchRadius = req.kind === 'starlace' ? 0.035 : 0.045;
-      const coneSpread = req.kind === 'starlace' ? 0.78 : 0.72;
-      const targetBias = req.kind === 'starlace' ? 0.78 : 0.74;
+      // Keep the birth disk smaller than the playable object so the stream
+      // reads as leaving the struck node/orb before it fans into the field.
+      const launchRadius = req.kind === 'starlace' ? 0.012 : 0.020;
+      const coneSpread = req.kind === 'starlace' ? 0.42 : 0.38;
+      const targetBias = req.kind === 'starlace' ? 0.58 : 0.54;
       const speedScale = req.kind === 'starlace' ? 0.9 : 1.0;
 
       // Build a stable basis around the instrument->sculpture direction. The
