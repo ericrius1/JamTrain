@@ -8,7 +8,7 @@ import { HandTracker } from './handTracking';
 import { MidiInputController, type MidiNoteEvent, type MidiState } from './midiInput';
 import { clamp, hash } from './math';
 import { MultiplayerClient } from './multiplayer';
-import { Drum } from './visuals/Drum';
+import { Oar } from './visuals/Oar';
 import { Starlace } from './visuals/Starlace';
 import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
@@ -172,8 +172,8 @@ export class Game {
   private poseSession!: PoseSession;
   private broadcastTransport!: BroadcastChannelPoseTransport;
   private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
-  private localDrumOrbCountListeners = new Set<(count: number) => void>();
-  private localDrumOrbCount = 0;
+  private localOarOrbCountListeners = new Set<(count: number) => void>();
+  private localOarOrbCount = 0;
   private localRig: HumanoidRig;
   private remoteRig: HumanoidRig;
   private robotMotion: RobotMotionController;
@@ -183,10 +183,10 @@ export class Game {
     local: {},
     remote: {},
   };
-  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'drum', remote: 'starlace' };
+  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'oar', remote: 'starlace' };
   private playerCreatures: Record<PlayerSlot, CreatureId> = { local: 'lion', remote: 'robot' };
   private sculptor!: EnergySculptor;
-  private lastDrumHitAt = -10;
+  private lastOarHitAt = -10;
   private lastStarlacePluckAt = -10;
   private lastSynchronyAt = -10;
   private visualContacts: Record<PlayerSlot, HandContactPoint[]> = {
@@ -356,7 +356,7 @@ export class Game {
   }
 
   // Suspends the shared Tone audio context whenever the tab is hidden or the
-  // window loses focus, so switching to another app silences the bed, drums,
+  // window loses focus, so switching to another app silences the bed, oar,
   // and synth — otherwise the camera keeps tracking and a hand near the face
   // (e.g. while thinking in an editor) starts playing notes. Releases held
   // synth voices first so the user doesn't return to a stuck note.
@@ -450,9 +450,9 @@ export class Game {
     this.remoteStreamListeners.add(listener);
   }
 
-  onLocalDrumOrbCountChange(listener: (count: number) => void): void {
-    this.localDrumOrbCountListeners.add(listener);
-    if (this.localDrumOrbCount > 0) listener(this.localDrumOrbCount);
+  onLocalOarOrbCountChange(listener: (count: number) => void): void {
+    this.localOarOrbCountListeners.add(listener);
+    if (this.localOarOrbCount > 0) listener(this.localOarOrbCount);
   }
 
   // Arms / disarms the push-to-talk mic. Acquiring the stream the first time
@@ -916,9 +916,9 @@ export class Game {
   }
 
   private installPlayerVisuals(): void {
-    this.ensurePlayerVisual('local', 'drum');
+    this.ensurePlayerVisual('local', 'oar');
     this.ensurePlayerVisual('local', 'starlace');
-    this.ensurePlayerVisual('remote', 'drum');
+    this.ensurePlayerVisual('remote', 'oar');
     this.ensurePlayerVisual('remote', 'starlace');
     this.installPlayerVisualImmediate('local', this.playerInstruments.local);
     this.installPlayerVisualImmediate('remote', this.playerInstruments.remote);
@@ -960,7 +960,7 @@ export class Game {
         },
       });
     } else {
-      visual = new Drum(this.scene, paneDock, `drum-${player}`, {
+      visual = new Oar(this.scene, paneDock, `oar-${player}`, {
         palette: player,
         creature: this.playerCreatures[player],
         title: `Piano Pads (${player === 'local' ? 'Local' : 'Partner'})`,
@@ -968,7 +968,7 @@ export class Game {
         canvas: player === 'local' ? this.canvas : undefined,
         sculptor: this.sculptor,
         anchor,
-        onOrbCountChange: player === 'local' ? count => this.setLocalDrumOrbCount(count) : undefined,
+        onOrbCountChange: player === 'local' ? count => this.setLocalOarOrbCount(count) : undefined,
         onHit: hit => {
           if (hit.held && hit.sourceId) {
             this.handSynth.triggerOrbNoteOn(player, hit.sourceId, hit.frequency, hit.velocity, hit.orbIndex, hit.envelope);
@@ -976,7 +976,7 @@ export class Game {
             this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex, hit.envelope);
           }
           this.cueRobotInstrumentStrike(player, hit.hand, hit.worldPosition, hit.velocity);
-          this.lastDrumHitAt = performance.now() / 1000;
+          this.lastOarHitAt = performance.now() / 1000;
           this.checkSynchrony();
         },
         onRelease: release => {
@@ -1015,7 +1015,7 @@ export class Game {
   private async prewarmPlayerVisuals(): Promise<void> {
     const visuals = new Set<PlayerVisual>();
     for (const slot of ['local', 'remote'] as const) {
-      for (const id of ['drum', 'starlace'] as const) {
+      for (const id of ['oar', 'starlace'] as const) {
         const visual = this.playerVisualCache[slot][id];
         if (visual) visuals.add(visual);
       }
@@ -1056,10 +1056,10 @@ export class Game {
     for (const visual of visuals) visual.dispose();
   }
 
-  private setLocalDrumOrbCount(count: number): void {
-    if (count === this.localDrumOrbCount) return;
-    this.localDrumOrbCount = count;
-    for (const listener of this.localDrumOrbCountListeners) listener(count);
+  private setLocalOarOrbCount(count: number): void {
+    if (count === this.localOarOrbCount) return;
+    this.localOarOrbCount = count;
+    for (const listener of this.localOarOrbCountListeners) listener(count);
   }
 
   private async swapPlayerVisual(player: PlayerSlot, id: InstrumentId): Promise<void> {
@@ -1092,7 +1092,7 @@ export class Game {
 
   private checkSynchrony(): void {
     const now = performance.now() / 1000;
-    if (Math.abs(this.lastDrumHitAt - this.lastStarlacePluckAt) < 0.4 &&
+    if (Math.abs(this.lastOarHitAt - this.lastStarlacePluckAt) < 0.4 &&
         now - this.lastSynchronyAt > 0.25) {
       this.lastSynchronyAt = now;
       this.sculptor?.fireSynchrony();
@@ -1146,8 +1146,8 @@ export class Game {
   }
 
   private refreshArchetype(): void {
-    const localKind = this.playerInstruments.local === 'starlace' ? 'starlace' : 'drum';
-    const remoteKind = this.playerInstruments.remote === 'starlace' ? 'starlace' : 'drum';
+    const localKind = this.playerInstruments.local === 'starlace' ? 'starlace' : 'oar';
+    const remoteKind = this.playerInstruments.remote === 'starlace' ? 'starlace' : 'oar';
     this.sculptor?.setArchetype(pickArchetype(localKind, remoteKind));
   }
 

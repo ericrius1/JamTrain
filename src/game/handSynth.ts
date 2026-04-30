@@ -214,7 +214,7 @@ export class HandSynthEngine {
     remote: [],
   };
   private pendingOrbHits: PendingOrbHit[] = [];
-  private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'drum', remote: 'drum' };
+  private pendingInstruments: Record<PlayerKey, InstrumentId> = { local: 'oar', remote: 'oar' };
   private muted: Record<PlayerKey, boolean> = { local: false, remote: false };
   private robotPartnerActive = false;
   private duetSynth?: any;
@@ -485,7 +485,7 @@ export class HandSynthEngine {
     if (this.running) this.ensureInstrumentVoice(player);
     this.applyInstrumentRouting(player);
 
-    if (id === 'drum' && this.running && this.tone) {
+    if (id === 'oar' && this.running && this.tone) {
       const orb = this.orbVoices[player];
       if (orb) {
         try {
@@ -686,7 +686,7 @@ export class HandSynthEngine {
       return;
     }
     if (this.muted[player]) return;
-    if (this.pendingInstruments[player] !== 'drum') return;
+    if (this.pendingInstruments[player] !== 'oar') return;
     const orb = this.ensureOrbVoice(player);
     if (!orb) return;
     if (!this.allowHit(this.orbBudgets[player], ORB_MAX_HITS_PER_WINDOW)) {
@@ -716,7 +716,7 @@ export class HandSynthEngine {
   ): void {
     if (!this.running || !this.tone) return;
     if (this.muted[player]) return;
-    if (this.pendingInstruments[player] !== 'drum') return;
+    if (this.pendingInstruments[player] !== 'oar') return;
     if (this.orbHeldNotes[player].has(sourceId)) return;
     const orb = this.ensureOrbVoice(player);
     if (!orb) return;
@@ -1118,7 +1118,7 @@ export class HandSynthEngine {
     }
 
     const gesture = this.orbGestures[player];
-    const gestureActive = gesture.active && this.pendingInstruments[player] === 'drum';
+    const gestureActive = gesture.active && this.pendingInstruments[player] === 'oar';
     if (gestureActive) {
       const angleN = (gesture.angle + Math.PI) / (Math.PI * 2);
       const heightN = clamp(gesture.y * 0.5 + 0.5, 0, 1);

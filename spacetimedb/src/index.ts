@@ -114,9 +114,11 @@ function findAvailableVariant(ctx: any, baseName: string): string {
   return baseName;
 }
 
-const DEFAULT_INSTRUMENT = 'drum';
+const DEFAULT_INSTRUMENT = 'oar';
 const DEFAULT_CREATURE = 'lion';
-const ALLOWED_INSTRUMENTS = new Set(['drum', 'starlace']);
+// 'drum' kept in the allowlist so older clients can keep talking to the
+// server until they refresh; the client normalizes legacy 'drum' → 'oar'.
+const ALLOWED_INSTRUMENTS = new Set(['oar', 'starlace', 'drum']);
 const ALLOWED_CREATURES = new Set(['lion', 'elk', 'fox', 'robot']);
 const SEAT_CREATURES = new Set(['lion', 'elk', 'fox']);
 
@@ -131,7 +133,7 @@ function cleanSeatCreature(creature: string): string | null {
 }
 
 function oppositeSeatInstrument(instrument: string): string {
-  return cleanSeatInstrument(instrument) === 'starlace' ? 'drum' : 'starlace';
+  return cleanSeatInstrument(instrument) === 'starlace' ? 'oar' : 'starlace';
 }
 
 function firstDifferentSeatCreature(creature: string): string {

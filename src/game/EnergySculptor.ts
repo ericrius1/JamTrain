@@ -124,9 +124,9 @@ const THOMAS_SEED_A = 0.19;
 const THOMAS_TARGET_COUNT = 4096;
 
 const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
-  drumDrum: 'lorenz',
+  oarOar: 'lorenz',
   melodyMelody: 'thomas',
-  drumMelody: 'aizawa',
+  oarMelody: 'aizawa',
 };
 
 /**
@@ -262,7 +262,7 @@ export class EnergySculptor implements EnergySink {
   private integrateCompute!: THREE.ComputeNode;
 
   // Frame state.
-  private currentArchetype: ArchetypeId = 'drumMelody';
+  private currentArchetype: ArchetypeId = 'oarMelody';
   private currentAttractor: AttractorKind = 'thomas';
   private transitionTarget: AttractorKind = 'thomas';
   private attractorCycleIndex = 0;

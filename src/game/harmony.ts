@@ -21,7 +21,7 @@ const PLAYABLE_REMOTE_STEPS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 const DUET_STEPS            = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15];
 const ORB_GESTURE_STEPS     = [0, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 const STARLACE_STEPS        = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
-const DRUM_STEPS            = [0, 1, 2, 3, 4, 5, 6];
+const OAR_STEPS             = [0, 1, 2, 3, 4, 5, 6];
 
 const STARLACE_CHORD_STEPS: readonly (readonly number[])[] = [
   [0, 3, 7],
@@ -91,8 +91,8 @@ export function getStarlaceChords(key: Key): JamStarlaceChord[] {
   });
 }
 
-export function getDrumHz(key: Key): number[] {
-  return DRUM_STEPS.map(s => midiToHz(scaleStepMidi(key, REF_OCT_VOICES, s)));
+export function getOarHz(key: Key): number[] {
+  return OAR_STEPS.map(s => midiToHz(scaleStepMidi(key, REF_OCT_VOICES, s)));
 }
 
 export function getKeyName(key: Key): string {

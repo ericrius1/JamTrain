@@ -268,7 +268,7 @@ async function createRuntime(): Promise<RuntimeApi> {
   });
 
   hud.setCameraMode('game');
-  game.onLocalDrumOrbCountChange(count => hud.setDrumOrbCount(count));
+  game.onLocalOarOrbCountChange(count => hud.setOarOrbCount(count));
 
   game.onAssignedRoom(room => {
     // Don't resetShareAndMic here — onAssignedRoom fires on every server

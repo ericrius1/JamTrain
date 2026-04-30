@@ -40,7 +40,7 @@ export class Hud {
   private mixerPanel: MixerPanel;
   private localInstrumentListeners = new Set<(id: InstrumentId) => void>();
   private localInstrumentPicker: InstrumentPicker;
-  private localInstrument: InstrumentId = 'drum';
+  private localInstrument: InstrumentId = 'oar';
   private partnerInstrument: InstrumentId = 'starlace';
   private localCreaturePicker: CreaturePicker;
   private localCreatureListeners = new Set<(id: CreatureId) => void>();
@@ -116,7 +116,7 @@ export class Hud {
     this.playerLeft = new PlayerPlaque({
       side: 'left',
       name: 'AVA',
-      voice: INSTRUMENTS.drum.label,
+      voice: INSTRUMENTS.oar.label,
       kind: 'conductor',
     });
     this.uiEl.appendChild(this.playerLeft.el);
@@ -124,7 +124,7 @@ export class Hud {
     this.playerRight = new PlayerPlaque({
       side: 'right',
       name: 'KORO·v3',
-      voice: INSTRUMENTS.drum.label,
+      voice: INSTRUMENTS.oar.label,
       kind: 'automaton',
     });
     this.uiEl.appendChild(this.playerRight.el);
@@ -369,8 +369,8 @@ export class Hud {
     this.applyPlaques();
   }
 
-  setDrumOrbCount(count: number): void {
-    this.controlsPanel.setDrumOrbCount(count);
+  setOarOrbCount(count: number): void {
+    this.controlsPanel.setOarOrbCount(count);
   }
 
   setPartnerInstrument(id: InstrumentId): void {

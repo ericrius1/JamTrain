@@ -18,12 +18,12 @@ import {
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import {
-  DRUM_DEFAULT_BASE_ROW,
-  drumKeyboardIndexForKey,
-  drumOrbCountForBaseRow,
-} from '../drumControls';
+  OAR_DEFAULT_BASE_ROW,
+  oarKeyboardIndexForKey,
+  oarOrbCountForBaseRow,
+} from '../oarControls';
 import { CREATURE_ROBE_COLORS, type CreatureId } from '../creatures';
-import { getDrumHz } from '../harmony';
+import { getOarHz } from '../harmony';
 import { keyDirector } from '../keyDirector';
 import {
   DEFAULT_ORB_ENVELOPE,
@@ -36,12 +36,12 @@ import {
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
-type DrumPalette = 'local' | 'remote';
+type OarPalette = 'local' | 'remote';
 
-export const DRUM_DEFS = {
+export const OAR_DEFS = {
   // pyramidBaseRow must come first so registerTweaks' initial onChange fires it
   // before the layout callbacks iterate the orb list populated by rebuildOrbs().
-  pyramidBaseRow:    { default: DRUM_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'base row' },
+  pyramidBaseRow:    { default: OAR_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'base row' },
   pyramidStartHeight: { default: 0.0, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
   orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
@@ -53,9 +53,9 @@ export const DRUM_DEFS = {
   envRelease:        { default: DEFAULT_ORB_ENVELOPE.release, min: 0.01,  max: 5.0, step: 0.01,  folder: 'Envelope', label: 'release s' },
 } as const;
 
-export type DrumParams = ParamsOf<typeof DRUM_DEFS>;
+export type OarParams = ParamsOf<typeof OAR_DEFS>;
 
-const DRUM_RUNTIME = {
+const OAR_RUNTIME = {
   bobAmount: 0.003,
   bobSpeed: 0.7,
   rippleSpeed: 1.28,
@@ -73,7 +73,7 @@ const DRUM_RUNTIME = {
   hitTintAmount: 0.85,
 } as const;
 
-const DRUM_ROBE_COOL = new THREE.Color('#6faec8');
+const OAR_ROBE_COOL = new THREE.Color('#6faec8');
 const _orbHsl = { h: 0, s: 0, l: 0 };
 
 export type OrbHit = {
@@ -105,8 +105,8 @@ export type OrbRelease = {
   envelope: OrbEnvelopeSettings;
 };
 
-type DrumOptions = {
-  palette?: DrumPalette;
+type OarOptions = {
+  palette?: OarPalette;
   creature?: CreatureId;
   title?: string;
   onHit?: (event: OrbHit) => void;
@@ -128,7 +128,7 @@ type DrumOptions = {
 // to meet instead of making a new hit feel like it erased the previous one.
 const MAX_RIPPLES = 24;
 const RIPPLE_MAX_AGE = 5.8;
-const DRUM_LAYOUT_TOP_ROWS = DRUM_DEFAULT_BASE_ROW;
+const OAR_LAYOUT_TOP_ROWS = OAR_DEFAULT_BASE_ROW;
 const HELD_STREAM_BASE_RATE = 38;
 const HELD_STREAM_VELOCITY_RATE = 58;
 // NDC units per second. Pointer must be moving at least this fast over an orb
@@ -147,7 +147,7 @@ const POINTER_HELD_SOURCE_ID = 'pointer:primary';
 
 type AnyNode = any;
 
-// One octave of the Jam Train drum scale. frequencyForOrb() walks this table
+// One octave of the Jam Train oar scale. frequencyForOrb() walks this table
 // by scale degree and transposes whole cycles up by octaves, so expanded
 // pyramids do not repeat exact pitches. The table is per-instance and tracks
 // the current key via the KeyDirector subscription set up in the constructor.
@@ -176,7 +176,7 @@ function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: num
   const rows = Math.max(1, Math.floor(baseRow));
   const offsets: THREE.Vector3[] = [];
   const yCenter = (rows - 1) * 0.5 * layerSpacing;
-  const topOverflowRows = Math.max(0, rows - DRUM_LAYOUT_TOP_ROWS);
+  const topOverflowRows = Math.max(0, rows - OAR_LAYOUT_TOP_ROWS);
   const downBias = topOverflowRows * 0.5 * layerSpacing;
   for (let row = 0; row < rows; row += 1) {
     const orbsInPlane = rows - row;
@@ -189,16 +189,16 @@ function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: num
   return offsets;
 }
 
-function createOrbUniforms(params: DrumParams) {
+function createOrbUniforms(params: OarParams) {
   return {
-    hitTintAmount: uniform(DRUM_RUNTIME.hitTintAmount),
+    hitTintAmount: uniform(OAR_RUNTIME.hitTintAmount),
     orbRadius:    uniform(params.orbRadius),
-    rippleSpeed:  uniform(DRUM_RUNTIME.rippleSpeed),
-    rippleFreq:   uniform(DRUM_RUNTIME.rippleFreq),
-    rippleDecay:  uniform(DRUM_RUNTIME.rippleDecay),
-    rippleSigma:  uniform(DRUM_RUNTIME.rippleSigma),
-    rippleDisplace: uniform(DRUM_RUNTIME.rippleDisplace),
-    rippleGlow:   uniform(DRUM_RUNTIME.rippleGlow),
+    rippleSpeed:  uniform(OAR_RUNTIME.rippleSpeed),
+    rippleFreq:   uniform(OAR_RUNTIME.rippleFreq),
+    rippleDecay:  uniform(OAR_RUNTIME.rippleDecay),
+    rippleSigma:  uniform(OAR_RUNTIME.rippleSigma),
+    rippleDisplace: uniform(OAR_RUNTIME.rippleDisplace),
+    rippleGlow:   uniform(OAR_RUNTIME.rippleGlow),
     gesture:      uniform(new THREE.Vector4(0, 0, 0, 0)),
     gestureDepth: uniform(0),
   };
@@ -230,7 +230,7 @@ function applyOrbRobeGradient(
 
   const base = perOrb.baseColor.value;
   base.set(CREATURE_ROBE_COLORS[creature]);
-  base.lerp(DRUM_ROBE_COOL, clamp((1 - t) * 0.18 + Math.max(0, -jitter) * 0.035, 0, 0.28));
+  base.lerp(OAR_ROBE_COOL, clamp((1 - t) * 0.18 + Math.max(0, -jitter) * 0.035, 0, 0.28));
   base.getHSL(_orbHsl);
   base.setHSL(
     _orbHsl.h,
@@ -308,9 +308,9 @@ const _pointerNdcSample = new THREE.Vector2();
 const _raycaster = new THREE.Raycaster();
 const _pointerIntersections: THREE.Intersection<THREE.Object3D>[] = [];
 
-export class Drum implements PlayerVisual {
+export class Oar implements PlayerVisual {
   readonly mesh: THREE.Group;
-  readonly params: DrumParams;
+  readonly params: OarParams;
 
   private orbs: Orb[] = [];
   private performanceTargets: THREE.Vector3[] = [];
@@ -386,22 +386,22 @@ export class Drum implements PlayerVisual {
   private onGestureCallback?: (gesture: OrbGestureState) => void;
   private onOrbCountChange?: (count: number) => void;
   private lastReportedOrbCount = -1;
-  private registered?: ReturnType<typeof registerTweaks<typeof DRUM_DEFS>>;
+  private registered?: ReturnType<typeof registerTweaks<typeof OAR_DEFS>>;
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
   private fixedAnchor?: THREE.Vector3;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
-  private palette: DrumPalette;
+  private palette: OarPalette;
   private creature: CreatureId;
   private keyDownListener?: (e: KeyboardEvent) => void;
   private keyUpListener?: (e: KeyboardEvent) => void;
   private keyBlurListener?: () => void;
   private heldSources = new Map<string, HeldPadSource>();
-  private hzTable: readonly number[] = getDrumHz(keyDirector.getCurrent());
+  private hzTable: readonly number[] = getOarHz(keyDirector.getCurrent());
   private keyUnsubscribe?: () => void;
 
-  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'drum', opts: DrumOptions = {}) {
-    this.params = { ...Object.fromEntries(Object.entries(DRUM_DEFS).map(([k, d]) => [k, d.default])) } as DrumParams;
+  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'oar', opts: OarOptions = {}) {
+    this.params = { ...Object.fromEntries(Object.entries(OAR_DEFS).map(([k, d]) => [k, d.default])) } as OarParams;
     this.onHitCallback = opts.onHit;
     this.onReleaseCallback = opts.onRelease;
     this.onGestureCallback = opts.onGesture;
@@ -418,7 +418,7 @@ export class Drum implements PlayerVisual {
     scene.add(this.mesh);
 
     this.keyUnsubscribe = keyDirector.onChange(({ current }) => {
-      this.hzTable = getDrumHz(current);
+      this.hzTable = getOarHz(current);
     });
 
     this.uniforms = createOrbUniforms(this.params);
@@ -432,7 +432,7 @@ export class Drum implements PlayerVisual {
     // pyramidBaseRow → rebuildOrbs(); ensure something exists in case
     // registerTweaks doesn't fire (no callback registered for that key).
 
-    this.registered = registerTweaks(paneDock, paneKey, DRUM_DEFS, {
+    this.registered = registerTweaks(paneDock, paneKey, OAR_DEFS, {
       title: opts.title ?? 'Piano Pads',
       params: this.params,
       onChange: {
@@ -604,8 +604,8 @@ export class Drum implements PlayerVisual {
         : { offsetY: 0, scale: 0 };
     }
     const isIn = this.revealDirection === 1;
-    const total = isIn ? Drum.REVEAL_DURATION_IN : Drum.REVEAL_DURATION_OUT;
-    const perOrb = isIn ? Drum.REVEAL_PER_ORB_IN : Drum.REVEAL_PER_ORB_OUT;
+    const total = isIn ? Oar.REVEAL_DURATION_IN : Oar.REVEAL_DURATION_OUT;
+    const perOrb = isIn ? Oar.REVEAL_PER_ORB_IN : Oar.REVEAL_PER_ORB_OUT;
     const stagger = Math.max(0, total - perOrb) / Math.max(1, this.orbs.length - 1);
     // Outro sweeps the opposite way so the cluster collapses center-out
     // instead of repeating the intro pattern in reverse.
@@ -619,7 +619,7 @@ export class Drum implements PlayerVisual {
       : Math.pow(t, 3);
     const orbT = isIn ? eased : 1 - eased;
     return {
-      offsetY: -Drum.REVEAL_DROP_DISTANCE * (1 - orbT),
+      offsetY: -Oar.REVEAL_DROP_DISTANCE * (1 - orbT),
       scale: orbT,
     };
   }
@@ -655,7 +655,7 @@ export class Drum implements PlayerVisual {
     } else if (!this.pointerInside && !this.pointerDown) {
       _palmTmp.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
       _palmTmp.z -= 0.06;
-      const alpha = 1 - Math.exp(-delta / Math.max(0.05, DRUM_RUNTIME.anchorSmoothing));
+      const alpha = 1 - Math.exp(-delta / Math.max(0.05, OAR_RUNTIME.anchorSmoothing));
       this.anchor.lerp(_palmTmp, alpha);
     }
     this.placeGroup();
@@ -668,7 +668,7 @@ export class Drum implements PlayerVisual {
     for (let i = 0; i < this.orbs.length; i += 1) {
       const orb = this.orbs[i];
       // Subtle bob — each orb has its own phase.
-      const bob = Math.sin(this.elapsed * DRUM_RUNTIME.bobSpeed * 1.3 + i * 1.21) * DRUM_RUNTIME.bobAmount;
+      const bob = Math.sin(this.elapsed * OAR_RUNTIME.bobSpeed * 1.3 + i * 1.21) * OAR_RUNTIME.bobAmount;
       const reveal = this.orbReveal(i);
       orb.mesh.position.set(orb.offset.x, orb.offset.y + bob + reveal.offsetY, orb.offset.z);
       orb.mesh.scale.setScalar(baseRadius * reveal.scale);
@@ -722,8 +722,8 @@ export class Drum implements PlayerVisual {
   private tickReveal(): void {
     if (!this.revealActive) return;
     const total = this.revealDirection === 1
-      ? Drum.REVEAL_DURATION_IN
-      : Drum.REVEAL_DURATION_OUT;
+      ? Oar.REVEAL_DURATION_IN
+      : Oar.REVEAL_DURATION_OUT;
     const elapsedSinceStart = this.elapsed - this.revealStartedAt;
     if (elapsedSinceStart < total + 0.05) return;
     this.revealActive = false;
@@ -929,7 +929,7 @@ export class Drum implements PlayerVisual {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
       if (!this.isInteractive()) return;
       const key = e.key.toLowerCase();
-      const idx = drumKeyboardIndexForKey(key, this.orbs.length);
+      const idx = oarKeyboardIndexForKey(key, this.orbs.length);
       if (idx === undefined) return;
       e.preventDefault();
       this.fireKeyboardHit(key, idx);
@@ -1193,7 +1193,7 @@ export class Drum implements PlayerVisual {
   private firePointerHit(orbIndex: number, velocity: number, worldPoint: THREE.Vector3): boolean {
     const orb = this.orbs[orbIndex];
     if (!orb) return false;
-    if (this.elapsed - orb.lastHitAt <= DRUM_RUNTIME.hitCooldown) return false;
+    if (this.elapsed - orb.lastHitAt <= OAR_RUNTIME.hitCooldown) return false;
     this.dispatchHit(orbIndex, velocity, worldPoint, true);
     return true;
   }
@@ -1347,7 +1347,7 @@ export class Drum implements PlayerVisual {
     return this.hzTable[pitchClass] * Math.pow(2, octaveShift);
   }
 
-  private notifyOrbCount(count = drumOrbCountForBaseRow(this.params.pyramidBaseRow)): void {
+  private notifyOrbCount(count = oarOrbCountForBaseRow(this.params.pyramidBaseRow)): void {
     if (count === this.lastReportedOrbCount) return;
     this.lastReportedOrbCount = count;
     this.onOrbCountChange?.(count);
@@ -1371,8 +1371,8 @@ export class Drum implements PlayerVisual {
       this.contactHits.length = 0;
       this.currentContactHits.length = 0;
 
-      const contactRadius = contact.kind === 'palm' ? DRUM_RUNTIME.palmRadius : DRUM_RUNTIME.fingerRadius;
-      const hitRadius = this.params.orbRadius + contactRadius + DRUM_RUNTIME.hitDistance;
+      const contactRadius = contact.kind === 'palm' ? OAR_RUNTIME.palmRadius : OAR_RUNTIME.fingerRadius;
+      const hitRadius = this.params.orbRadius + contactRadius + OAR_RUNTIME.hitDistance;
       this.collisionBVH.collectPointHits(contact.position, hitRadius, this.currentContactHits);
       this.collisionBVH.collectSweptPointHits(previous, contact.position, hitRadius, this.contactHits);
 
@@ -1380,7 +1380,7 @@ export class Drum implements PlayerVisual {
         this.currentContactKeys.add(this.contactKey(contact.id, orbIndex));
       }
 
-      const fastEnough = speed > DRUM_RUNTIME.hitVelMin;
+      const fastEnough = speed > OAR_RUNTIME.hitVelMin;
       for (const orbIndex of this.contactHits) {
         const key = this.contactKey(contact.id, orbIndex);
         const currentlyOverlapping = this.currentContactHits.includes(orbIndex);
@@ -1405,7 +1405,7 @@ export class Drum implements PlayerVisual {
       const candidate = this.hitCandidates[i];
       if (!candidate) continue;
       const orb = this.orbs[i];
-      if (this.elapsed - orb.lastHitAt <= DRUM_RUNTIME.hitCooldown) continue;
+      if (this.elapsed - orb.lastHitAt <= OAR_RUNTIME.hitCooldown) continue;
       this.fireHit(i, candidate.contact, candidate.speed);
     }
 
@@ -1466,7 +1466,7 @@ export class Drum implements PlayerVisual {
     const spark = this.orbs[orbIndex]?.uniforms.sparkColor;
     if (!spark) return;
     sink.emit({
-      kind: 'drum',
+      kind: 'oar',
       origin: worldPosition.clone(),
       direction: dir.clone(),
       color: { r: spark.r, g: spark.g, b: spark.b },
@@ -1548,7 +1548,7 @@ export class Drum implements PlayerVisual {
     })();
 
     const colorNode = Fn(() => {
-      // Steel-drum base lighting — fake key light + fresnel rim. No real
+      // Oar base lighting — fake key light + fresnel rim. No real
       // PBR; everything goes through MeshBasicNodeMaterial per the project
       // convention.
       const surfDir = positionLocal.normalize().toVar('orbSurfDir');
