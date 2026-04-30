@@ -17,5 +17,16 @@ export type EmitRequest = {
 
 export interface EnergySink {
   emit(req: EmitRequest): void;
+  // Primitive-args variant that lets callers pass scratch values without
+  // allocating an EmitRequest, Vector3 clones, or color object literals each
+  // frame. The sink copies the values into its own pool.
+  emitFast(
+    kind: ParticleKind,
+    ox: number, oy: number, oz: number,
+    dx: number, dy: number, dz: number,
+    r: number, g: number, b: number,
+    count: number,
+    speed: number,
+  ): void;
   readonly center: THREE.Vector3;
 }

@@ -42,6 +42,10 @@ const INSTRUMENTS_DEFS = {
   playerOffset: { default: 0.7, min: 0, max: 1.0, step: 0.01, label: 'player offset' },
 } as const;
 
+const DEV_DEFS = {
+  particlesEnabled: { type: 'boolean' as const, default: true, label: 'particles' },
+} as const;
+
 const INSTRUMENT_FX_DEFS = {
   reverbWet:      { default: 0.22, min: 0, max: 1,    step: 0.01, folder: 'reverb', label: 'wet' },
   reverbDecay:    { default: 2.2,  min: 0.1, max: 10, step: 0.1,  folder: 'reverb', label: 'decay (s)' },
@@ -260,7 +264,9 @@ export class Game {
   };
   private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'orb', remote: 'starlace' };
   private playerCreatures: Record<PlayerSlot, CreatureId> = { local: 'lion', remote: 'robot' };
-  private sculptor!: EnergySculptor;
+  private sculptor?: EnergySculptor;
+  private devTweaks?: ReturnType<typeof registerTweaks<typeof DEV_DEFS>>;
+  private readonly devParams = makeParams(DEV_DEFS);
   private backingTrackAnalyzer = new BackingTrackAnalyzer();
   private lastOrbHitAt = -10;
   private lastStarlacePluckAt = -10;
@@ -429,7 +435,7 @@ export class Game {
     this.createCabin();
     await this.renderer.init();
     this.setupOrbitControls();
-    this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.renderer, this.paneDock);
+    this.setupDevPane();
     this.installPlayerVisuals();
     await this.prewarmPlayerVisuals();
     this.refreshArchetype();
@@ -483,6 +489,48 @@ export class Game {
   attachBackingTrack(audio: HTMLAudioElement): void {
     this.backingTrackAnalyzer.attach(audio);
     this.backingTrackAnalyzer.attachPane(this.paneDock, this.sculptor);
+  }
+
+  toggleParticles(): void {
+    this.devTweaks?.set('particlesEnabled', !this.devParams.particlesEnabled);
+  }
+
+  private setupDevPane(): void {
+    if (this.devTweaks) return;
+    this.devTweaks = registerTweaks(this.paneDock, 'dev', DEV_DEFS, {
+      title: 'Dev',
+      expanded: true,
+      params: this.devParams,
+      onChange: {
+        particlesEnabled: enabled => this.applyParticlesEnabled(enabled),
+      },
+    });
+  }
+
+  private applyParticlesEnabled(enabled: boolean): void {
+    if (enabled) {
+      if (this.sculptor) return;
+      const sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.renderer, this.paneDock);
+      this.sculptor = sculptor;
+      for (const slot of ['local', 'remote'] as const) {
+        for (const cached of Object.values(this.playerVisualCache[slot])) {
+          cached?.setSculptor?.(sculptor);
+        }
+      }
+      this.backingTrackAnalyzer.setSculptor(sculptor);
+      this.refreshArchetype();
+    } else {
+      const sculptor = this.sculptor;
+      if (!sculptor) return;
+      for (const slot of ['local', 'remote'] as const) {
+        for (const cached of Object.values(this.playerVisualCache[slot])) {
+          cached?.setSculptor?.(undefined);
+        }
+      }
+      this.backingTrackAnalyzer.setSculptor(undefined);
+      this.sculptor = undefined;
+      sculptor.dispose();
+    }
   }
 
   async enableMidi(): Promise<void> {
@@ -662,6 +710,7 @@ export class Game {
     this.robotMotion.dispose();
     this.scenery.dispose();
     this.sculptor?.dispose();
+    this.devTweaks?.dispose();
     this.backingTrackAnalyzer.dispose();
     this.disposePlayerVisuals();
     this.midiInput.dispose();
@@ -1383,10 +1432,10 @@ export class Game {
     this.updatePlayerVisuals(motionDelta, elapsed);
     const beat = this.backingTrackAnalyzer.tick(performance.now());
     if (beat) {
-      this.sculptor.triggerRipple(beat.intensity);
+      this.sculptor?.triggerRipple(beat.intensity);
       this.ingestBackingTrackBeat(elapsed);
     }
-    this.sculptor.update(delta);
+    this.sculptor?.update(delta);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
     this.updateCabinLighting(elapsed);

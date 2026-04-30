@@ -156,5 +156,7 @@ export interface PlayerVisual {
   releaseAllMidiNotes?(): void;
   /** Optional creature palette hook for visuals whose color follows the avatar. */
   setCreature?(id: CreatureId): void;
+  /** Optional hook to swap the particle-system sink. Pass undefined to detach. */
+  setSculptor?(sculptor?: import('./sculptor/EnergyEmitter').EnergySink): void;
   dispose(): void;
 }

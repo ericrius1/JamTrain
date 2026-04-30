@@ -363,6 +363,7 @@ async function createRuntime(): Promise<RuntimeApi> {
       game.setCameraMode(game.getCameraMode() === 'game' ? 'orbit' : 'game');
     },
     () => game.getAliveParticleCount(),
+    () => game.toggleParticles(),
   );
 
   hud.setHandTracker(game.handTracker);

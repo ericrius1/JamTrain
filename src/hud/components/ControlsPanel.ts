@@ -113,6 +113,15 @@ export class ControlsPanel {
     if (this.current === 'orb') this.render();
   }
 
+  dispose(): void {
+    if (this.touchMql && this.touchListener) {
+      this.touchMql.removeEventListener('change', this.touchListener);
+    }
+    this.touchMql = undefined;
+    this.touchListener = undefined;
+    this.el.remove();
+  }
+
   private render(): void {
     const touch = this.touchMql?.matches ?? matchMedia(TOUCH_QUERY).matches;
     const content = this.current === 'orb'

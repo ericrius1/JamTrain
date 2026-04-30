@@ -389,6 +389,10 @@ export class Starlace implements PlayerVisual {
     this.center.copy(anchor);
   }
 
+  setSculptor(sculptor?: import('../sculptor/EnergyEmitter').EnergySink): void {
+    this.sculptor = sculptor;
+  }
+
   startHidden(): void {
     this.mesh.visible = false;
     this.pointerDown = false;
@@ -2016,14 +2020,14 @@ export class Starlace implements PlayerVisual {
     const pulse = clamp(node.pulse + velocity * 0.20, 0, 1);
     const twinkle = 0.5 + Math.sin(this.elapsed * (1.2 + node.seed * 1.7) + node.seed * TAU) * 0.5;
     this.nodeVisualColor(node, pulse, twinkle, _colorA);
-    sink.emit({
-      kind: 'starlace',
-      origin: node.world.clone(),
-      direction: dir.clone(),
-      color: { r: _colorA.r, g: _colorA.g, b: _colorA.b },
-      count: Math.round(52 + velocity * 58),
-      speed: 1.85 + velocity * 1.05,
-    });
+    sink.emitFast(
+      'starlace',
+      node.world.x, node.world.y, node.world.z,
+      dir.x, dir.y, dir.z,
+      _colorA.r, _colorA.g, _colorA.b,
+      Math.round(52 + velocity * 58),
+      1.85 + velocity * 1.05,
+    );
   }
 
   private decayPulses(delta: number): void {

@@ -49,6 +49,10 @@ export class SharePopover {
     this.input.value = this.currentRoom;
     this.refreshUrlPrefix();
     setTimeout(() => {
+      // Guard against open()→close() racing the setTimeout — without this,
+      // a rapid toggle before the timer fires would attach listeners that
+      // close() has already tried to remove, leaking them for the session.
+      if (!this.isOpen) return;
       document.addEventListener('mousedown', this.onDocClick);
       document.addEventListener('keydown', this.onKey);
     }, 0);

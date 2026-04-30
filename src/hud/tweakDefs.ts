@@ -155,6 +155,11 @@ export type RegisterResult<T extends Record<string, Def>> = {
   pane?: Pane;
   /** Restore params to their code defaults (without going through the global R reset). */
   reset: () => void;
+  /** Programmatically update a param: mutates value, refreshes the pane UI,
+   *  fires the registered onChange callback, and persists. Use this when an
+   *  external trigger (key shortcut, command) needs to flip the same state
+   *  the tweakpane control owns. */
+  set: <K extends keyof T>(key: K, value: ParamsOf<T>[K]) => void;
   dispose: () => void;
 };
 
@@ -269,10 +274,18 @@ export function registerTweaks<T extends Record<string, Def>>(
   const entry: ResetEntry = { key, reset };
   resetRegistry.add(entry);
 
+  const setValue = <K extends keyof T>(name: K, value: ParamsOf<T>[K]): void => {
+    (params as Record<string, unknown>)[name as string] = value;
+    pane?.refresh();
+    scheduleSave();
+    fireChange(name, value);
+  };
+
   return {
     params,
     pane,
     reset,
+    set: setValue,
     dispose: () => {
       resetRegistry.delete(entry);
       if (saveTimer !== undefined) {

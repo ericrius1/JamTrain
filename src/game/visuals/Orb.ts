@@ -285,7 +285,8 @@ type OrbInstance = {
 };
 
 type OrbHitCandidate = {
-  contact: HandContactPoint;
+  active: boolean;
+  contact: HandContactPoint | null;
   point: THREE.Vector3;
   speed: number;
 };
@@ -336,7 +337,7 @@ export class Orb implements PlayerVisual {
   private previousContacts = new Map<string, THREE.Vector3>();
   private contactHits: number[] = [];
   private currentContactHits: number[] = [];
-  private hitCandidates: (OrbHitCandidate | null)[] = [];
+  private hitCandidates: OrbHitCandidate[] = [];
   private activeContactKeys = new Set<string>();
   private currentContactKeys = new Set<string>();
   private rippleSources: THREE.Vector4[] = [];
@@ -490,7 +491,14 @@ export class Orb implements PlayerVisual {
     this.notifyOrbCount(count);
 
     this.collisionBVH = new OrbCollisionBVH(count);
-    this.hitCandidates = Array.from({ length: count }, () => null);
+    // Pre-allocate per-orb candidate slots so registerHitCandidate can copy
+    // into a pooled Vector3 instead of cloning the strike point each contact.
+    this.hitCandidates = Array.from({ length: count }, () => ({
+      active: false,
+      contact: null,
+      point: new THREE.Vector3(),
+      speed: 0,
+    }));
     this.pointerOrbInside = Array.from({ length: count }, () => false);
     this.pointerSweepSeen = Array.from({ length: count }, () => false);
     this.pointerSweepWorldPoints = Array.from({ length: count }, () => new THREE.Vector3());
@@ -545,6 +553,10 @@ export class Orb implements PlayerVisual {
     this.fixedAnchor = anchor.clone();
     this.anchor.copy(anchor);
     this.placeGroup();
+  }
+
+  setSculptor(sculptor?: import('../sculptor/EnergyEmitter').EnergySink): void {
+    this.sculptor = sculptor;
   }
 
   startHidden(): void {
@@ -949,7 +961,12 @@ export class Orb implements PlayerVisual {
       this.releaseHeldSource(`keyboard:${e.key.toLowerCase()}`);
     };
     this.keyBlurListener = () => {
-      this.releaseAllHeldNotes('keyboard:');
+      // Drain *all* held sources on focus loss, not just keyboard. MIDI
+      // note-offs are sometimes lost when the tab loses focus (especially
+      // for sustained chords during alt-tab), and the resulting phantom
+      // entries keep tickHeldParticleStreams emitting into the sculptor for
+      // the rest of the session.
+      this.releaseAllHeldNotes();
     };
     window.addEventListener('keydown', this.keyDownListener);
     window.addEventListener('keyup', this.keyUpListener);
@@ -1270,13 +1287,14 @@ export class Orb implements PlayerVisual {
     }
     this.startOrbEnvelope(orb, velocity);
     const frequency = this.frequencyForOrb(orbIndex);
-    const worldStrike = worldPosition.clone();
+    // Both consumers (onHit + emitSparks) read worldPosition synchronously
+    // by-value, so we can hand them the caller's vector without cloning.
     if (this.onHitCallback) {
       this.onHitCallback({
         orbIndex,
         frequency,
         velocity,
-        worldPosition: worldStrike,
+        worldPosition,
         hand,
         held: !!source?.held,
         sourceId: source?.sourceId,
@@ -1284,7 +1302,7 @@ export class Orb implements PlayerVisual {
         envelope: this.currentEnvelope(),
       });
     }
-    this.emitSparks(orbIndex, worldStrike, velocity);
+    this.emitSparks(orbIndex, worldPosition, velocity);
   }
 
   private tickHeldParticleStreams(delta: number): void {
@@ -1369,7 +1387,10 @@ export class Orb implements PlayerVisual {
   }
 
   private processContactHits(contacts: readonly HandContactPoint[], delta: number): void {
-    this.hitCandidates.fill(null);
+    for (let i = 0; i < this.hitCandidates.length; i += 1) {
+      this.hitCandidates[i].active = false;
+      this.hitCandidates[i].contact = null;
+    }
     this.currentContactKeys.clear();
     const activeContactIds = new Set<string>();
 
@@ -1418,7 +1439,7 @@ export class Orb implements PlayerVisual {
 
     for (let i = 0; i < this.orbs.length; i += 1) {
       const candidate = this.hitCandidates[i];
-      if (!candidate) continue;
+      if (!candidate.active || !candidate.contact) continue;
       const orb = this.orbs[i];
       if (this.elapsed - orb.lastHitAt <= ORB_RUNTIME.hitCooldown) continue;
       this.fireHit(i, candidate.contact, candidate.speed);
@@ -1434,12 +1455,19 @@ export class Orb implements PlayerVisual {
     this.currentContactKeys.clear();
     this.contactHits.length = 0;
     this.currentContactHits.length = 0;
-    this.hitCandidates.fill(null);
+    for (let i = 0; i < this.hitCandidates.length; i += 1) {
+      this.hitCandidates[i].active = false;
+      this.hitCandidates[i].contact = null;
+    }
   }
 
   private registerHitCandidate(orbIndex: number, contact: HandContactPoint, speed: number, point: THREE.Vector3): void {
-    const existing = this.hitCandidates[orbIndex];
-    if (!existing || speed > existing.speed) this.hitCandidates[orbIndex] = { contact, point: point.clone(), speed };
+    const slot = this.hitCandidates[orbIndex];
+    if (slot.active && speed <= slot.speed) return;
+    slot.active = true;
+    slot.contact = contact;
+    slot.speed = speed;
+    slot.point.copy(point);
   }
 
   private fireHit(orbIndex: number, contact: HandContactPoint, speed: number): void {
@@ -1448,7 +1476,7 @@ export class Orb implements PlayerVisual {
 
     this.collisionBVH.getPoint(orbIndex, _orbCenter);
     const candidate = this.hitCandidates[orbIndex];
-    _hitDir.copy(candidate?.point ?? contact.position).sub(_orbCenter).normalize();
+    _hitDir.copy(candidate.active ? candidate.point : contact.position).sub(_orbCenter).normalize();
     if (!Number.isFinite(_hitDir.x) || _hitDir.lengthSq() < 1e-6) _hitDir.set(0, 1, 0);
 
     const velocity = clamp(speed / 1.6, 0.18, 1);
@@ -1458,18 +1486,21 @@ export class Orb implements PlayerVisual {
 
     this.startOrbEnvelope(orb, velocity);
     const frequency = this.frequencyForOrb(orbIndex);
-    const worldStrike = _strikePoint.clone().add(this.mesh.position);
+    // Reuse _strikePoint as the world-space hit point. Both consumers read it
+    // synchronously, so no clone needed (the next fireHit call will overwrite
+    // _strikePoint, but by then this hit has already been dispatched).
+    _strikePoint.add(this.mesh.position);
     if (this.onHitCallback) {
       this.onHitCallback({
         orbIndex,
         frequency,
         velocity,
-        worldPosition: worldStrike,
+        worldPosition: _strikePoint,
         hand: contact.hand,
         envelope: this.currentEnvelope(),
       });
     }
-    this.emitSparks(orbIndex, worldStrike, velocity);
+    this.emitSparks(orbIndex, _strikePoint, velocity);
   }
 
   private emitSparks(orbIndex: number, worldPosition: THREE.Vector3, velocity: number, count?: number): void {
@@ -1485,14 +1516,14 @@ export class Orb implements PlayerVisual {
     // producing a visible wave train along the stream.
     const wave = orbLfo.streamWaveAmount;
     const speedMod = wave > 0 ? 1 + orbLfo.value * wave * 0.55 : 1;
-    sink.emit({
-      kind: 'orb',
-      origin: worldPosition.clone(),
-      direction: dir.clone(),
-      color: { r: spark.r, g: spark.g, b: spark.b },
-      count: count ?? Math.round(40 + velocity * 40),
-      speed: (0.9 + velocity * 1.4) * Math.max(0.25, speedMod),
-    });
+    sink.emitFast(
+      'orb',
+      worldPosition.x, worldPosition.y, worldPosition.z,
+      dir.x, dir.y, dir.z,
+      spark.r, spark.g, spark.b,
+      count ?? Math.round(40 + velocity * 40),
+      (0.9 + velocity * 1.4) * Math.max(0.25, speedMod),
+    );
   }
 
   private contactKey(contactId: string, orbIndex: number): string {

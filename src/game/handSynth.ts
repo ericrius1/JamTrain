@@ -490,6 +490,22 @@ export class HandSynthEngine {
     this.silenceVoice(player);
     this.silenceOrb(player);
     this.silenceStarlace(player);
+    // Tear down the chain we are switching away from so its synths, chorus
+    // LFO, and reverb convolver stop consuming CPU. Without this, switching
+    // instruments leaves dormant voices alive for the rest of the session.
+    if (id === 'orb') {
+      const stale = this.starlaceVoices[player];
+      if (stale) {
+        this.disposeStarlaceVoice(stale);
+        this.starlaceVoices[player] = null;
+      }
+    } else if (id === 'starlace') {
+      const stale = this.orbVoices[player];
+      if (stale) {
+        this.disposeOrbVoice(stale);
+        this.orbVoices[player] = null;
+      }
+    }
     if (this.running) this.ensureInstrumentVoice(player);
     this.applyInstrumentRouting(player);
 
@@ -1277,6 +1293,7 @@ export class HandSynthEngine {
     orb.auraSynth?.dispose?.();
     orb.subSynth?.dispose?.();
     orb.shimmerSynth?.dispose?.();
+    try { orb.chorus?.stop?.(); } catch { /* noop */ }
     orb.chorus?.dispose?.();
     orb.auraGain?.dispose?.();
     orb.subGain?.dispose?.();
@@ -1592,6 +1609,7 @@ export class HandSynthEngine {
     starlace.glint?.dispose?.();
     starlace.auraSynth?.dispose?.();
     starlace.auraGain?.dispose?.();
+    try { starlace.chorus?.stop?.(); } catch { /* noop */ }
     starlace.chorus?.dispose?.();
     starlace.filter?.dispose?.();
     starlace.panner?.dispose?.();

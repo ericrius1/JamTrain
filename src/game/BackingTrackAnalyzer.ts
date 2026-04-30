@@ -20,7 +20,7 @@ export const FFT_PULSE_DEFS = {
   bandHzMax:      { default: 180,   min: 40,    max: 600,  step: 1,                folder: 'Detection', label: 'high Hz' },
   envAttack:      { default: 0.45,  min: 0.05,  max: 1,    step: 0.01,             folder: 'Detection', label: 'env attack' },
   envDecay:       { default: 0.04,  min: 0.005, max: 0.5,  step: 0.005,            folder: 'Detection', label: 'env decay' },
-  beatRatio:      { default: 1.40,  min: 1.05,  max: 3,    step: 0.01,             folder: 'Detection', label: 'beat ratio' },
+  beatRatio:      { default: 1.1,  min: 1.05,  max: 3,    step: 0.01,             folder: 'Detection', label: 'beat ratio' },
   beatFloor:      { default: 0.18,  min: 0,     max: 1,    step: 0.01,             folder: 'Detection', label: 'beat floor' },
   minIntervalMs:  { default: 220,   min: 60,    max: 1500, step: 10,               folder: 'Detection', label: 'min ms' },
   sensitivity:    { default: 1.0,   min: 0.1,   max: 3,    step: 0.05,             folder: 'Detection', label: 'sensitivity' },
@@ -181,7 +181,11 @@ export class BackingTrackAnalyzer {
     this.lastBeatAt = -Infinity;
   }
 
-  attachPane(dock: HTMLElement, sculptor: EnergySculptor): void {
+  setSculptor(sculptor?: EnergySculptor): void {
+    this.sculptor = sculptor;
+  }
+
+  attachPane(dock: HTMLElement, sculptor?: EnergySculptor): void {
     this.sculptor = sculptor;
     if (!this.debugRoot) this.buildDebugPanel(dock);
     if (this.registered) return;

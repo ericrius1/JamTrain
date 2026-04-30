@@ -400,6 +400,10 @@ export class MultiplayerClient {
     const delayMs = Math.min(15000, 500 * Math.pow(1.6, Math.min(attempt, 8)));
     console.info('[jam-train] reconnecting in', Math.round(delayMs), 'ms (attempt', attempt + ')');
     this.reconnectTimer = window.setTimeout(() => {
+      // Defensive: explicitly tear down the previous connection before
+      // dropping the reference so its internal subscriptions and websocket
+      // are released rather than waiting on GC of orphaned closures.
+      try { this.connection?.disconnect(); } catch { /* noop */ }
       this.connection = undefined;
       this.connect();
     }, delayMs);

@@ -46,6 +46,12 @@ export class JamAudioGraph {
   // attacked notes when the AudioContext is suspended, so we hard-mute too.
   private masterGainBeforeMute?: number;
 
+  // Tracked refs for the listeners attached in attachStateRecovery so dispose
+  // (or a future re-start) can remove them rather than stack new ones.
+  private stateRecoveryCtx?: AudioContext;
+  private onStateChange?: () => void;
+  private onGesture?: () => void;
+
   async start(): Promise<ToneModule> {
     if (this.running && this.tone) return this.tone;
 
@@ -92,6 +98,9 @@ export class JamAudioGraph {
     if (!this.tone) return;
     const ctx = (this.tone.getContext() as unknown as { rawContext: AudioContext }).rawContext;
     if (!ctx) return;
+    // Guard against double-attach (e.g., dispose+start cycle) which would
+    // otherwise stack a fresh trio of listeners every time.
+    this.detachStateRecovery();
     const tryResume = () => {
       if (ctx.state === 'running') return;
       if (typeof document !== 'undefined' && document.hidden) return;
@@ -99,12 +108,26 @@ export class JamAudioGraph {
         console.warn('[audioGraph] auto-resume failed', err);
       });
     };
-    ctx.addEventListener('statechange', tryResume);
-    // Re-arm on the first user gesture after any drift — covers cases where
-    // the browser refuses programmatic resume() until a fresh gesture lands.
     const onGesture = () => tryResume();
+    ctx.addEventListener('statechange', tryResume);
     window.addEventListener('pointerdown', onGesture, { passive: true });
     window.addEventListener('keydown', onGesture);
+    this.stateRecoveryCtx = ctx;
+    this.onStateChange = tryResume;
+    this.onGesture = onGesture;
+  }
+
+  private detachStateRecovery(): void {
+    if (this.stateRecoveryCtx && this.onStateChange) {
+      this.stateRecoveryCtx.removeEventListener('statechange', this.onStateChange);
+    }
+    if (this.onGesture) {
+      window.removeEventListener('pointerdown', this.onGesture);
+      window.removeEventListener('keydown', this.onGesture);
+    }
+    this.stateRecoveryCtx = undefined;
+    this.onStateChange = undefined;
+    this.onGesture = undefined;
   }
 
   getBus(name: AudioBusName): any {
@@ -185,6 +208,7 @@ export class JamAudioGraph {
   dispose(): void {
     if (!this.running) return;
     this.running = false;
+    this.detachStateRecovery();
     this.instrumentBus?.dispose?.();
     this.instrumentDelay?.dispose?.();
     this.instrumentReverb?.dispose?.();

@@ -406,6 +406,7 @@ export class Hud {
     this.remotePanel.dispose();
     this.localInstrumentPicker.dispose();
     this.localCreaturePicker.dispose();
+    this.controlsPanel.dispose();
   }
 
   private fitStage(): void {

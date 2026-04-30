@@ -17,7 +17,7 @@ import {
   vec4,
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
-import type { EmitRequest, EnergySink } from './sculptor/EnergyEmitter';
+import type { EmitRequest, EnergySink, ParticleKind } from './sculptor/EnergyEmitter';
 import type { ArchetypeId } from './sculptor/archetypeShared';
 import {
   aizawaFlow,
@@ -144,7 +144,12 @@ export class EnergySculptor implements EnergySink {
   private readonly count = PARTICLE_COUNT;
   private spawnCursorCpu = 0;
   private activeSlotCountCpu = 0;
+  // Pool-backed pending emits. Slots are allocated lazily up to a high water
+  // mark; pendingCount is reset to 0 each frame so we never allocate a fresh
+  // EmitRequest per emit (which used to dominate GC pressure during sustained
+  // held-note streams). Vector3s/color object are re-allocated on grow only.
   private pendingEmits: EmitRequest[] = [];
+  private pendingCount = 0;
 
   // CPU-side bookkeeping for the live-particle counter shown in DevOverlay.
   // Each emit batch records the in-flight count and lifetime captured at spawn
@@ -386,7 +391,44 @@ export class EnergySculptor implements EnergySink {
   // ---------------------------------------------------------------------- emit
 
   emit(req: EmitRequest): void {
-    this.pendingEmits.push(req);
+    this.emitFast(
+      req.kind,
+      req.origin.x, req.origin.y, req.origin.z,
+      req.direction.x, req.direction.y, req.direction.z,
+      req.color.r, req.color.g, req.color.b,
+      req.count, req.speed,
+    );
+  }
+
+  emitFast(
+    kind: ParticleKind,
+    ox: number, oy: number, oz: number,
+    dx: number, dy: number, dz: number,
+    r: number, g: number, b: number,
+    count: number,
+    speed: number,
+  ): void {
+    let slot = this.pendingEmits[this.pendingCount];
+    if (!slot) {
+      slot = {
+        kind,
+        origin: new THREE.Vector3(),
+        direction: new THREE.Vector3(),
+        color: { r: 0, g: 0, b: 0 },
+        count: 0,
+        speed: 0,
+      };
+      this.pendingEmits[this.pendingCount] = slot;
+    }
+    slot.kind = kind;
+    slot.origin.set(ox, oy, oz);
+    slot.direction.set(dx, dy, dz);
+    slot.color.r = r;
+    slot.color.g = g;
+    slot.color.b = b;
+    slot.count = count;
+    slot.speed = speed;
+    this.pendingCount += 1;
   }
 
   setArchetype(id: ArchetypeId): void {
@@ -1364,7 +1406,7 @@ export class EnergySculptor implements EnergySink {
     const sphereCenterY = this.fieldSphereCenterYUniform.value;
     const sphereCenterWorldY = this.center.y + sphereCenterY;
 
-    for (let reqIndex = this.pendingEmits.length - 1; reqIndex >= 0; reqIndex -= 1) {
+    for (let reqIndex = this.pendingCount - 1; reqIndex >= 0; reqIndex -= 1) {
       const req = this.pendingEmits[reqIndex];
       if (cursor >= frameCap) break;
       const allowed = Math.min(req.count, frameCap - cursor);
@@ -1473,7 +1515,7 @@ export class EnergySculptor implements EnergySink {
         cursor += 1;
       }
     }
-    this.pendingEmits.length = 0;
+    this.pendingCount = 0;
     this.spawnsThisFrame = cursor;
     this.spawnCountUniform.value = cursor;
     this.spawnCursorUniform.value = this.spawnCursorCpu;
