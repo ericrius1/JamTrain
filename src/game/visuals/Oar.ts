@@ -18,9 +18,10 @@ import {
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import {
-  OAR_DEFAULT_BASE_ROW,
+  OAR_KEY_ROW_HOME,
+  OAR_KEY_ROW_TOP,
+  OAR_PAD_COUNT,
   oarKeyboardIndexForKey,
-  oarOrbCountForBaseRow,
 } from '../oarControls';
 import { CREATURE_ROBE_COLORS, type CreatureId } from '../creatures';
 import { getOarHz } from '../harmony';
@@ -39,13 +40,10 @@ import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 type OarPalette = 'local' | 'remote';
 
 export const OAR_DEFS = {
-  // pyramidBaseRow must come first so registerTweaks' initial onChange fires it
-  // before the layout callbacks iterate the orb list populated by rebuildOrbs().
-  pyramidBaseRow:    { default: OAR_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'base row' },
-  pyramidStartHeight: { default: 0.0, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
-  orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
-  ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
-  pyramidRowSpacing: { default: 0.105, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
+  pyramidStartHeight: { default: 0.04, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
+  orbRadius:         { default: 0.038, min: 0.02, max: 0.32, step: 0.001, label: 'orb radius' },
+  ringRadius:        { default: 0.082, min: 0.04, max: 0.50, step: 0.002, label: 'orb spacing' },
+  pyramidRowSpacing: { default: 0.090, min: 0.04, max: 0.50, step: 0.005, label: 'height spacing' },
   heldStreamAmount:  { default: 10, min: 0, max: 10000, step: 1, folder: 'Emission', label: 'emission rate' },
   envAttack:         { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 1.5, step: 0.001, folder: 'Envelope', label: 'attack s' },
   envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
@@ -119,16 +117,15 @@ type OarOptions = {
   sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
 };
 
-// Playable orbs arranged in a layered 3D pyramid in front of the player. Base
-// plane count is tweakable (default 5 -> planes of 5,4,3,2,1 = 15 orbs). Each
-// orb maps to a scale degree from the shared Jam Train harmony, continuing
-// upward by octave when the pyramid has more orbs than one scale cycle.
+// Playable orbs arranged in two horizontal rows mapped to keyboard rows:
+// home row a-l (9 orbs) below, top row q-p (10 orbs) above. Each orb maps
+// to a scale degree from the shared Jam Train harmony, continuing upward
+// by octave when the orb list spans more than one scale cycle.
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
 const MAX_RIPPLES = 24;
 const RIPPLE_MAX_AGE = 5.8;
-const OAR_LAYOUT_TOP_ROWS = OAR_DEFAULT_BASE_ROW;
 const HELD_STREAM_BASE_RATE = 38;
 const HELD_STREAM_VELOCITY_RATE = 58;
 // NDC units per second. Pointer must be moving at least this fast over an orb
@@ -152,38 +149,24 @@ type AnyNode = any;
 // pyramids do not repeat exact pitches. The table is per-instance and tracks
 // the current key via the KeyDirector subscription set up in the constructor.
 
-function makeOrbPlanePoints(count: number, spacing: number): Array<{ x: number; z: number }> {
-  if (count <= 1) return [{ x: 0, z: 0 }];
-  const radius = spacing / (2 * Math.sin(Math.PI / count));
-  const startAngle = -Math.PI / 2;
-  const points: Array<{ x: number; z: number }> = [];
-  for (let i = 0; i < count; i += 1) {
-    const angle = startAngle + (i / count) * Math.PI * 2;
-    points.push({
-      x: Math.cos(angle) * radius,
-      z: Math.sin(angle) * radius,
-    });
-  }
-  return points;
-}
-
-function makeOrbOffsets(baseRow: number, planeSpacing: number, layerSpacing: number, startHeight: number): THREE.Vector3[] {
-  // Pyramid: bottom plane has `baseRow` orbs, each plane above has one fewer,
-  // until a single orb at the apex. Default-size pad grids stay centered
-  // around the anchor; larger grids grow downward so the apex does not climb
-  // into the top of the view. Index order is bottom-up, then back-to-front
-  // within each plane.
-  const rows = Math.max(1, Math.floor(baseRow));
+function makeOrbOffsets(planeSpacing: number, layerSpacing: number, startHeight: number): THREE.Vector3[] {
+  // Two horizontal rows mapped to keyboard rows: home (a-l, 9 orbs) sits
+  // below top (q-p, 10 orbs). Index order matches OAR_KEY_RANGE so
+  // oarKeyboardIndexForKey lines up. Rows are skewed downward so the upper
+  // row stays under the player's chin given the default anchor (~y 0.98).
+  const counts: number[] = [OAR_KEY_ROW_HOME.length, OAR_KEY_ROW_TOP.length];
+  const yBaseline = startHeight - layerSpacing * 0.65;
   const offsets: THREE.Vector3[] = [];
-  const yCenter = (rows - 1) * 0.5 * layerSpacing;
-  const topOverflowRows = Math.max(0, rows - OAR_LAYOUT_TOP_ROWS);
-  const downBias = topOverflowRows * 0.5 * layerSpacing;
-  for (let row = 0; row < rows; row += 1) {
-    const orbsInPlane = rows - row;
-    const y = startHeight + row * layerSpacing - yCenter - downBias;
-    const points = makeOrbPlanePoints(orbsInPlane, planeSpacing);
-    for (const point of points) {
-      offsets.push(new THREE.Vector3(point.x, y, point.z));
+  for (let row = 0; row < counts.length; row += 1) {
+    const count = counts[row];
+    const y = yBaseline + row * layerSpacing;
+    for (let i = 0; i < count; i += 1) {
+      const t = count <= 1 ? 0.5 : i / (count - 1);
+      const x = (t - 0.5) * planeSpacing * Math.max(1, count - 1);
+      // Slight back-to-front stagger between rows so the top row sits a hair
+      // closer to the player without overlapping the home row.
+      const z = row === 0 ? 0.012 : -0.012;
+      offsets.push(new THREE.Vector3(x, y, z));
     }
   }
   return offsets;
@@ -443,12 +426,11 @@ export class Oar implements PlayerVisual {
         ringRadius:        () => this.layoutOrbs(),
         pyramidRowSpacing: () => this.layoutOrbs(),
         pyramidStartHeight: () => this.layoutOrbs(),
-        pyramidBaseRow:    () => this.rebuildOrbs(),
       },
     });
 
-    // Safety net: if registerTweaks didn't fire pyramidBaseRow's onChange (e.g.
-    // future refactor), make sure orbs exist before we start the update loop.
+    // Layout-affecting tweaks now only nudge positions; the orb count is
+    // fixed at OAR_PAD_COUNT, so build the orbs eagerly.
     if (this.orbs.length === 0) this.rebuildOrbs();
 
     if (this.camera && this.canvas) this.attachPointerEvents(this.canvas);
@@ -456,8 +438,8 @@ export class Oar implements PlayerVisual {
   }
 
   private rebuildOrbs(): void {
-    // Tear down any existing orbs and BVH, then rebuild for the current
-    // pyramidBaseRow / spacing values. Per-orb state arrays are resized too.
+    // Tear down any existing orbs and BVH, then rebuild from the fixed-size
+    // 19-pad layout. Per-orb state arrays are resized to match.
     this.releaseAllHeldNotes();
     for (const orb of this.orbs) {
       this.mesh.remove(orb.mesh);
@@ -466,9 +448,7 @@ export class Oar implements PlayerVisual {
     this.orbs.length = 0;
     this.collisionBVH?.dispose();
 
-    const baseRow = Math.max(1, Math.floor(this.params.pyramidBaseRow));
     const offsets = makeOrbOffsets(
-      baseRow,
       this.params.ringRadius,
       this.params.pyramidRowSpacing,
       this.params.pyramidStartHeight,
@@ -816,9 +796,7 @@ export class Oar implements PlayerVisual {
   }
 
   private layoutOrbs(): void {
-    const baseRow = Math.max(1, Math.floor(this.params.pyramidBaseRow));
     const offsets = makeOrbOffsets(
-      baseRow,
       this.params.ringRadius,
       this.params.pyramidRowSpacing,
       this.params.pyramidStartHeight,
@@ -1347,7 +1325,7 @@ export class Oar implements PlayerVisual {
     return this.hzTable[pitchClass] * Math.pow(2, octaveShift);
   }
 
-  private notifyOrbCount(count = oarOrbCountForBaseRow(this.params.pyramidBaseRow)): void {
+  private notifyOrbCount(count: number = OAR_PAD_COUNT): void {
     if (count === this.lastReportedOrbCount) return;
     this.lastReportedOrbCount = count;
     this.onOrbCountChange?.(count);

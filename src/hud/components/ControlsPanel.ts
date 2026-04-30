@@ -1,12 +1,8 @@
 import type { InstrumentId } from '../../game/instruments';
-import {
-  OAR_DEFAULT_BASE_ROW,
-  oarKeyLabelsForOrbCount,
-  oarOrbCountForBaseRow,
-} from '../../game/oarControls';
+import { OAR_PAD_COUNT } from '../../game/oarControls';
 
 const STORAGE_KEY = 'jamtrain.controlsPanel.collapsed';
-const DEFAULT_OAR_ORB_COUNT = oarOrbCountForBaseRow(OAR_DEFAULT_BASE_ROW);
+const DEFAULT_OAR_ORB_COUNT = OAR_PAD_COUNT;
 const TOUCH_QUERY = '(max-width: 768px), (pointer: coarse) and (hover: none)';
 
 type ControlEntry = {
@@ -24,7 +20,7 @@ type ControlsContent = {
 const STARLACE_CONTROLS: ControlsContent = {
   blurb: 'Sweep the constellation to sing.',
   rows: [
-    { keys: ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'], hint: 'climb the scale' },
+    { keys: ['A–L', 'Q–P'], hint: 'rows climb the scale' },
     { keys: ['Mouse'], hint: 'glide across the stars' },
     { keys: ['Hands'], hint: 'pinch and trace the lace' },
   ],
