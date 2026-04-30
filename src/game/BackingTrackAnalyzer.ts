@@ -25,7 +25,7 @@ export const FFT_PULSE_DEFS = {
   minIntervalMs:  { default: 220,   min: 60,    max: 1500, step: 10,               folder: 'Detection', label: 'min ms' },
   sensitivity:    { default: 1.0,   min: 0.1,   max: 3,    step: 0.05,             folder: 'Detection', label: 'sensitivity' },
 
-  pulseSpeed:     { default: 1.40,  min: 0.05,  max: 5,    step: 0.01,             folder: 'Pulse', label: 'speed m/s' },
+  pulseSpeed:     { default: 15,  min: 0.05,  max: 20,    step: 0.01,             folder: 'Pulse', label: 'speed m/s' },
   pulseWidth:     { default: 0.32,  min: 0.02,  max: 1.0,  step: 0.005,            folder: 'Pulse', label: 'shell width' },
   pulseAmplitude: { default: 2.20,  min: 0,     max: 10,   step: 0.05,             folder: 'Pulse', label: 'strength' },
   pulseLifetime:  { default: 2.5,   min: 0.3,   max: 8,    step: 0.05,             folder: 'Pulse', label: 'lifetime s' },
