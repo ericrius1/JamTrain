@@ -13,7 +13,7 @@ import { Orb } from './visuals/Orb';
 import { Starlace } from './visuals/Starlace';
 import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
-import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
+import type { HandContactPoint, InstrumentId, InstrumentPerformanceEvent, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId, type CreatureId } from './creatures';
 import { attachMousePosePane, makePlayerPose } from './pose';
@@ -228,6 +228,75 @@ function makeHandContactPoints(): HandContactPoint[] {
   return contacts;
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function parseNetworkPerformanceEvent(json: string): InstrumentPerformanceEvent | null {
+  try {
+    const value = JSON.parse(json) as unknown;
+    if (!isObject(value)) return null;
+    if (value.type === 'orb-hit' && value.instrument === 'orb') {
+      const orbIndex = finiteNumber(value.orbIndex);
+      const velocity = finiteNumber(value.velocity);
+      if (orbIndex === undefined || velocity === undefined) return null;
+      let worldPosition: Vec3Data | undefined;
+      if (isObject(value.worldPosition)) {
+        const x = finiteNumber(value.worldPosition.x);
+        const y = finiteNumber(value.worldPosition.y);
+        const z = finiteNumber(value.worldPosition.z);
+        if (x !== undefined && y !== undefined && z !== undefined) worldPosition = { x, y, z };
+      }
+      return {
+        type: 'orb-hit',
+        instrument: 'orb',
+        orbIndex,
+        velocity,
+        held: value.held === true,
+        sourceId: typeof value.sourceId === 'string' ? value.sourceId : undefined,
+        noteNumber: finiteNumber(value.noteNumber),
+        worldPosition,
+      };
+    }
+    if (value.type === 'orb-release' && value.instrument === 'orb' && typeof value.sourceId === 'string') {
+      return {
+        type: 'orb-release',
+        instrument: 'orb',
+        sourceId: value.sourceId,
+      };
+    }
+    if (value.type === 'starlace-pluck' && value.instrument === 'starlace') {
+      const nodeIndex = finiteNumber(value.nodeIndex);
+      const velocity = finiteNumber(value.velocity);
+      if (nodeIndex === undefined || velocity === undefined) return null;
+      const rawNodeIndices = Array.isArray(value.nodeIndices)
+        ? value.nodeIndices.map(finiteNumber).filter((n): n is number => n !== undefined)
+        : undefined;
+      const chordSize = value.chordSize === 1 || value.chordSize === 2 || value.chordSize === 3
+        ? value.chordSize
+        : undefined;
+      return {
+        type: 'starlace-pluck',
+        instrument: 'starlace',
+        nodeIndex,
+        nodeIndices: rawNodeIndices,
+        velocity,
+        hand: value.hand === 'left' || value.hand === 'right' ? value.hand : undefined,
+        chordRootIndex: finiteNumber(value.chordRootIndex),
+        chordSize,
+        phraseStep: finiteNumber(value.phraseStep),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 export class Game {
   private renderer: THREE.WebGPURenderer;
   private scene = new THREE.Scene();
@@ -394,6 +463,7 @@ export class Game {
     this.webrtc.onRemoteStream(stream => {
       for (const listener of this.remoteStreamListeners) listener(stream);
     });
+    this.webrtc.onRemotePerformanceEvent(eventJson => this.applyRemotePerformanceEvent(eventJson));
 
     this.broadcastTransport = new BroadcastChannelPoseTransport(this.roomId);
     const webrtcTransport = new WebRtcPoseTransport(this.webrtc);
@@ -664,6 +734,19 @@ export class Game {
     const robotActive = !this.partnerPresent;
     this.handSynth.setRobotPartnerActive(robotActive);
     this.handSynth.setMuted('remote', robotActive && this.robotJamMuted);
+  }
+
+  private sendLocalPerformanceEvent(event: InstrumentPerformanceEvent): void {
+    if (!this.partnerPresent) return;
+    this.webrtc.sendPerformanceEvent(JSON.stringify(event));
+  }
+
+  private applyRemotePerformanceEvent(eventJson: string): void {
+    if (!this.partnerPresent) return;
+    const event = parseNetworkPerformanceEvent(eventJson);
+    if (!event) return;
+    if (event.instrument !== this.playerInstruments.remote) return;
+    this.playerVisuals.remote?.applyPerformanceEvent?.(event);
   }
 
   setDisplayName(name: string): void {
@@ -1122,7 +1205,20 @@ export class Game {
           );
           this.cueRobotInstrumentStrike(player, pluck.hand, pluck.worldPosition, pluck.velocity);
           this.lastStarlacePluckAt = performance.now() / 1000;
-          if (player === 'local') this.recordHumanNote();
+          if (player === 'local') {
+            this.sendLocalPerformanceEvent({
+              type: 'starlace-pluck',
+              instrument: 'starlace',
+              nodeIndex: pluck.nodeIndex,
+              nodeIndices: pluck.nodeIndices,
+              velocity: pluck.velocity,
+              hand: pluck.hand,
+              chordRootIndex: pluck.chordRootIndex,
+              chordSize: pluck.chordSize,
+              phraseStep: pluck.phraseStep,
+            });
+            this.recordHumanNote();
+          }
           this.checkSynchrony();
         },
       });
@@ -1144,11 +1240,34 @@ export class Game {
           }
           this.cueRobotInstrumentStrike(player, hit.hand, hit.worldPosition, hit.velocity);
           this.lastOrbHitAt = performance.now() / 1000;
-          if (player === 'local') this.recordHumanNote();
+          if (player === 'local') {
+            this.sendLocalPerformanceEvent({
+              type: 'orb-hit',
+              instrument: 'orb',
+              orbIndex: hit.orbIndex,
+              velocity: hit.velocity,
+              held: hit.held,
+              sourceId: hit.sourceId,
+              noteNumber: hit.noteNumber,
+              worldPosition: {
+                x: hit.worldPosition.x,
+                y: hit.worldPosition.y,
+                z: hit.worldPosition.z,
+              },
+            });
+            this.recordHumanNote();
+          }
           this.checkSynchrony();
         },
         onRelease: release => {
           this.handSynth.triggerOrbNoteOff(player, release.sourceId, release.envelope);
+          if (player === 'local') {
+            this.sendLocalPerformanceEvent({
+              type: 'orb-release',
+              instrument: 'orb',
+              sourceId: release.sourceId,
+            });
+          }
         },
         onGesture: gesture => {
           this.handSynth.setOrbGesture(player, gesture);
@@ -1458,14 +1577,20 @@ export class Game {
     const localRight = this.localRig.getPalmWorld('right', this.localRightPalm);
     const remoteLeft = this.remoteRig.getPalmWorld('left', this.remoteLeftPalm);
     const remoteRight = this.remoteRig.getPalmWorld('right', this.remoteRightPalm);
-    // Contact-based hits are only instrument input for live webcam-tracked
-    // hands. Mouse- and robot-driven puppet hands are visual followers; they
-    // should not collide notes out of the instruments.
+    // Local mouse hands are visual followers; pointer/keyboard/MIDI already
+    // have direct instrument paths. Remote contacts are only a fallback until
+    // the reliable performance channel is open.
     const localContacts = this.localPose?.inputSource === 'camera'
       ? this.updateVisualContacts('local', this.localRig, this.localPose.trackedHands)
       : undefined;
-    const remoteContacts = this.partnerPresent && this.remotePose?.inputSource === 'camera'
-      ? this.updateVisualContacts('remote', this.remoteRig, this.remotePose.trackedHands)
+    const remotePose = this.remotePose;
+    const reconstructRemoteContacts = this.partnerPresent && !this.webrtc.isPerformanceChannelOpen();
+    const remoteContacts = reconstructRemoteContacts && remotePose && remotePose.inputSource !== 'robot'
+      ? this.updateVisualContacts(
+          'remote',
+          this.remoteRig,
+          remotePose.inputSource === 'camera' ? remotePose.trackedHands : undefined,
+        )
       : undefined;
     const localVoice = this.handSynth.getVoiceState('local');
     const remoteVoice = this.handSynth.getVoiceState('remote');
@@ -1987,7 +2112,7 @@ export class Game {
   private updateVisualContacts(
     player: PlayerSlot,
     rig: HumanoidRig,
-    trackedHands: Readonly<Record<Handedness, boolean>>,
+    trackedHands?: Readonly<Record<Handedness, boolean>>,
   ): readonly HandContactPoint[] {
     const contacts = this.visualContacts[player];
     const activeContacts = this.activeVisualContacts[player];
@@ -1995,7 +2120,7 @@ export class Game {
     let cursor = 0;
 
     for (const hand of handednesses) {
-      const includeHand = trackedHands[hand] === true;
+      const includeHand = trackedHands ? trackedHands[hand] === true : true;
       const palmContact = contacts[cursor++];
       rig.getPalmCenterWorld(hand, palmContact.position);
       if (includeHand) activeContacts.push(palmContact);

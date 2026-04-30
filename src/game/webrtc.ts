@@ -3,12 +3,15 @@ import type { MultiplayerClient } from './multiplayer';
 type RemoteStreamListener = (stream: MediaStream | null) => void;
 type StreamProvider = () => MediaStream | undefined;
 type RemotePoseListener = (poseJson: string) => void;
+type RemotePerformanceListener = (eventJson: string) => void;
 
 const ICE_SERVERS: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
 ];
 
 const POSE_CHANNEL_LABEL = 'pose';
+const PERFORMANCE_CHANNEL_LABEL = 'performance';
+const MAX_QUEUED_PERFORMANCE_MESSAGES = 64;
 
 export class WebRTCClient {
   private pc?: RTCPeerConnection;
@@ -29,6 +32,9 @@ export class WebRTCClient {
   private desiredShareVideo = false;
   private poseChannel?: RTCDataChannel;
   private poseListeners = new Set<RemotePoseListener>();
+  private performanceChannel?: RTCDataChannel;
+  private performanceListeners = new Set<RemotePerformanceListener>();
+  private queuedPerformanceMessages: string[] = [];
 
   constructor(
     private multiplayer: MultiplayerClient,
@@ -59,6 +65,10 @@ export class WebRTCClient {
     this.poseListeners.add(listener);
   }
 
+  onRemotePerformanceEvent(listener: RemotePerformanceListener): void {
+    this.performanceListeners.add(listener);
+  }
+
   sendPose(poseJson: string): void {
     const ch = this.poseChannel;
     if (!ch || ch.readyState !== 'open') return;
@@ -69,6 +79,31 @@ export class WebRTCClient {
       // will rebuild a fresh channel.
       console.warn('[webrtc] pose send failed', err);
     }
+  }
+
+  sendPerformanceEvent(eventJson: string): void {
+    const ch = this.performanceChannel;
+    if (!ch || ch.readyState !== 'open') {
+      if (this.partnerIdentity) {
+        this.queuedPerformanceMessages.push(eventJson);
+        if (this.queuedPerformanceMessages.length > MAX_QUEUED_PERFORMANCE_MESSAGES) {
+          this.queuedPerformanceMessages.splice(
+            0,
+            this.queuedPerformanceMessages.length - MAX_QUEUED_PERFORMANCE_MESSAGES,
+          );
+        }
+      }
+      return;
+    }
+    try {
+      ch.send(eventJson);
+    } catch (err) {
+      console.warn('[webrtc] performance send failed', err);
+    }
+  }
+
+  isPerformanceChannelOpen(): boolean {
+    return this.performanceChannel?.readyState === 'open';
   }
 
   /** Called by Game once the local MediaStream becomes available. */
@@ -161,6 +196,7 @@ export class WebRTCClient {
         maxRetransmits: 0,
       });
       this.wirePoseChannel(channel);
+      this.wirePerformanceChannel(this.pc.createDataChannel(PERFORMANCE_CHANNEL_LABEL));
       void this.createAndSendOffer('initial');
     }
   }
@@ -224,6 +260,9 @@ export class WebRTCClient {
       if (event.channel.label === POSE_CHANNEL_LABEL) {
         console.info('[webrtc] received pose channel');
         this.wirePoseChannel(event.channel);
+      } else if (event.channel.label === PERFORMANCE_CHANNEL_LABEL) {
+        console.info('[webrtc] received performance channel');
+        this.wirePerformanceChannel(event.channel);
       }
     };
 
@@ -322,12 +361,53 @@ export class WebRTCClient {
     };
   }
 
+  private wirePerformanceChannel(channel: RTCDataChannel): void {
+    if (this.performanceChannel && this.performanceChannel !== channel) {
+      this.detachPerformanceChannel(this.performanceChannel);
+    }
+    this.performanceChannel = channel;
+    channel.onopen = () => {
+      console.info('[webrtc] performance channel open');
+      this.flushQueuedPerformanceMessages();
+    };
+    channel.onclose = () => console.info('[webrtc] performance channel closed');
+    channel.onerror = err => console.warn('[webrtc] performance channel error', err);
+    channel.onmessage = event => {
+      const data = event.data;
+      if (typeof data !== 'string') return;
+      for (const listener of this.performanceListeners) listener(data);
+    };
+    if (channel.readyState === 'open') this.flushQueuedPerformanceMessages();
+  }
+
   private detachPoseChannel(channel: RTCDataChannel): void {
     channel.onopen = null;
     channel.onclose = null;
     channel.onerror = null;
     channel.onmessage = null;
     try { channel.close(); } catch { /* ignore */ }
+  }
+
+  private detachPerformanceChannel(channel: RTCDataChannel): void {
+    channel.onopen = null;
+    channel.onclose = null;
+    channel.onerror = null;
+    channel.onmessage = null;
+    try { channel.close(); } catch { /* ignore */ }
+  }
+
+  private flushQueuedPerformanceMessages(): void {
+    const ch = this.performanceChannel;
+    if (!ch || ch.readyState !== 'open' || this.queuedPerformanceMessages.length === 0) return;
+    const messages = this.queuedPerformanceMessages.splice(0);
+    for (const message of messages) {
+      try {
+        ch.send(message);
+      } catch (err) {
+        console.warn('[webrtc] queued performance send failed', err);
+        break;
+      }
+    }
   }
 
   setShareVideo(enabled: boolean): void {
@@ -529,6 +609,10 @@ export class WebRTCClient {
           this.detachPoseChannel(this.poseChannel);
           this.poseChannel = undefined;
         }
+        if (this.performanceChannel) {
+          this.detachPerformanceChannel(this.performanceChannel);
+          this.performanceChannel = undefined;
+        }
         this.pc.close();
       } catch (err) {
         console.warn('[webrtc] error during dispose', err);
@@ -537,6 +621,7 @@ export class WebRTCClient {
     }
     this.remoteDescriptionSet = false;
     this.pendingIceCandidates = [];
+    this.queuedPerformanceMessages = [];
     if (this.videoSenderTrack) {
       try { this.videoSenderTrack.stop(); } catch { /* ignore */ }
       this.videoSenderTrack = undefined;

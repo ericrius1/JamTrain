@@ -1,6 +1,6 @@
 import type * as THREE from 'three/webgpu';
 import type { CreatureId } from './creatures';
-import type { FingerJointName, FingerName, Handedness } from './types';
+import type { FingerJointName, FingerName, Handedness, Vec3Data } from './types';
 
 export type InstrumentId = 'orb' | 'starlace';
 
@@ -91,6 +91,34 @@ export type InstrumentMeta = {
   color: string;
 };
 
+export type InstrumentPerformanceEvent =
+  | {
+      type: 'orb-hit';
+      instrument: 'orb';
+      orbIndex: number;
+      velocity: number;
+      held?: boolean;
+      sourceId?: string;
+      noteNumber?: number;
+      worldPosition?: Vec3Data;
+    }
+  | {
+      type: 'orb-release';
+      instrument: 'orb';
+      sourceId: string;
+    }
+  | {
+      type: 'starlace-pluck';
+      instrument: 'starlace';
+      nodeIndex: number;
+      nodeIndices?: number[];
+      velocity: number;
+      hand?: Handedness;
+      chordRootIndex?: number;
+      chordSize?: 1 | 2 | 3;
+      phraseStep?: number;
+    };
+
 export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
   orb: {
     id: 'orb',
@@ -154,6 +182,8 @@ export interface PlayerVisual {
   triggerMidiNoteOn?(noteNumber: number, velocity: number, sourceId?: string): void;
   triggerMidiNoteOff?(noteNumber: number, sourceId?: string): void;
   releaseAllMidiNotes?(): void;
+  /** Apply an instrument event that originated on the network partner. */
+  applyPerformanceEvent?(event: InstrumentPerformanceEvent): void;
   /** Optional creature palette hook for visuals whose color follows the avatar. */
   setCreature?(id: CreatureId): void;
   /** Optional hook to swap the particle-system sink. Pass undefined to detach. */

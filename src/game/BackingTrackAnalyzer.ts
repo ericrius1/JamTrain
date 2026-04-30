@@ -276,11 +276,14 @@ export class BackingTrackAnalyzer {
     const root = this.debugRoot;
     if (!root) return;
     const visible = isDebugVisible();
+    const blinkEl = this.debugBlinkEl;
     if (!visible) {
       if (root.style.display !== 'none') root.style.display = 'none';
+      if (blinkEl && blinkEl.style.display !== 'none') blinkEl.style.display = 'none';
       return;
     }
     if (root.style.display === 'none') root.style.display = '';
+    if (blinkEl && blinkEl.style.display === 'none') blinkEl.style.display = '';
 
     const bins = this.bins;
     if (bins && this.debugBarEls.length > 0) {
@@ -370,6 +373,7 @@ export class BackingTrackAnalyzer {
     this.debugRoot?.remove();
     this.debugRoot = undefined;
     this.debugStatusEl = undefined;
+    this.debugBlinkEl?.remove();
     this.debugBlinkEl = undefined;
     this.debugBarEls = [];
   }

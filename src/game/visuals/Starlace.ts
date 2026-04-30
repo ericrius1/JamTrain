@@ -11,7 +11,7 @@ import { isDebugVisible } from '../../hud/debugMode';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import { getStarlaceHz } from '../harmony';
 import { keyDirector } from '../keyDirector';
-import type { HandContactPoint, PlayerVisual, VoiceState } from '../instruments';
+import type { HandContactPoint, InstrumentPerformanceEvent, PlayerVisual, VoiceState } from '../instruments';
 import { clamp, hash } from '../math';
 
 export const STARLACE_DEFS = {
@@ -60,6 +60,7 @@ export type StarlacePluck = {
   chordRootIndex?: number;
   chordSize?: 1 | 2 | 3;
   phraseStep?: number;
+  nodeIndices?: number[];
 };
 
 type StarlacePalette = 'local' | 'remote';
@@ -436,6 +437,40 @@ export class Starlace implements PlayerVisual {
 
   isInteractive(): boolean {
     return this.revealedFully && !this.revealActive;
+  }
+
+  applyPerformanceEvent(event: InstrumentPerformanceEvent): void {
+    if (event.instrument !== 'starlace' || event.type !== 'starlace-pluck') return;
+    if (!this.isInteractive()) return;
+    const rootIndex = this.normalizeNodeIndex(event.nodeIndex);
+    if (rootIndex < 0) return;
+    const nodeIndices = this.normalizeNodeIndices(event.nodeIndices, rootIndex);
+    const chord = {
+      rootIndex: event.chordRootIndex,
+      size: event.chordSize,
+      phraseStep: event.phraseStep,
+    };
+    if (nodeIndices.length <= 1) {
+      this.fireNode(rootIndex, clamp(event.velocity, 0, 1), event.hand, chord);
+      return;
+    }
+    this.fireRemoteChord(rootIndex, nodeIndices, clamp(event.velocity, 0, 1), event.hand, chord);
+  }
+
+  private normalizeNodeIndex(nodeIndex: number): number {
+    if (!Number.isFinite(nodeIndex)) return -1;
+    const index = Math.round(nodeIndex);
+    return index >= 0 && index < this.nodes.length ? index : -1;
+  }
+
+  private normalizeNodeIndices(nodeIndices: readonly number[] | undefined, fallback: number): number[] {
+    const out: number[] = [];
+    for (const raw of nodeIndices ?? [fallback]) {
+      const index = this.normalizeNodeIndex(raw);
+      if (index >= 0 && !out.includes(index)) out.push(index);
+    }
+    if (out.length === 0 && fallback >= 0) out.push(fallback);
+    return out;
   }
 
   getPerformanceTargets(targets = this.performanceTargets): readonly THREE.Vector3[] {
@@ -1455,6 +1490,7 @@ export class Starlace implements PlayerVisual {
         chordRootIndex: rootIndex,
         chordSize: chord?.size,
         phraseStep: chord?.phraseStep,
+        nodeIndices: [nodeIndex],
       });
     }
     this.emitStreak(node, velocity);
@@ -1522,6 +1558,44 @@ export class Starlace implements PlayerVisual {
         chordRootIndex: rootIndex,
         chordSize,
         phraseStep: state.step,
+        nodeIndices: [...nodeIndices],
+      });
+    }
+  }
+
+  private fireRemoteChord(
+    rootNodeIndex: number,
+    nodeIndices: readonly number[],
+    velocity: number,
+    hand: HandContactPoint['hand'] | undefined,
+    chord: { rootIndex?: number; size?: 1 | 2 | 3; phraseStep?: number },
+  ): void {
+    const rootNode = this.nodes[rootNodeIndex];
+    if (!rootNode) return;
+
+    for (let i = 0; i < nodeIndices.length; i += 1) {
+      const nodeIndex = nodeIndices[i];
+      const node = this.nodes[nodeIndex];
+      if (!node) continue;
+      this.pulseNode(nodeIndex, velocity * (i === 0 ? 1 : 0.86));
+      this.emitStreak(node, velocity * (i === 0 ? 0.92 : 0.72));
+    }
+
+    if (this.onPluckCallback) {
+      const rootIndex = clamp(chord.rootIndex ?? rootNode.noteIndex, 0, this.hzTable.length - 1);
+      this.onPluckCallback({
+        nodeIndex: rootNodeIndex,
+        noteIndex: rootIndex,
+        frequency: this.hzTable[rootIndex] ?? this.hzTable[rootNode.noteIndex],
+        velocity,
+        hand,
+        worldPosition: rootNode.world.clone(),
+        x: clamp(rootNode.u + 0.5, 0, 1),
+        y: clamp(rootNode.v + 0.5, 0, 1),
+        chordRootIndex: rootIndex,
+        chordSize: chord.size,
+        phraseStep: chord.phraseStep,
+        nodeIndices: [...nodeIndices],
       });
     }
   }

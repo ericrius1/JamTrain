@@ -27,6 +27,7 @@ import { keyDirector } from '../keyDirector';
 import {
   DEFAULT_ORB_ENVELOPE,
   type HandContactPoint,
+  type InstrumentPerformanceEvent,
   type OrbEnvelopeSettings,
   type OrbGestureState,
   type PlayerVisual,
@@ -1030,10 +1031,50 @@ export class Orb implements PlayerVisual {
     this.releaseAllHeldNotes('midi:');
   }
 
+  applyPerformanceEvent(event: InstrumentPerformanceEvent): void {
+    if (event.instrument !== 'orb') return;
+    if (event.type === 'orb-release') {
+      this.releaseHeldSource(event.sourceId);
+      return;
+    }
+    if (event.type !== 'orb-hit') return;
+    if (!this.isInteractive()) return;
+    const orbIndex = this.normalizeOrbIndex(event.orbIndex);
+    if (orbIndex < 0) return;
+    const orb = this.orbs[orbIndex];
+    if (!orb) return;
+
+    const worldStrike = _strikePoint;
+    if (
+      event.worldPosition &&
+      Number.isFinite(event.worldPosition.x) &&
+      Number.isFinite(event.worldPosition.y) &&
+      Number.isFinite(event.worldPosition.z)
+    ) {
+      worldStrike.set(event.worldPosition.x, event.worldPosition.y, event.worldPosition.z);
+    } else {
+      _hitDir.set(0, 0.2, 1).normalize();
+      worldStrike.copy(orb.mesh.position).addScaledVector(_hitDir, this.params.orbRadius);
+      this.mesh.localToWorld(worldStrike);
+    }
+
+    this.dispatchHit(orbIndex, clamp(event.velocity, 0, 1), worldStrike, false, undefined, {
+      held: event.held === true && !!event.sourceId,
+      sourceId: event.sourceId,
+      noteNumber: event.noteNumber,
+    });
+  }
+
   private orbIndexForMidiNote(noteNumber: number): number {
     const count = this.orbs.length;
     if (count <= 0 || !Number.isFinite(noteNumber)) return -1;
     return positiveModulo(Math.round(noteNumber) - 36, count);
+  }
+
+  private normalizeOrbIndex(orbIndex: number): number {
+    const count = this.orbs.length;
+    if (count <= 0 || !Number.isFinite(orbIndex)) return -1;
+    return positiveModulo(Math.round(orbIndex), count);
   }
 
   private midiSourceId(noteNumber: number, sourceId?: string): string {
