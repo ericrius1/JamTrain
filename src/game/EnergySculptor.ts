@@ -307,6 +307,10 @@ export class EnergySculptor implements EnergySink {
   private polarFftTargets = new Float32Array(POLAR_FFT_BIN_COUNT);
   private polarFftLevels = new Float32Array(POLAR_FFT_BIN_COUNT);
   private polarFftEnergy = 0;
+  // Drives the hue of the FFT ring. Game.ts re-points this at whichever
+  // player's orb is currently out, falling back to a default purple when no
+  // orbs are visible.
+  private polarFftTint = new THREE.Color('#8a4fd6');
 
   // Field debug visualization (toggled with the dev overlay). A 3D grid of
   // line segments sampling the active attractor's flow, transformed by the
@@ -537,6 +541,10 @@ export class EnergySculptor implements EnergySink {
   setDebugVisible(visible: boolean): void {
     this.fieldDebugVisible = visible;
     if (this.fieldDebugLines) this.fieldDebugLines.visible = visible;
+  }
+
+  setRingTintColor(value: THREE.ColorRepresentation): void {
+    this.polarFftTint.set(value);
   }
 
   // -------------------------------------------------------------------- update
@@ -1221,12 +1229,13 @@ export class EnergySculptor implements EnergySink {
       dummy.updateMatrix();
       mesh.setMatrixAt(i, dummy.matrix);
 
+      // Brightness modulates with spectral content + idle glint; hue comes
+      // from the externally-driven tint so the ring always reads as "the orb
+      // color in volumetric form."
       const hot = Math.pow(spectral, 1.25);
       const glint = 0.5 + Math.sin(t * 1.7 + seed) * 0.5;
-      const cr = 0.24 + hot * 0.60 + glint * idle * 0.30;
-      const cg = 0.72 + hot * 0.16;
-      const cb = 0.82 + hot * 0.16 + glint * idle * 0.24;
-      colorScratch.setRGB(cr, cg, cb);
+      const lum = 0.32 + hot * 0.78 + glint * idle * 0.25;
+      colorScratch.setRGB(this.polarFftTint.r * lum, this.polarFftTint.g * lum, this.polarFftTint.b * lum);
       mesh.setColorAt(i, colorScratch);
     }
 

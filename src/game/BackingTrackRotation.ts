@@ -8,11 +8,29 @@ const BACKING_TRACK_VOLUME_EXPONENT = 1.6;
 type BackingTrack = {
   id: string;
   src: string;
+  title: string;
+  bpm: number;
+  beatOffsetSeconds: number;
+  key: string;
 };
 
 const TRAIN_BACKING_TRACKS: readonly BackingTrack[] = [
-  { id: 'train1', src: '/backing_tracks/Train1.mp3' },
-  { id: 'train2', src: '/backing_tracks/Train2.mp3' },
+  {
+    id: 'train1',
+    src: '/backing_tracks/Train1.mp3',
+    title: 'Midnight Train Glass',
+    bpm: 76,
+    beatOffsetSeconds: 0.07,
+    key: 'C major',
+  },
+  {
+    id: 'train2',
+    src: '/backing_tracks/Train2.mp3',
+    title: 'Midnight Rail Drift',
+    bpm: 123.05,
+    beatOffsetSeconds: 0.05,
+    key: 'C major',
+  },
 ];
 
 export class BackingTrackRotation {
@@ -116,6 +134,11 @@ export class BackingTrackRotation {
     } else if (preload === 'auto' && audio.preload !== 'auto') {
       audio.preload = 'auto';
     }
+    audio.dataset.trackId = track.id;
+    audio.dataset.trackTitle = track.title;
+    audio.dataset.trackBpm = String(track.bpm);
+    audio.dataset.beatOffsetSeconds = String(track.beatOffsetSeconds);
+    audio.dataset.trackKey = track.key;
     return audio;
   }
 

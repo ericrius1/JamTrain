@@ -3,11 +3,9 @@ import {
   Fn,
   clamp,
   float,
-  hash,
   length,
   pass,
   smoothstep,
-  time,
   uniform,
   uv,
   vec2,
@@ -50,9 +48,6 @@ export const POSTFX_DEFS = {
   vignetteSoftness:  { default: 0.95, min: 0, max: 1.5, step: 0.01, folder: 'vignette', label: 'outer radius' },
   vignetteIntensity: { default: 0.55, min: 0, max: 1.5, step: 0.01, folder: 'vignette', label: 'strength' },
 
-  grain:           { default: 0.045, min: 0, max: 0.25, step: 0.001, folder: 'grain', label: 'amount' },
-  grainLumaWeight: { default: 0.65,  min: 0, max: 1.0,  step: 0.01,  folder: 'grain', label: 'shadow bias' },
-
   pulseGain: { default: 0.30, min: 0, max: 1.5, step: 0.01, folder: 'pulse', label: 'loudness gain' },
 } as const;
 
@@ -71,8 +66,6 @@ export class PostFX {
   private uVigR = uniform(0);
   private uVigSoft = uniform(0);
   private uVigInt = uniform(0);
-  private uGrain = uniform(0);
-  private uGrainLuma = uniform(0);
   private uLoudness = uniform(0);
   private uPulseGain = uniform(0);
 
@@ -107,16 +100,7 @@ export class PostFX {
       const vig = smoothstep(this.uVigR, this.uVigSoft, radial).mul(this.uVigInt).mul(pulseBoost);
       const dimmed = sampled.mul(float(1.0).sub(vig).max(0));
 
-      // Grain: hash of (uv * large + time*60). Slight luma weight so shadows
-      // grain a touch more than highlights — reads more "film" than digital noise.
-      const seed = u.x.mul(1920.0).add(u.y.mul(1080.0).mul(31.7)).add(time.mul(60.0));
-      const noise = hash(seed).sub(0.5);
-      const luma = dimmed.dot(vec3(0.299, 0.587, 0.114));
-      const shadowMask = float(1.0).sub(luma).mul(this.uGrainLuma).add(float(1.0).sub(this.uGrainLuma));
-      const grainAmt = this.uGrain.mul(shadowMask).mul(pulseBoost);
-      const grained = dimmed.add(noise.mul(grainAmt));
-
-      return vec4(grained.max(0), 1.0);
+      return vec4(dimmed.max(0), 1.0);
     });
 
     this.pipeline = new THREE.RenderPipeline(renderer);
@@ -136,8 +120,6 @@ export class PostFX {
         vignetteRadius: (v: number) => { this.uVigR.value = v; },
         vignetteSoftness: (v: number) => { this.uVigSoft.value = Math.max(v, this.params.vignetteRadius + 1e-3); },
         vignetteIntensity: (v: number) => { this.uVigInt.value = v; },
-        grain: (v: number) => { this.uGrain.value = v; },
-        grainLumaWeight: (v: number) => { this.uGrainLuma.value = v; },
         pulseGain: (v: number) => { this.uPulseGain.value = v; },
       },
     });
@@ -168,8 +150,6 @@ export class PostFX {
     this.uVigR.value = this.params.vignetteRadius;
     this.uVigSoft.value = Math.max(this.params.vignetteSoftness, this.params.vignetteRadius + 1e-3);
     this.uVigInt.value = this.params.vignetteIntensity;
-    this.uGrain.value = this.params.grain;
-    this.uGrainLuma.value = this.params.grainLumaWeight;
     this.uPulseGain.value = this.params.pulseGain;
   }
 

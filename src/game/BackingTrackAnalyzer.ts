@@ -51,6 +51,7 @@ export class BackingTrackAnalyzer {
   private lowBinEnd = 0;
   private envShort = 0;
   private envLong = 0;
+  private sectionEnergy = 0;
   private lastBeatAt = -Infinity;
   private gestureResumeInstalled = false;
   private readonly handleGestureResume = (): void => this.tryResume();
@@ -136,6 +137,18 @@ export class BackingTrackAnalyzer {
     }
     analyser.getByteFrequencyData(bins);
     this.updatePolarFftBins();
+    let spectralSum = 0;
+    let spectralPeak = 0;
+    for (let i = 1; i < bins.length; i += 1) {
+      const value = bins[i];
+      spectralSum += value;
+      spectralPeak = Math.max(spectralPeak, value);
+    }
+    const spectralEnergy = bins.length > 1
+      ? ((spectralSum / (bins.length - 1)) * 0.72 + spectralPeak * 0.28) / 255
+      : 0;
+    this.sectionEnergy = this.sectionEnergy * 0.985 + spectralEnergy * 0.015;
+
     let sum = 0;
     let count = 0;
     for (let i = this.lowBinStart; i <= this.lowBinEnd; i += 1) {
@@ -183,6 +196,7 @@ export class BackingTrackAnalyzer {
   private resetEnvelope(): void {
     this.envShort = 0;
     this.envLong = 0;
+    this.sectionEnergy = 0;
     this.lastBeatAt = -Infinity;
   }
 
@@ -225,6 +239,11 @@ export class BackingTrackAnalyzer {
   /** Smoothed low-band loudness in [0,1]. PostFX uses this to breathe vignette/grain. */
   getLoudness(): number {
     return this.envShort;
+  }
+
+  /** Slower broad-spectrum bed energy in [0,1], useful for accompaniment density. */
+  getSectionEnergy(): number {
+    return this.sectionEnergy;
   }
 
   attachPane(dock: HTMLElement, sculptor?: EnergySculptor): void {

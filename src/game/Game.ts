@@ -16,7 +16,7 @@ import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
 import type { HandContactPoint, InstrumentId, InstrumentPerformanceEvent, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
-import { isCreatureId, type CreatureId } from './creatures';
+import { CREATURE_ROBE_COLORS, isCreatureId, type CreatureId } from './creatures';
 import { attachMousePosePane, makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
@@ -70,10 +70,12 @@ const ROBOT_JAM_BEATS_PER_BAR = 4;
 const ROBOT_JAM_SLOTS_PER_BAR = ROBOT_JAM_SLOTS_PER_BEAT * ROBOT_JAM_BEATS_PER_BAR;
 const ROBOT_JAM_PHRASE_BARS = 8;
 const ROBOT_JAM_STARLACE_DENSITY_SCALE = 0.92;
-const ROBOT_JAM_ORB_LISTEN_GAP = 0.18;
+const ROBOT_JAM_ORB_DENSITY_SCALE = 0.58;
+const ROBOT_JAM_ORB_LISTEN_GAP = 0.42;
 const ROBOT_JAM_STARLACE_LISTEN_GAP = 0.32;
 // Cap simultaneous robot voices so phrases can layer without stacking up forever.
 const ROBOT_JAM_MAX_CONCURRENT = 6;
+const ROBOT_JAM_ORB_MAX_CONCURRENT = 3;
 // Visual hand target bias for the robot stand-in. The sound still lands on the
 // real note target, but the puppet hand is aimed a little closer to the robot
 // so the illustrated palm reads as behind the pad instead of punching through it.
@@ -191,8 +193,10 @@ type RobotJamHumanMode = 'active' | 'leading' | 'silent';
 type RobotJamHumanState = {
   sinceLastNote: number;
   mode: RobotJamHumanMode;
-  /** Density multiplier: pad-only when active, full when silent. */
+  /** Density multiplier: pad-only when active, full when silent, ducked under dense backing sections. */
   densityScale: number;
+  /** Velocity multiplier: backing-heavy sections make the robot play with a lighter touch. */
+  velocityScale: number;
 };
 type CabinPlateLayer = {
   mesh: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>;
@@ -561,8 +565,29 @@ export class Game {
   }
 
   attachBackingTrack(audio: HTMLAudioElement): void {
+    this.resetBackingTrackTempoLock(audio);
     this.backingTrackAnalyzer.attach(audio);
     this.backingTrackAnalyzer.attachPane(this.paneDock, this.sculptor);
+  }
+
+  private resetBackingTrackTempoLock(audio: HTMLAudioElement): void {
+    this.detectedBeatTimes = [];
+    this.robotJamNextAt = 0;
+    this.robotJamStep = -1;
+    this.robotJamPhraseEndsAtSlot = -1;
+
+    const bpm = Number.parseFloat(audio.dataset.trackBpm ?? '');
+    if (!Number.isFinite(bpm) || bpm < ROBOT_JAM_BEAT_BPM_MIN || bpm > ROBOT_JAM_BEAT_BPM_MAX) {
+      this.lockedTempoBpm = null;
+      this.lockedPhaseAnchor = 0;
+      return;
+    }
+
+    const beatOffset = Number.parseFloat(audio.dataset.beatOffsetSeconds ?? '0');
+    const trackTime = Number.isFinite(audio.currentTime) ? Math.max(0, audio.currentTime) : 0;
+    const elapsed = (performance.now() - this.startedAt) / 1000;
+    this.lockedTempoBpm = bpm;
+    this.lockedPhaseAnchor = elapsed - trackTime + (Number.isFinite(beatOffset) ? beatOffset : 0);
   }
 
   private setupDevPane(): void {
@@ -1635,15 +1660,17 @@ export class Game {
       return;
     }
 
+    const instrument = this.playerInstruments.remote;
+
     // Note-count cap so phrases can layer without runaway stacking.
     const concurrent = this.robotJamActive.length + this.robotJamPending.length;
-    if (concurrent >= ROBOT_JAM_MAX_CONCURRENT) {
+    const maxConcurrent = instrument === 'orb' ? ROBOT_JAM_ORB_MAX_CONCURRENT : ROBOT_JAM_MAX_CONCURRENT;
+    if (concurrent >= maxConcurrent) {
       this.robotJamStep = slotIndex;
       this.scheduleNextRobotJam(elapsed);
       return;
     }
 
-    const instrument = this.playerInstruments.remote;
     const phraseIndex = Math.floor(slotIndex / Math.max(1, ROBOT_JAM_SLOTS_PER_BAR * ROBOT_JAM_PHRASE_BARS));
     const seed = slotIndex * 17.17 + phraseIndex * 5.31 + this.roomSeed * 0.029;
     const motion = this.robotMotion.params;
@@ -1669,11 +1696,15 @@ export class Game {
 
     const event = this.pickRobotJamEvent(instrument, slotIndex, seed, humanState);
     if (event) {
-      const densityScale = (instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : 1)
+      const instrumentDensity = instrument === 'starlace' ? ROBOT_JAM_STARLACE_DENSITY_SCALE : ROBOT_JAM_ORB_DENSITY_SCALE;
+      const densityScale = instrumentDensity
         * humanState.densityScale;
       const playChance = clamp(motion.density * densityScale * event.chance, 0, 0.98);
       if (hash(seed + 0.97) < playChance) {
-        this.queueRobotJamGesture(elapsed, instrument, slotIndex, seed, event);
+        this.queueRobotJamGesture(elapsed, instrument, slotIndex, seed, {
+          ...event,
+          velocity: event.velocity * humanState.velocityScale,
+        });
       }
     }
     this.scheduleNextRobotJam(elapsed);
@@ -1768,13 +1799,25 @@ export class Game {
       const t = clamp((sinceLastNote - leadingTime * 2.5) / 4, 0, 1);
       densityScale = lerp(1, boost, t);
     }
-    return { sinceLastNote, mode, densityScale };
+
+    const sectionEnergy = clamp(this.backingTrackAnalyzer.getSectionEnergy() * 2.4, 0, 1);
+    const backingWeight = clamp((sectionEnergy - 0.16) / 0.58, 0, 1);
+    const backingDensityScale = lerp(1.08, 0.68, backingWeight);
+    const velocityScale = lerp(0.96, 0.72, backingWeight);
+
+    return {
+      sinceLastNote,
+      mode,
+      densityScale: densityScale * backingDensityScale,
+      velocityScale,
+    };
   }
 
   /**
    * Backing-track beat ingestion. Pushes new beat times, estimates BPM from
-   * recent intervals, and locks tempo + phase anchor when intervals are
-   * stable. Called from animate() whenever the analyzer fires a beat.
+   * recent intervals, and gently corrects the existing phase anchor when
+   * intervals are stable. Called from animate() whenever the analyzer fires a
+   * beat.
    */
   private ingestBackingTrackBeat(elapsed: number): void {
     this.detectedBeatTimes.push(elapsed);
@@ -1798,14 +1841,25 @@ export class Game {
     const bpm = 60 / median;
     if (bpm < ROBOT_JAM_BEAT_BPM_MIN || bpm > ROBOT_JAM_BEAT_BPM_MAX) return;
 
-    this.lockedTempoBpm = bpm;
-    this.lockedPhaseAnchor = elapsed;
-    // Slot index is computed relative to the anchor — resetting it keeps
-    // robotJamStep and robotJamPhraseEndsAtSlot from pointing into the past
-    // and silently skipping the next ~30 slots after a lock.
-    this.robotJamStep = -1;
-    this.robotJamPhraseEndsAtSlot = -1;
-    this.robotJamNextAt = 0;
+    const wasLocked = this.lockedTempoBpm !== null;
+    const previousBpm = this.lockedTempoBpm ?? bpm;
+    const beatSec = 60 / Math.max(bpm, 1);
+
+    if (!wasLocked) {
+      const firstBeat = this.detectedBeatTimes[0] ?? elapsed;
+      const beatsSinceFirst = Math.max(0, Math.round((elapsed - firstBeat) / beatSec));
+      this.lockedPhaseAnchor = elapsed - beatsSinceFirst * beatSec;
+      this.robotJamStep = -1;
+      this.robotJamPhraseEndsAtSlot = -1;
+      this.robotJamNextAt = 0;
+    } else {
+      const beatIndex = Math.round((elapsed - this.lockedPhaseAnchor) / beatSec);
+      const expected = this.lockedPhaseAnchor + beatIndex * beatSec;
+      const drift = clamp(elapsed - expected, -beatSec * 0.3, beatSec * 0.3);
+      this.lockedPhaseAnchor += drift * 0.16;
+    }
+
+    this.lockedTempoBpm = lerp(previousBpm, bpm, wasLocked ? 0.12 : 1);
   }
 
   private effectiveSlotSec(): number {
@@ -1818,7 +1872,7 @@ export class Game {
     const anchor = this.lockedPhaseAnchor;
     // Quantize to next slot boundary relative to the locked phase anchor so
     // the robot's grid aligns with the backing-track downbeats once locked.
-    const slotIndex = Math.floor((elapsed - anchor) / slotSec + 1e-4) + 1;
+    const slotIndex = Math.max(0, Math.floor((elapsed - anchor) / slotSec + 1e-4) + 1);
     let nextAt = anchor + slotIndex * slotSec;
     // Apply swing to off-beat (odd) slots: delay by up to swing * slotSec.
     if (slotIndex % 2 === 1) nextAt += this.robotMotion.params.swing * slotSec;
@@ -1860,27 +1914,27 @@ export class Game {
 
     if (slotInBar === 0) {
       const degrees = isActive
-        ? [third, seventh]
-        : isSilent && hash(seed + 0.35) > 0.30
-          ? [root + 7, third + 7, seventh, color]
-          : [root, fifth, seventh];
+        ? [hash(seed + 0.24) > 0.52 ? third : seventh]
+        : isSilent && hash(seed + 0.35) > 0.54
+          ? [root, fifth]
+          : [root];
       return {
         degrees: this.normalizeRobotJamDegrees(degrees),
-        holdBeats: isActive ? 1.15 : isSilent ? 3.25 : 2.05,
-        velocity: isActive ? 0.28 + hash(seed + 2.7) * 0.08 : 0.38 + hash(seed + 2.7) * 0.16,
-        strumBeats: 0.10 + hash(seed + 3.1) * 0.07,
-        chance: isActive ? 0.62 : isSilent ? 0.96 : 0.82,
+        holdBeats: isActive ? 0.78 : isSilent ? 2.10 : 1.35,
+        velocity: isActive ? 0.20 + hash(seed + 2.7) * 0.06 : 0.27 + hash(seed + 2.7) * 0.10,
+        strumBeats: 0.08 + hash(seed + 3.1) * 0.05,
+        chance: isActive ? 0.34 : isSilent ? 0.78 : 0.56,
       };
     }
 
     if (slotInBar === ROBOT_JAM_SLOTS_PER_BEAT * 2) {
       const useColor = hash(seed + 0.83) > 0.48;
       return {
-        degrees: this.normalizeRobotJamDegrees(useColor ? [third, color] : [fifth, seventh]),
-        holdBeats: isActive ? 0.75 : 1.35 + hash(seed + 1.9) * 0.45,
-        velocity: isActive ? 0.24 + hash(seed + 4.2) * 0.08 : 0.34 + hash(seed + 4.2) * 0.14,
-        strumBeats: 0.07 + hash(seed + 4.8) * 0.06,
-        chance: isActive ? 0.36 : isSilent ? 0.78 : 0.56,
+        degrees: this.normalizeRobotJamDegrees(useColor ? [color] : [fifth]),
+        holdBeats: isActive ? 0.50 : 0.88 + hash(seed + 1.9) * 0.34,
+        velocity: isActive ? 0.18 + hash(seed + 4.2) * 0.06 : 0.24 + hash(seed + 4.2) * 0.09,
+        strumBeats: 0,
+        chance: isActive ? 0.18 : isSilent ? 0.52 : 0.34,
       };
     }
 
@@ -1891,10 +1945,10 @@ export class Game {
       const nextColor = next.colors[0] ?? next.root + 8;
       return {
         degrees: this.normalizeRobotJamDegrees(hash(seed + 5.4) > 0.45 ? [nextThird] : [nextColor]),
-        holdBeats: 0.42 + hash(seed + 5.9) * 0.22,
-        velocity: 0.28 + hash(seed + 6.3) * 0.12,
+        holdBeats: 0.30 + hash(seed + 5.9) * 0.16,
+        velocity: 0.20 + hash(seed + 6.3) * 0.08,
         strumBeats: 0,
-        chance: isSilent ? 0.66 : 0.40,
+        chance: isSilent ? 0.36 : 0.18,
       };
     }
 

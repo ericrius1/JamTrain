@@ -47,16 +47,16 @@ type RobotPerformanceIntent = {
 
 export const ROBOT_MOTION_DEFS = {
   tempo:            { default: 92,   min: 50,  max: 160, step: 1,    label: 'tempo (BPM)' },
-  density:          { default: 0.84, min: 0.1, max: 1,   step: 0.01, label: 'density' },
+  density:          { default: 0.62, min: 0.1, max: 1,   step: 0.01, label: 'density' },
   swing:            { default: 0.16, min: 0,   max: 0.5, step: 0.01, label: 'swing' },
-  gestureSize:      { default: 0.78, min: 0.2, max: 1.6, step: 0.01, label: 'gesture size' },
+  gestureSize:      { default: 0.62, min: 0.2, max: 1.6, step: 0.01, label: 'gesture size' },
   playerFollow:     { default: 0.56, min: 0,   max: 1,   step: 0.01, label: 'player follow' },
-  // Hard floor on robot density while human plays. 0.18 = robot keeps a soft pad / accents instead of shutting up.
-  humanDuckFloor:   { default: 0.32, min: 0,   max: 1,   step: 0.01, label: 'human duck floor' },
+  // Hard floor on robot density while human plays. 0.18 keeps soft accents without stepping on the player.
+  humanDuckFloor:   { default: 0.18, min: 0,   max: 1,   step: 0.01, label: 'human duck floor' },
   // How long after a human note the robot is in "leading" mode. After this it transitions to "silent" → robot solos.
-  humanLeadingTime: { default: 0.55, min: 0.1, max: 3,   step: 0.05, label: 'lead window (s)' },
+  humanLeadingTime: { default: 0.85, min: 0.1, max: 3,   step: 0.05, label: 'lead window (s)' },
   // Robot density multiplier when player is silent for >= leadingTime. >1 amplifies idle activity.
-  silentBoost:      { default: 1.45, min: 1,   max: 3,   step: 0.05, label: 'silent boost' },
+  silentBoost:      { default: 1.18, min: 1,   max: 3,   step: 0.05, label: 'silent boost' },
 } as const;
 
 const ROBOT_MOTION_CONST = {
@@ -294,7 +294,7 @@ export class RobotMotionController {
       clamp(palmTarget.y - 0.17 - contactAmount * (isOrb ? 0.025 : 0.005), 0.02, 1.35),
       clamp(palmTarget.z + 0.055 + release * (isOrb ? 0.055 : 0.025), -0.42, 1.04),
     );
-    const amount = isOrb ? 0.86 : 0.78;
+    const amount = isOrb ? 0.64 : 0.74;
     wrist.x = lerp(wrist.x, wristTarget.x, amount);
     wrist.y = lerp(wrist.y, wristTarget.y, amount);
     wrist.z = lerp(wrist.z, wristTarget.z, amount);
@@ -343,7 +343,7 @@ export class RobotMotionController {
       : this.defaultPerformancePalm(handedness);
     const to = this.clampPerformanceTarget(targets[targetIndex]);
     const duration = instrument === 'orb'
-      ? lerp(0.58, 0.96, hash(seed + 1.1))
+      ? lerp(0.82, 1.34, hash(seed + 1.1))
       : lerp(0.92, 1.58, hash(seed + 1.1));
     const initialDelay = current ? 0 : (handedness === 'left' ? duration * 0.34 : 0);
     const gesture: RobotPerformanceGesture = {
