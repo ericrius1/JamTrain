@@ -71,11 +71,11 @@ export const SCULPTOR_DEFS = {
   particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
-  opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'opacity fade starts at life' },
+  opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'fade start' },
 
   fieldStrength:      { default: 0.8,   min: 0,     max: 2,    step: 0.05,  folder: 'Field Affinity', label: 'field strength' },
   fieldFalloffStart:  { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay start' },
-  fieldFalloffEnd:    { default: 0.7,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay end' },
+  fieldFalloffEnd:    { default: 0.5,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'decay end' },
   finalFieldEffect:   { default: 0.1,   min: 0,     max: 1,    step: 0.01,  folder: 'Field Affinity', label: 'final affinity' },
 
   fieldVolumeScale:   { default: 0.55,  min: 0.25,  max: 2.5,  step: 0.01,  folder: 'Field Bounds', label: 'volume scale' },
@@ -85,8 +85,8 @@ export const SCULPTOR_DEFS = {
   fieldRotationRate:  { default: 0.3,   min: 0,     max: 10,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
   fieldDebugDensity:  { default: 16,    min: 3,     max: 20,   step: 1,     folder: 'Field Shape', label: 'debug density' },
   attractorOverride:  { type: 'select' as const, default: 'cycle' as const, options: ATTRACTOR_OPTIONS, folder: 'Field Shape', label: 'attractor' },
-  attractorHoldSeconds:       { default: DEFAULT_ATTRACTOR_HOLD_SECONDS,       min: 1,   max: 120, step: 0.5, folder: 'Field Shape', label: 'cycle hold seconds' },
-  attractorTransitionSeconds: { default: DEFAULT_ATTRACTOR_TRANSITION_SECONDS, min: 0.1, max: 30,  step: 0.1, folder: 'Field Shape', label: 'cycle transition seconds' },
+  attractorHoldSeconds:       { default: DEFAULT_ATTRACTOR_HOLD_SECONDS,       min: 1,   max: 120, step: 0.5, folder: 'Field Shape', label: 'hold s' },
+  attractorTransitionSeconds: { default: DEFAULT_ATTRACTOR_TRANSITION_SECONDS, min: 0.1, max: 30,  step: 0.1, folder: 'Field Shape', label: 'xfade s' },
 
   speedGlow:          { default: 0.7,   min: 0,     max: 2,    step: 0.01,  folder: 'Appearance', label: 'speed glow' },
   stretchScale:       { default: 0.06,  min: 0,     max: 0.4,  step: 0.005, folder: 'Appearance', label: 'accel stretch' },

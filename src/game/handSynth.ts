@@ -37,6 +37,23 @@ const VOICE_RELEASE_MARGIN = 0.08;
 
 type PlayerKey = 'local' | 'remote';
 const PLAYER_KEYS: PlayerKey[] = ['local', 'remote'];
+const STARLACE_SAMPLE_BASE_URL = '/samples/spanish-classical-guitar/';
+const STARLACE_SAMPLE_URLS: Record<string, string> = {
+  C4: 'C4.flac',
+  D4: 'D4.flac',
+  E4: 'E4.flac',
+  F4: 'F4.flac',
+  G4: 'G4.flac',
+  A4: 'A4.flac',
+  B4: 'B4.flac',
+  C5: 'C5.flac',
+  D5: 'D5.flac',
+  E5: 'E5.flac',
+  F5: 'F5.flac',
+  G5: 'G5.flac',
+  A5: 'A5.flac',
+  B5: 'B5.flac',
+};
 
 type Coords = { xN: number; yN: number };
 type Input = {
@@ -131,11 +148,10 @@ type OrbVoice = {
 };
 
 type StarlaceVoice = {
-  plucks: any[];    // Tone.PluckSynth pool — nylon-string attacks
-  pluckCursor: number;
-  body: any;        // Tone.PolySynth(Tone.Synth) — warm guitar body resonance
+  sampler: any;     // Tone.Sampler — FreePats Spanish classical guitar notes
+  samplesReady: Promise<void>;
   glint: any;       // quiet nail/string edge on stronger gestures
-  auraSynth: any;   // sustained sympathetic body resonance
+  auraSynth: any;   // sustained sympathetic resonance behind the samples
   auraGain: any;
   filter: any;
   panner: any;
@@ -339,7 +355,10 @@ export class HandSynthEngine {
 
     this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).connect(this.audioGraph.getBus('instruments'));
 
-    for (const key of PLAYER_KEYS) this.ensureInstrumentVoice(key);
+    for (const key of PLAYER_KEYS) {
+      this.ensureInstrumentVoice(key);
+      this.ensureStarlaceVoice(key);
+    }
     this.createDuetResonator();
     // Apply initial instrument routing so a stored non-loom instrument starts
     // with only its selected chain audible.
@@ -353,6 +372,7 @@ export class HandSynthEngine {
         ...PLAYER_KEYS.map(key => this.voices[key]?.reverb?.ready),
         ...PLAYER_KEYS.map(key => this.orbVoices[key]?.reverb?.ready),
         ...PLAYER_KEYS.map(key => this.starlaceVoices[key]?.reverb?.ready),
+        ...PLAYER_KEYS.map(key => this.starlaceVoices[key]?.samplesReady),
       ]
         .filter(Boolean)
     );
@@ -595,7 +615,7 @@ export class HandSynthEngine {
   private releaseOldestStarlaceNote(player: PlayerKey, starlace: StarlaceVoice): boolean {
     const entry = this.starlaceTransientNotes[player].shift();
     if (!entry) return false;
-    try { starlace.body.triggerRelease(entry.note, this.tone?.now?.()); } catch { /* best-effort voice steal */ }
+    try { starlace.sampler.triggerRelease(entry.note, this.tone?.now?.()); } catch { /* best-effort voice steal */ }
     return true;
   }
 
@@ -1323,32 +1343,23 @@ export class HandSynthEngine {
     filter.connect(dryGain);
     filter.connect(wetSend);
 
-    const plucks = Array.from({ length: STARLACE_MAX_ACTIVE_VOICES }, () => {
-      const voice = new Tone.PluckSynth({
-        attackNoise: this.starlaceAttackNoise(),
-        dampening: this.starlaceDampening(),
-        resonance: this.starlaceResonance(),
-        release: this.starlacePluckRelease(),
-      }).connect(filter);
-      voice.volume.value = this.params.starlaceDb - 6;
-      return voice;
+    let resolveSamples!: () => void;
+    const samplesReady = new Promise<void>(resolve => {
+      resolveSamples = resolve;
     });
-
-    const body = new Tone.PolySynth({
-      maxPolyphony: STARLACE_MAX_ACTIVE_VOICES,
-      voice: Tone.Synth,
-      options: {
-        oscillator: { type: 'triangle4' } as any,
-        envelope: {
-          attack: Math.max(0.002, this.params.starlaceAttack),
-          decay: 0.12,
-          sustain: clamp(this.params.starlaceSustain, 0.02, 0.36),
-          release: Math.max(0.32, this.params.starlaceDecay * 0.34),
-        },
+    const sampler = new Tone.Sampler({
+      urls: STARLACE_SAMPLE_URLS,
+      baseUrl: STARLACE_SAMPLE_BASE_URL,
+      attack: Math.max(0.001, this.params.starlaceAttack * 0.35),
+      release: this.starlaceSampleRelease(),
+      curve: 'exponential',
+      onload: resolveSamples,
+      onerror: (err: unknown) => {
+        console.warn('[handSynth] starlace guitar samples failed to load', err);
+        resolveSamples();
       },
     } as any).connect(filter);
-    body.volume.value = this.params.starlaceDb - 13;
-    body.maxPolyphony = STARLACE_MAX_ACTIVE_VOICES;
+    sampler.volume.value = this.params.starlaceDb - 1;
 
     const glint = new Tone.PolySynth({
       maxPolyphony: STARLACE_GLINT_MAX_ACTIVE_VOICES,
@@ -1372,17 +1383,16 @@ export class HandSynthEngine {
       voice: Tone.Synth,
       options: {
         oscillator: { type: 'triangle2' } as any,
-        envelope: { attack: 0.44, decay: 0.48, sustain: 0.42, release: Math.max(1.8, this.params.starlaceDecay * 0.95) },
+        envelope: { attack: 0.44, decay: 0.48, sustain: 0.22, release: Math.max(1.5, this.params.starlaceDecay * 0.82) },
         portamento: 0.06,
       },
     } as any).connect(auraGain);
-    auraSynth.volume.value = this.params.starlaceDb - 21;
+    auraSynth.volume.value = this.params.starlaceDb - 27;
     auraSynth.maxPolyphony = 12;
 
     return {
-      plucks,
-      pluckCursor: 0,
-      body,
+      sampler,
+      samplesReady,
       glint,
       auraSynth,
       auraGain,
@@ -1461,6 +1471,8 @@ export class HandSynthEngine {
     starlace.filter.frequency.rampTo(clamp(filterHz, 850, 6400), PARAM_RAMP);
     starlace.filter.Q.rampTo(0.76 + starlace.tension * 1.15, PARAM_RAMP);
     starlace.panner.pan.rampTo(clamp((player === 'local' ? -0.18 : 0.18) + (starlace.expression - 0.5) * 0.32, -0.85, 0.85), PARAM_RAMP);
+    starlace.sampler.volume.rampTo?.(this.params.starlaceDb - 1, PARAM_RAMP);
+    starlace.sampler.release = this.starlaceSampleRelease();
     starlace.auraGain.gain.rampTo(clamp(starlace.energy * (0.08 + glow * 0.14), 0, 0.24), PARAM_RAMP * 2);
     starlace.wetSend.gain.rampTo(clamp(0.15 + starlace.energy * 0.34 + glow * 0.10, 0, 0.76) * this.params.reverbWetMax * space, PARAM_RAMP * 2);
     starlace.echo.feedback.rampTo?.(clamp(0.16 + starlace.energy * 0.16 + space * 0.07, 0.12, 0.38), PARAM_RAMP * 2);
@@ -1475,10 +1487,7 @@ export class HandSynthEngine {
     const starlace = this.starlaceVoices[player];
     if (!starlace) return;
     this.releaseStarlaceAura(starlace, true);
-    for (const pluck of starlace.plucks) {
-      try { pluck.triggerRelease?.(this.tone?.now?.()); } catch { /* noop */ }
-    }
-    try { starlace.body.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    try { starlace.sampler.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     try { starlace.glint.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     this.starlaceTransientNotes[player].length = 0;
     this.starlaceGlintNotes[player].length = 0;
@@ -1507,13 +1516,9 @@ export class HandSynthEngine {
 
   private disposeStarlaceVoice(starlace: StarlaceVoice): void {
     this.releaseStarlaceAura(starlace, true);
-    for (const pluck of starlace.plucks) {
-      try { pluck.triggerRelease?.(this.tone?.now?.()); } catch { /* noop */ }
-    }
-    try { starlace.body?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
+    try { starlace.sampler?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
     try { starlace.glint?.releaseAll?.(this.tone?.now?.()); } catch { /* noop */ }
-    for (const pluck of starlace.plucks) pluck?.dispose?.();
-    starlace.body?.dispose?.();
+    starlace.sampler?.dispose?.();
     starlace.glint?.dispose?.();
     starlace.auraSynth?.dispose?.();
     starlace.auraGain?.dispose?.();
@@ -1530,26 +1535,16 @@ export class HandSynthEngine {
     const synthVel = 0.32 + velocity * 0.68;
     const glintNote = this.starlaceGlintNote(chord);
     const glint = clamp(this.params.starlaceGlint, 0, 1);
+    if (!starlace.sampler.loaded) return;
     const now = this.tone?.now?.() ?? undefined;
     const orderedChord = starlace.lastHitCount % 4 === 2 ? [...chord].reverse() : [...chord];
     const strumGap = orderedChord.length > 1 ? 0.009 + velocity * 0.010 : 0;
-    const hold = Math.max(0.12, this.params.starlaceHold);
-    const bodyHold = Math.max(0.16, hold * 0.72);
+    const hold = this.starlaceSampleHold(velocity);
     try {
       for (let i = 0; i < orderedChord.length; i += 1) {
         const note = orderedChord[i];
         const at = now === undefined ? undefined : now + i * strumGap;
-        const pluck = this.nextStarlacePluck(starlace);
-        if (pluck) {
-          pluck.attackNoise = this.starlaceAttackNoise();
-          pluck.dampening = this.starlaceDampening();
-          pluck.resonance = this.starlaceResonance();
-          pluck.release = this.starlacePluckRelease();
-          this.setParamNow(pluck.volume, this.starlacePluckDb(velocity, i));
-          pluck.triggerAttack(note, at);
-          pluck.triggerRelease(at === undefined ? undefined : at + hold);
-        }
-        starlace.body.triggerAttackRelease(note, bodyHold, at === undefined ? undefined : at + 0.004, synthVel * (0.18 + velocity * 0.20));
+        starlace.sampler.triggerAttackRelease(note, hold, at, synthVel * this.starlaceSampleVelocityScale(i));
       }
       if (orderedChord.length > 1 && glint > 0.01) {
         starlace.glint.triggerAttackRelease(
@@ -1579,38 +1574,16 @@ export class HandSynthEngine {
     return Math.floor(clamp(this.params.starlaceVoiceCap, 10, STARLACE_MAX_ACTIVE_VOICES));
   }
 
-  private nextStarlacePluck(starlace: StarlaceVoice): any | null {
-    const cap = Math.min(this.starlaceVoiceCap(), starlace.plucks.length);
-    if (cap <= 0) return null;
-    const pluck = starlace.plucks[starlace.pluckCursor % cap];
-    starlace.pluckCursor = (starlace.pluckCursor + 1) % cap;
-    return pluck;
+  private starlaceSampleHold(velocity: number): number {
+    return Math.max(0.65, this.params.starlaceHold * (1.05 + clamp(velocity, 0, 1) * 0.35));
   }
 
-  private starlaceDampening(): number {
-    const brightness = clamp(this.params.starlaceBrightness, 0, 1);
-    const overtones = clamp(this.params.starlaceOvertones, 0, 1);
-    return 2400 + brightness * 1250 + overtones * 1900;
+  private starlaceSampleRelease(): number {
+    return Math.max(0.42, this.params.starlaceDecay * 0.58);
   }
 
-  private starlaceResonance(): number {
-    const sustain = clamp(this.params.starlaceSustain, 0.02, 0.82);
-    const glow = clamp(this.params.starlaceGlow, 0, 1);
-    return clamp(0.56 + sustain * 0.22 + glow * 0.10, 0.52, 0.86);
-  }
-
-  private starlaceAttackNoise(): number {
-    return 0.58 + clamp(this.params.starlaceOvertones, 0, 1) * 0.56;
-  }
-
-  private starlacePluckRelease(): number {
-    return Math.max(0.26, this.params.starlaceDecay * 0.42);
-  }
-
-  private starlacePluckDb(velocity: number, order: number): number {
-    const dynamicDip = (1 - clamp(velocity, 0, 1)) * 9.5;
-    const rolledChordDip = Math.min(order, 3) * 1.3;
-    return this.params.starlaceDb - 2.5 - dynamicDip - rolledChordDip;
+  private starlaceSampleVelocityScale(order: number): number {
+    return clamp(1 - Math.min(order, 3) * 0.13, 0.58, 1);
   }
 
   private starlaceGlintDbOffset(): number {
@@ -1872,18 +1845,6 @@ export class HandSynthEngine {
       else gain.value = value;
     } catch {
       try { gain.value = value; } catch { /* noop */ }
-    }
-  }
-
-  private setParamNow(param: any, value: number): void {
-    if (!param) return;
-    try {
-      const now = this.tone?.now?.() ?? 0;
-      param.cancelScheduledValues?.(now);
-      if (typeof param.setValueAtTime === 'function') param.setValueAtTime(value, now);
-      else param.value = value;
-    } catch {
-      try { param.value = value; } catch { /* noop */ }
     }
   }
 

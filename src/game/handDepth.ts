@@ -7,7 +7,7 @@ export const HAND_DEPTH_DEFS = {
   worldDepthScale:   { default: 0.55, min: 0,    max: 1.5,  step: 0.01,  label: 'world scale' },
   worldDepthOffset:  { default: -0.1, min: -0.6, max: 0.6,  step: 0.01,  label: 'world offset' },
   depthGain:         { default: 0.1,  min: 0.1,  max: 2,    step: 0.05,  label: 'size→depth gain' },
-  referencePalmSize: { default: 0.09, min: 0.04, max: 0.18, step: 0.005, label: 'neutral palm size' },
+  referencePalmSize: { default: 0.09, min: 0.04, max: 0.18, step: 0.005, label: 'palm size' },
 } as const;
 
 export type HandDepthParams = ParamsOf<typeof HAND_DEPTH_DEFS>;

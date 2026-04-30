@@ -41,7 +41,7 @@ type DrumPalette = 'local' | 'remote';
 export const DRUM_DEFS = {
   // pyramidBaseRow must come first so registerTweaks' initial onChange fires it
   // before the layout callbacks iterate the orb list populated by rebuildOrbs().
-  pyramidBaseRow:    { default: DRUM_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'pyramid base row' },
+  pyramidBaseRow:    { default: DRUM_DEFAULT_BASE_ROW, min: 1, max: 8, step: 1, label: 'base row' },
   pyramidStartHeight: { default: 0.0, min: -0.5, max: 0.5, step: 0.005, label: 'starting height' },
   orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
