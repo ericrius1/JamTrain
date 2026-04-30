@@ -813,21 +813,24 @@ export class EnergySculptor implements EnergySink {
         const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
         const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
 
-        // Bass ripple: a thin outward-traveling gaussian shell from the field
-        // center. Independent of fieldEffect so even fully-settled particles
-        // get a small kick as the wavefront passes through, then drag pulls
-        // them back to rest while higher-affinity particles re-engage the field.
+        // Bass ripple: outward-traveling wavelet from the field center. Uses
+        // a gaussian-doublet waveform shellT*exp(-shellT^2) so the leading
+        // edge pushes outward and the trailing edge pulls back — integrated
+        // impulse over a full shell crossing is zero, so particles get
+        // displaced briefly but return rather than drifting outward over
+        // many beats. Independent of fieldEffect so settled particles feel it.
         const rOffset = pos.sub(this.rippleCenterUniform);
         const rDist = rOffset.length();
         const rRadius = this.rippleAgeUniform.mul(this.rippleSpeedUniform);
         const rShellT = rDist.sub(rRadius).div(this.rippleWidthUniform.max(0.001));
-        const rDecay = float(0).sub(rShellT.mul(rShellT)).exp();
+        const rGauss = float(0).sub(rShellT.mul(rShellT)).exp();
+        const rWaveform = rShellT.mul(rGauss);
         const rLifeFade = float(1).sub(this.rippleAgeUniform.div(this.rippleLifetimeUniform.max(0.001))).clamp(0, 1);
         const rOutDir = rOffset.div(rDist.max(0.0001));
         const rImpulse = rOutDir
           .mul(this.rippleAmpUniform)
           .mul(this.rippleIntensityUniform)
-          .mul(rDecay)
+          .mul(rWaveform)
           .mul(rLifeFade)
           .mul(this.dtUniform);
 
@@ -839,8 +842,20 @@ export class EnergySculptor implements EnergySink {
             .mul(4.0)
             .mul(float(1).sub(fieldEffect))
             .clamp(0, 1);
-          const settledVel = mix(vel, vec3(0), settleDrag).add(rImpulse);
-          const settledPos = pos.add(settledVel.mul(this.dtUniform));
+          const settledVel = mix(vel, vec3(0), settleDrag).add(rImpulse).toVar();
+          const settledPos = pos.add(settledVel.mul(this.dtUniform)).toVar();
+          // Cheap sphere clamp so chained ripples can't slowly pump particles
+          // past the field volume on the low-affinity fast path.
+          const sCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
+          const sFromCenter = settledPos.sub(sCenter);
+          const sDist = sFromCenter.length();
+          const sRadius = this.fieldSphereRadiusUniform.max(0.01).mul(1.18);
+          const sNormal = sFromCenter.div(sDist.max(0.0001));
+          If(sDist.greaterThan(sRadius), () => {
+            const outwardSpeed = settledVel.dot(sNormal).max(0);
+            settledPos.assign(sCenter.add(sNormal.mul(sRadius)));
+            settledVel.assign(settledVel.sub(sNormal.mul(outwardSpeed)));
+          });
           positionAge.element(i).assign(vec4(settledPos.x, settledPos.y, settledPos.z, newAge));
           velocities.element(i).assign(settledVel);
           Return();

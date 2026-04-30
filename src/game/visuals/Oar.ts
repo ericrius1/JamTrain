@@ -18,8 +18,6 @@ import {
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import {
-  OAR_KEY_ROW_HOME,
-  OAR_KEY_ROW_TOP,
   OAR_PAD_COUNT,
   oarKeyboardIndexForKey,
 } from '../oarControls';

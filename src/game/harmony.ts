@@ -20,7 +20,15 @@ const PLAYABLE_LOCAL_STEPS  = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 const PLAYABLE_REMOTE_STEPS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 const DUET_STEPS            = [0, 3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15];
 const ORB_GESTURE_STEPS     = [0, 3, 5, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
-const STARLACE_STEPS        = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+// 26 unique diatonic scale steps so every key (z/x/c/v/b/n/m + a-l + q-p)
+// gets its own distinct note in the active key. With REF_OCT_VOICES=3 and
+// the C-major lock this spans C3 up to G6 (4 octaves, 26 naturals).
+const STARLACE_STEPS        = [
+  0, 1, 2, 3, 4, 5, 6,
+  7, 8, 9, 10, 11, 12, 13,
+  14, 15, 16, 17, 18, 19, 20,
+  21, 22, 23, 24, 25,
+];
 const OAR_STEPS             = [0, 1, 2, 3, 4, 5, 6];
 
 const STARLACE_CHORD_STEPS: readonly (readonly number[])[] = [
