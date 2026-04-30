@@ -111,6 +111,13 @@ export const SCULPTOR_DEFS = {
   attractorHoldSeconds:       { default: DEFAULT_ATTRACTOR_HOLD_SECONDS,       min: 1,   max: 120, step: 0.5, folder: 'Field Shape', label: 'hold s' },
   attractorTransitionSeconds: { default: DEFAULT_ATTRACTOR_TRANSITION_SECONDS, min: 0.1, max: 30,  step: 0.1, folder: 'Field Shape', label: 'xfade s' },
 
+  rippleEnabled:        { type: 'boolean' as const, default: true,           folder: 'Bass Ripple', label: 'enabled' },
+  rippleSpeed:          { default: 0.55,  min: 0.05, max: 3,    step: 0.01,  folder: 'Bass Ripple', label: 'speed m/s' },
+  rippleWidth:          { default: 0.13,  min: 0.02, max: 0.6,  step: 0.005, folder: 'Bass Ripple', label: 'shell width' },
+  rippleAmplitude:      { default: 0.55,  min: 0,    max: 4,    step: 0.01,  folder: 'Bass Ripple', label: 'impulse amp' },
+  rippleLifetime:       { default: 3.0,   min: 0.3,  max: 8,    step: 0.05,  folder: 'Bass Ripple', label: 'lifetime s' },
+  rippleSensitivity:    { default: 1.0,   min: 0.1,  max: 3,    step: 0.05,  folder: 'Bass Ripple', label: 'sensitivity' },
+
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
   projectorRingCount:   { default: 5,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
   projectorRingSpacing: { default: 0.020, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
@@ -239,6 +246,19 @@ export class EnergySculptor implements EnergySink {
   private fieldSphereRadiusUniform = uniform(0.55);
   private fieldSphereCenterYUniform = uniform(0.12);
 
+  // Bass-driven ripple — radiates a thin gaussian shell outward from the field
+  // center. Particle positions are stored as world-relative offsets, so the
+  // center vector here is in particle space. Age ticks up each frame; when it
+  // exceeds rippleLifetime the lifeFade clamps to zero and the impulse is
+  // inert until the next beat resets it.
+  private rippleCenterUniform = uniform(new THREE.Vector3());
+  private rippleAgeUniform = uniform(1e6);
+  private rippleSpeedUniform = uniform(0.55);
+  private rippleWidthUniform = uniform(0.13);
+  private rippleAmpUniform = uniform(0.55);
+  private rippleLifetimeUniform = uniform(3.0);
+  private rippleIntensityUniform = uniform(0);
+
   // Sample-space rotation — slowly tumbles the attractor through world space
   // so the orbit isn't static. Shader does R^-1 * p before sampling, R * flow
   // afterwards, so particle motion follows the rotated frame consistently.
@@ -332,6 +352,10 @@ export class EnergySculptor implements EnergySink {
     this.fieldStrengthUniform.value = this.params.fieldStrength;
     this.applyFieldVolumeParams();
     this.fieldRotationRate = this.params.fieldRotationRate;
+    this.rippleSpeedUniform.value = this.params.rippleSpeed;
+    this.rippleWidthUniform.value = this.params.rippleWidth;
+    this.rippleAmpUniform.value = this.params.rippleAmplitude;
+    this.rippleLifetimeUniform.value = this.params.rippleLifetime;
 
     this.registered = registerTweaks(paneDock, 'energySculptorThomasFlowV1', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
@@ -365,6 +389,10 @@ export class EnergySculptor implements EnergySink {
           this.fieldDebugGrid = next;
           this.rebuildFieldDebugLines();
         },
+        rippleSpeed: v => { this.rippleSpeedUniform.value = v; },
+        rippleWidth: v => { this.rippleWidthUniform.value = v; },
+        rippleAmplitude: v => { this.rippleAmpUniform.value = v; },
+        rippleLifetime: v => { this.rippleLifetimeUniform.value = v; },
         attractorOverride: v => { this.setAttractorOverride(v as AttractorMode); },
         attractorHoldSeconds: v => { this.applyAttractorHoldSeconds(v); },
         attractorTransitionSeconds: v => { this.applyAttractorTransitionSeconds(v); },
@@ -423,6 +451,15 @@ export class EnergySculptor implements EnergySink {
     this.synchronyBoost = 1;
   }
 
+  // Bass beat from the backing track — restarts the outward ripple shell at
+  // the field center. Intensity scales the impulse for that single shell.
+  triggerRipple(intensity = 1): void {
+    if (!this.params.rippleEnabled) return;
+    const sens = Math.max(0.05, this.params.rippleSensitivity);
+    this.rippleAgeUniform.value = 0;
+    this.rippleIntensityUniform.value = clamp01(intensity * sens);
+  }
+
   getSynchronyBoost(): number {
     return this.synchronyBoost;
   }
@@ -465,6 +502,7 @@ export class EnergySculptor implements EnergySink {
     // by the field plus the lifetime-based settling controls.
     this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
     this.tickVolumeAuto(delta);
+    this.tickRipple(delta);
     this.updateProjectorRing();
     this.tickSampleRotation();
     this.tickAttractorCrossfade(delta);
@@ -806,6 +844,24 @@ export class EnergySculptor implements EnergySink {
         const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
         const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
 
+        // Bass ripple: a thin outward-traveling gaussian shell from the field
+        // center. Independent of fieldEffect so even fully-settled particles
+        // get a small kick as the wavefront passes through, then drag pulls
+        // them back to rest while higher-affinity particles re-engage the field.
+        const rOffset = pos.sub(this.rippleCenterUniform);
+        const rDist = rOffset.length();
+        const rRadius = this.rippleAgeUniform.mul(this.rippleSpeedUniform);
+        const rShellT = rDist.sub(rRadius).div(this.rippleWidthUniform.max(0.001));
+        const rDecay = float(0).sub(rShellT.mul(rShellT)).exp();
+        const rLifeFade = float(1).sub(this.rippleAgeUniform.div(this.rippleLifetimeUniform.max(0.001))).clamp(0, 1);
+        const rOutDir = rOffset.div(rDist.max(0.0001));
+        const rImpulse = rOutDir
+          .mul(this.rippleAmpUniform)
+          .mul(this.rippleIntensityUniform)
+          .mul(rDecay)
+          .mul(rLifeFade)
+          .mul(this.dtUniform);
+
         // Once affinity is low, stop paying for attractor sampling and boundary
         // work. The particle simply coasts while drag bleeds out remaining
         // velocity, preserving the settled sculpture at much lower ALU cost.
@@ -814,7 +870,7 @@ export class EnergySculptor implements EnergySink {
             .mul(4.0)
             .mul(float(1).sub(fieldEffect))
             .clamp(0, 1);
-          const settledVel = mix(vel, vec3(0), settleDrag);
+          const settledVel = mix(vel, vec3(0), settleDrag).add(rImpulse);
           const settledPos = pos.add(settledVel.mul(this.dtUniform));
           positionAge.element(i).assign(vec4(settledPos.x, settledPos.y, settledPos.z, newAge));
           velocities.element(i).assign(settledVel);
@@ -852,6 +908,7 @@ export class EnergySculptor implements EnergySink {
           .mul(float(1).sub(fieldEffect))
           .clamp(0, 1);
         newVel.assign(mix(newVel, vec3(0), settleDrag));
+        newVel.assign(newVel.add(rImpulse));
 
         const containedPos = pos.add(newVel.mul(this.dtUniform)).toVar();
         const sphereCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
@@ -1274,6 +1331,17 @@ export class EnergySculptor implements EnergySink {
     if (next !== this.volumeAutoOverride) {
       this.volumeAutoOverride = next;
       this.applyFieldVolumeParams();
+    }
+  }
+
+  private tickRipple(delta: number): void {
+    // Center stays at the bounding-sphere center expressed in particle space
+    // (positions are stored as world-relative offsets from this.center).
+    this.rippleCenterUniform.value.set(0, this.fieldSphereCenterYUniform.value, 0);
+    const lifetime = Math.max(0.05, this.params.rippleLifetime);
+    const cap = lifetime + 0.5;
+    if (this.rippleAgeUniform.value < cap) {
+      this.rippleAgeUniform.value = Math.min(cap, this.rippleAgeUniform.value + delta);
     }
   }
 

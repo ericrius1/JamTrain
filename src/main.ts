@@ -532,6 +532,8 @@ async function createRuntime(): Promise<RuntimeApi> {
     });
 
     await game.startAudio();
+    const backingAudio = midnightTrain.getAudioElement();
+    if (backingAudio) game.attachBackingTrack(backingAudio);
 
     hud.setCameraEnabled(false);
     hud.setMicEnabled(false);

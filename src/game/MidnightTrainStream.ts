@@ -13,6 +13,10 @@ export class MidnightTrainStream {
 
   constructor(private readonly src: string) {}
 
+  getAudioElement(): HTMLAudioElement | undefined {
+    return this.audio;
+  }
+
   setVolume(value: number): void {
     this.volume = toMediaVolume(value);
     if (this.audio && !this.fading && !this.audio.paused) {

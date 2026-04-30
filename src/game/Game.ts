@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { JamAudioGraph } from './audioGraph';
+import { BackingTrackAnalyzer } from './BackingTrackAnalyzer';
 import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
@@ -182,6 +183,7 @@ export class Game {
   private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'oar', remote: 'starlace' };
   private playerCreatures: Record<PlayerSlot, CreatureId> = { local: 'lion', remote: 'robot' };
   private sculptor!: EnergySculptor;
+  private backingTrackAnalyzer = new BackingTrackAnalyzer();
   private lastOarHitAt = -10;
   private lastStarlacePluckAt = -10;
   private lastSynchronyAt = -10;
@@ -384,6 +386,10 @@ export class Game {
     await this.handSynth.start();
   }
 
+  attachBackingTrack(audio: HTMLAudioElement): void {
+    this.backingTrackAnalyzer.attach(audio);
+  }
+
   async enableMidi(): Promise<void> {
     await this.midiInput.enable();
   }
@@ -561,6 +567,7 @@ export class Game {
     this.robotMotion.dispose();
     this.scenery.dispose();
     this.sculptor?.dispose();
+    this.backingTrackAnalyzer.dispose();
     this.disposePlayerVisuals();
     this.midiInput.dispose();
     this.handSynth.dispose();
@@ -1241,6 +1248,8 @@ export class Game {
     this.remoteRig.update(remotePose, delta, robotTarget);
 
     this.updatePlayerVisuals(motionDelta, elapsed);
+    const beat = this.backingTrackAnalyzer.tick(performance.now());
+    if (beat) this.sculptor.triggerRipple(beat.intensity);
     this.sculptor.update(delta);
     const atmosphere = this.scenery.update(delta, elapsed);
     this.updateAtmosphere(atmosphere);
