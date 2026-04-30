@@ -121,8 +121,8 @@ const DEFAULT_CREATURE = 'lion';
 // 'orb' before persisting so all readers see the new id.
 const ALLOWED_INSTRUMENTS = new Set(['orb', 'starlace', 'oar', 'drum']);
 const INSTRUMENT_ALIASES: Record<string, string> = { oar: 'orb', drum: 'orb' };
-const ALLOWED_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit', 'robot']);
-const SEAT_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit']);
+const ALLOWED_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit', 'giraffe', 'robot']);
+const SEAT_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit', 'giraffe']);
 
 function cleanSeatInstrument(instrument: string): string | null {
   const clean = instrument.trim().toLowerCase();
