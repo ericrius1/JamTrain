@@ -6,13 +6,16 @@
 
 import { isDebugVisible } from '../hud/debugMode';
 import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
-import type { EnergySculptor } from './EnergySculptor';
+import { POLAR_FFT_BIN_COUNT, type EnergySculptor } from './EnergySculptor';
 
 const FFT_SIZE = 2048;
 const DEBUG_BAR_COUNT = 12;
 const BEAT_FLASH_MS = 220;
 const BLINK_HOLD_MS = 110;
 const BLINK_FADE_MS = 280;
+const POLAR_FFT_HZ_MIN = 30;
+const POLAR_FFT_HZ_MAX = 5200;
+const POLAR_FFT_GAIN = 1.35;
 
 export const FFT_PULSE_DEFS = {
   enabled:        { type: 'boolean' as const, default: true,                       folder: 'Detection', label: 'enabled' },
@@ -57,6 +60,7 @@ export class BackingTrackAnalyzer {
   ) as FftPulseParams;
   private registered?: ReturnType<typeof registerTweaks<typeof FFT_PULSE_DEFS>>;
   private sculptor?: EnergySculptor;
+  private polarBins = new Float32Array(POLAR_FFT_BIN_COUNT);
 
   private debugRoot?: HTMLDivElement;
   private debugStatusEl?: HTMLDivElement;
@@ -131,6 +135,7 @@ export class BackingTrackAnalyzer {
       return null;
     }
     analyser.getByteFrequencyData(bins);
+    this.updatePolarFftBins();
     let sum = 0;
     let count = 0;
     for (let i = this.lowBinStart; i <= this.lowBinEnd; i += 1) {
@@ -179,6 +184,38 @@ export class BackingTrackAnalyzer {
     this.envShort = 0;
     this.envLong = 0;
     this.lastBeatAt = -Infinity;
+  }
+
+  private updatePolarFftBins(): void {
+    const sculptor = this.sculptor;
+    const ctx = this.ctx;
+    const bins = this.bins;
+    if (!sculptor || !ctx || !bins) return;
+
+    const binHz = ctx.sampleRate / FFT_SIZE;
+    const minHz = Math.max(1, POLAR_FFT_HZ_MIN);
+    const maxHz = Math.max(minHz * 1.05, Math.min(POLAR_FFT_HZ_MAX, ctx.sampleRate * 0.48));
+    const logMin = Math.log(minHz);
+    const logSpan = Math.log(maxHz) - logMin;
+
+    for (let i = 0; i < POLAR_FFT_BIN_COUNT; i += 1) {
+      const startHz = Math.exp(logMin + logSpan * (i / POLAR_FFT_BIN_COUNT));
+      const endHz = Math.exp(logMin + logSpan * ((i + 1) / POLAR_FFT_BIN_COUNT));
+      const start = Math.max(1, Math.min(bins.length - 1, Math.floor(startHz / binHz)));
+      const end = Math.max(start, Math.min(bins.length - 1, Math.ceil(endHz / binHz)));
+      let sum = 0;
+      let peak = 0;
+      let count = 0;
+      for (let j = start; j <= end; j += 1) {
+        const v = bins[j];
+        sum += v;
+        peak = Math.max(peak, v);
+        count += 1;
+      }
+      const raw = count > 0 ? ((sum / count) * 0.72 + peak * 0.28) / 255 : 0;
+      this.polarBins[i] = Math.pow(clamp01(raw * POLAR_FFT_GAIN), 0.74);
+    }
+    sculptor.setPolarFftBins(this.polarBins);
   }
 
   setSculptor(sculptor?: EnergySculptor): void {

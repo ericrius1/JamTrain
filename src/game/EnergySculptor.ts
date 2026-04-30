@@ -72,6 +72,7 @@ const PARTICLE_COUNT = 131072;
 // large enough that no realistic per-frame burst hits it. The only
 // user-visible cap on particles is the total pool size.
 const SPAWN_QUEUE_CAPACITY = 2048;
+export const POLAR_FFT_BIN_COUNT = 96;
 const DEFAULT_ATTRACTOR_HOLD_SECONDS = 20;
 const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 
@@ -298,6 +299,14 @@ export class EnergySculptor implements EnergySink {
   private projectorRings: THREE.Line[] = [];
   private projectorRingMaterial?: THREE.LineBasicMaterial;
   private projectorRingGeom?: THREE.BufferGeometry;
+  private polarFftLines?: THREE.LineSegments;
+  private polarFftGeom?: THREE.BufferGeometry;
+  private polarFftMaterial?: THREE.LineBasicMaterial;
+  private polarFftPositions?: Float32Array;
+  private polarFftColors?: Float32Array;
+  private polarFftTargets = new Float32Array(POLAR_FFT_BIN_COUNT);
+  private polarFftLevels = new Float32Array(POLAR_FFT_BIN_COUNT);
+  private polarFftEnergy = 0;
 
   // Field debug visualization (toggled with the dev overlay). A 3D grid of
   // line segments sampling the active attractor's flow, transformed by the
@@ -332,6 +341,7 @@ export class EnergySculptor implements EnergySink {
     this.buildComputePipelines();
     this.buildRenderMesh();
     this.buildProjectorRings();
+    this.buildPolarFftRing();
     this.buildFieldDebugLines();
     this.applyAttractorPreset(this.currentAttractor);
     this.buildAttractorDebugMessage(paneDock);
@@ -490,6 +500,16 @@ export class EnergySculptor implements EnergySink {
     if (shape.lifetime !== undefined) this.rippleLifetimeUniform.value = Math.max(0.05, shape.lifetime);
   }
 
+  setPolarFftBins(values: ArrayLike<number>): void {
+    const n = Math.min(POLAR_FFT_BIN_COUNT, values.length);
+    for (let i = 0; i < n; i += 1) {
+      this.polarFftTargets[i] = clamp01(values[i]);
+    }
+    for (let i = n; i < POLAR_FFT_BIN_COUNT; i += 1) {
+      this.polarFftTargets[i] = 0;
+    }
+  }
+
   getSynchronyBoost(): number {
     return this.synchronyBoost;
   }
@@ -535,6 +555,7 @@ export class EnergySculptor implements EnergySink {
     this.tickCenterYAuto(delta);
     this.tickRipple(delta);
     this.updateProjectorRing();
+    this.updatePolarFftRing(delta);
     this.tickSampleRotation();
     this.tickAttractorCrossfade(delta);
     this.tickAttractorCycle(delta);
@@ -583,6 +604,9 @@ export class EnergySculptor implements EnergySink {
     this.projectorRings.length = 0;
     this.projectorRingGeom?.dispose();
     this.projectorRingMaterial?.dispose();
+    this.polarFftLines?.removeFromParent();
+    this.polarFftGeom?.dispose();
+    this.polarFftMaterial?.dispose();
     this.fieldDebugLines?.removeFromParent();
     this.fieldDebugGeom?.dispose();
     this.fieldDebugMaterial?.dispose();
@@ -1089,6 +1113,112 @@ export class EnergySculptor implements EnergySink {
     if (!this.projectorRingMaterial) return;
     this.projectorRingMaterial.opacity = 0.18;
     this.positionProjectorRings(this.elapsed);
+  }
+
+  private buildPolarFftRing(): void {
+    const segmentCount = POLAR_FFT_BIN_COUNT * 2;
+    const vertexCount = segmentCount * 2;
+    this.polarFftPositions = new Float32Array(vertexCount * 3);
+    this.polarFftColors = new Float32Array(vertexCount * 3);
+    this.polarFftGeom = new THREE.BufferGeometry();
+    this.polarFftGeom.setAttribute('position', new THREE.BufferAttribute(this.polarFftPositions, 3));
+    this.polarFftGeom.setAttribute('color', new THREE.BufferAttribute(this.polarFftColors, 3));
+    this.polarFftMaterial = new THREE.LineBasicMaterial({
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.08,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    this.polarFftLines = new THREE.LineSegments(this.polarFftGeom, this.polarFftMaterial);
+    this.polarFftLines.frustumCulled = false;
+    this.polarFftLines.renderOrder = 35;
+    this.scene.add(this.polarFftLines);
+    this.updatePolarFftRing(1 / 60);
+  }
+
+  private updatePolarFftRing(delta: number): void {
+    const positions = this.polarFftPositions;
+    const colors = this.polarFftColors;
+    const geom = this.polarFftGeom;
+    const material = this.polarFftMaterial;
+    if (!positions || !colors || !geom || !material) return;
+
+    const dt = Math.min(Math.max(delta, 1 / 120), 1 / 20);
+    const baseRadius = this.params.timerRingRadius;
+    const ringCount = Math.max(1, Math.round(this.params.projectorRingCount));
+    const spacing = this.params.projectorRingSpacing;
+    const baseY = this.center.y + this.params.projectorBaseY + spacing * Math.max(0, ringCount - 1) * 0.55;
+    const ringRadius = baseRadius + Math.max(0.018, spacing * 1.4);
+    const t = this.elapsed;
+    const drift = Math.sin(t * 0.11) * 0.028 + Math.sin(t * 0.047 + 1.7) * 0.018;
+    const attack = 1 - Math.exp(-dt * 16);
+    const release = 1 - Math.exp(-dt * 3.2);
+    let cursor = 0;
+    let colorCursor = 0;
+    let energy = 0;
+
+    for (let i = 0; i < POLAR_FFT_BIN_COUNT; i += 1) {
+      const target = this.polarFftTargets[i];
+      const current = this.polarFftLevels[i];
+      const next = current + (target - current) * (target > current ? attack : release);
+      this.polarFftLevels[i] = next;
+      energy += next;
+
+      const prev = this.polarFftLevels[(i + POLAR_FFT_BIN_COUNT - 1) % POLAR_FFT_BIN_COUNT];
+      const after = this.polarFftLevels[(i + 1) % POLAR_FFT_BIN_COUNT];
+      const spectral = clamp01(next * 0.68 + prev * 0.16 + after * 0.16);
+      const seed = i * 12.9898;
+      const idle = 0.018
+        + (0.5 + Math.sin(t * (0.45 + (i % 7) * 0.035) + seed) * 0.5) * 0.020;
+      const presence = Math.max(idle, Math.pow(spectral, 0.72));
+      const theta = (i / POLAR_FFT_BIN_COUNT) * TAU - Math.PI / 2 + drift;
+      const c = Math.cos(theta);
+      const s = Math.sin(theta);
+      const tangentX = -s;
+      const tangentZ = c;
+      const radiusWobble = Math.sin(t * 0.31 + seed * 0.37) * 0.004;
+      const rootRadius = ringRadius + radiusWobble;
+      const radialReach = 0.012 + presence * 0.070;
+      const height = 0.012 + presence * 0.255;
+      const rootX = this.center.x + c * rootRadius;
+      const rootZ = this.center.z + s * rootRadius;
+      const tipX = this.center.x + c * (rootRadius + radialReach);
+      const tipY = baseY + height;
+      const tipZ = this.center.z + s * (rootRadius + radialReach);
+      const capHalf = 0.004 + presence * 0.020;
+
+      positions[cursor++] = rootX;
+      positions[cursor++] = baseY;
+      positions[cursor++] = rootZ;
+      positions[cursor++] = tipX;
+      positions[cursor++] = tipY;
+      positions[cursor++] = tipZ;
+
+      positions[cursor++] = tipX - tangentX * capHalf;
+      positions[cursor++] = tipY;
+      positions[cursor++] = tipZ - tangentZ * capHalf;
+      positions[cursor++] = tipX + tangentX * capHalf;
+      positions[cursor++] = tipY + presence * 0.010;
+      positions[cursor++] = tipZ + tangentZ * capHalf;
+
+      const hot = Math.pow(spectral, 1.25);
+      const glint = 0.5 + Math.sin(t * 1.7 + seed) * 0.5;
+      const r = 0.24 + hot * 0.60 + glint * idle * 0.30;
+      const g = 0.72 + hot * 0.16;
+      const b = 0.82 + hot * 0.16 + glint * idle * 0.24;
+      for (let v = 0; v < 4; v += 1) {
+        const rootFade = v === 0 ? 0.42 : 1;
+        colors[colorCursor++] = r * rootFade;
+        colors[colorCursor++] = g * rootFade;
+        colors[colorCursor++] = b * rootFade;
+      }
+    }
+
+    this.polarFftEnergy = energy / POLAR_FFT_BIN_COUNT;
+    material.opacity = clampRange(0.055 + this.polarFftEnergy * 0.55 + this.synchronyBoost * 0.07, 0.055, 0.48, 0.08);
+    (geom.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+    (geom.attributes.color as THREE.BufferAttribute).needsUpdate = true;
   }
 
   // Mutually irrational base periods (in seconds) for the three Euler axes.
