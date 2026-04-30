@@ -156,8 +156,8 @@ const ORB_BASE_RADIUS_SCALE = 3.2;       // multiplier on the `ringRadius` param
 const ORB_RADIUS_FALLOFF = 0.55;         // top layers tighten toward the apex
 const ORB_DEPTH_BOW = 0.45;              // z-curvature of each arc
 // Each layer pulled forward (toward camera) by this fraction of `planeSpacing`,
-// so upper layers cascade in front of lower ones instead of stacking directly
-// above and getting hidden behind them.
+// inverted so the bottom layer (lowest pitches, earliest keys like A/S/D)
+// sits closest to the camera and upper layers cascade away from the player.
 const ORB_LAYER_FORWARD_STEP = 0.55;
 // Alternate layers rotated by half an orb-step around the cluster axis, so
 // upper-layer orbs sit in the gaps between the layer below — every orb stays
@@ -173,7 +173,7 @@ function makeOrbOffsets(planeSpacing: number, layerSpacing: number, startHeight:
     const layerT = numLayers <= 1 ? 0 : layer / (numLayers - 1);
     const radius = baseRadius * (1 - layerT * ORB_RADIUS_FALLOFF);
     const y = startHeight + layer * layerSpacing;
-    const layerZBias = -layer * planeSpacing * ORB_LAYER_FORWARD_STEP;
+    const layerZBias = -(numLayers - 1 - layer) * planeSpacing * ORB_LAYER_FORWARD_STEP;
     const halfStep = count > 1 ? (ORB_ARC_SPAN / (count - 1)) * ORB_LAYER_ANGLE_STAGGER : 0;
     const angleOffset = layer % 2 === 1 ? halfStep : 0;
     for (let i = 0; i < count; i += 1) {

@@ -409,7 +409,7 @@ export class Game {
 
   attachBackingTrack(audio: HTMLAudioElement): void {
     this.backingTrackAnalyzer.attach(audio);
-    this.backingTrackAnalyzer.attachPane(this.paneDock);
+    this.backingTrackAnalyzer.attachPane(this.paneDock, this.sculptor);
   }
 
   async enableMidi(): Promise<void> {

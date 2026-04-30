@@ -1,22 +1,37 @@
 // FFT analyzer that taps the backing-track <audio> element through a
 // MediaElementAudioSource and detects sub-bass onsets. Each tick returns a
 // beat event when the low-band envelope spikes above the running mean — used
-// to fire ripples through the EnergySculptor field.
+// to fire ripples through the EnergySculptor field. All thresholds and the
+// downstream impulse shape are exposed in the FFT pulse tweakpane folder.
 
 import { isDebugVisible } from '../hud/debugMode';
+import { registerTweaks, type ParamsOf } from '../hud/tweakDefs';
+import type { EnergySculptor } from './EnergySculptor';
 
 const FFT_SIZE = 2048;
-const LOW_BAND_HZ_MIN = 30;
-const LOW_BAND_HZ_MAX = 180;
 const DEBUG_BAR_COUNT = 12;
 const BEAT_FLASH_MS = 220;
-// EMA coefficients: short envelope tracks the current bar; long envelope is
-// the slow baseline we compare against to find onsets.
-const ENV_ATTACK = 0.45;
-const ENV_DECAY = 0.04;
-const BEAT_RATIO = 1.40;
-const BEAT_FLOOR = 0.18;
-const MIN_BEAT_INTERVAL_MS = 220;
+const BLINK_HOLD_MS = 110;
+const BLINK_FADE_MS = 280;
+
+export const FFT_PULSE_DEFS = {
+  enabled:        { type: 'boolean' as const, default: true,                       folder: 'Detection', label: 'enabled' },
+  bandHzMin:      { default: 30,    min: 10,    max: 200,  step: 1,                folder: 'Detection', label: 'low Hz' },
+  bandHzMax:      { default: 180,   min: 40,    max: 600,  step: 1,                folder: 'Detection', label: 'high Hz' },
+  envAttack:      { default: 0.45,  min: 0.05,  max: 1,    step: 0.01,             folder: 'Detection', label: 'env attack' },
+  envDecay:       { default: 0.04,  min: 0.005, max: 0.5,  step: 0.005,            folder: 'Detection', label: 'env decay' },
+  beatRatio:      { default: 1.40,  min: 1.05,  max: 3,    step: 0.01,             folder: 'Detection', label: 'beat ratio' },
+  beatFloor:      { default: 0.18,  min: 0,     max: 1,    step: 0.01,             folder: 'Detection', label: 'beat floor' },
+  minIntervalMs:  { default: 220,   min: 60,    max: 1500, step: 10,               folder: 'Detection', label: 'min ms' },
+  sensitivity:    { default: 1.0,   min: 0.1,   max: 3,    step: 0.05,             folder: 'Detection', label: 'sensitivity' },
+
+  pulseSpeed:     { default: 0.55,  min: 0.05,  max: 3,    step: 0.01,             folder: 'Pulse', label: 'speed m/s' },
+  pulseWidth:     { default: 0.13,  min: 0.02,  max: 0.6,  step: 0.005,            folder: 'Pulse', label: 'shell width' },
+  pulseAmplitude: { default: 0.55,  min: 0,     max: 6,    step: 0.01,             folder: 'Pulse', label: 'strength' },
+  pulseLifetime:  { default: 3.0,   min: 0.3,   max: 8,    step: 0.05,             folder: 'Pulse', label: 'lifetime s' },
+} as const;
+
+export type FftPulseParams = ParamsOf<typeof FFT_PULSE_DEFS>;
 
 export type BackingTrackBeat = {
   intensity: number;
@@ -37,8 +52,15 @@ export class BackingTrackAnalyzer {
   private gestureResumeInstalled = false;
   private readonly handleGestureResume = (): void => this.tryResume();
 
+  private params: FftPulseParams = Object.fromEntries(
+    Object.entries(FFT_PULSE_DEFS).map(([k, d]) => [k, d.default]),
+  ) as FftPulseParams;
+  private registered?: ReturnType<typeof registerTweaks<typeof FFT_PULSE_DEFS>>;
+  private sculptor?: EnergySculptor;
+
   private debugRoot?: HTMLDivElement;
   private debugStatusEl?: HTMLDivElement;
+  private debugBlinkEl?: HTMLDivElement;
   private debugBarEls: HTMLDivElement[] = [];
   private debugLastBeatAt = -Infinity;
   private debugLastIntensity = 0;
@@ -83,12 +105,22 @@ export class BackingTrackAnalyzer {
     analyser.fftSize = FFT_SIZE;
     analyser.smoothingTimeConstant = 0.55;
     analyser.connect(ctx.destination);
-    const binSize = ctx.sampleRate / FFT_SIZE;
-    this.lowBinStart = Math.max(1, Math.floor(LOW_BAND_HZ_MIN / binSize));
-    this.lowBinEnd = Math.min(analyser.frequencyBinCount - 1, Math.ceil(LOW_BAND_HZ_MAX / binSize));
     this.bins = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount));
     this.ctx = ctx;
     this.analyser = analyser;
+    this.recomputeLowBand();
+  }
+
+  private recomputeLowBand(): void {
+    const ctx = this.ctx;
+    const analyser = this.analyser;
+    if (!ctx || !analyser) return;
+    const binSize = ctx.sampleRate / FFT_SIZE;
+    const min = Math.min(this.params.bandHzMin, this.params.bandHzMax);
+    const max = Math.max(this.params.bandHzMin, this.params.bandHzMax);
+    this.lowBinStart = Math.max(1, Math.floor(min / binSize));
+    this.lowBinEnd = Math.min(analyser.frequencyBinCount - 1, Math.ceil(max / binSize));
+    if (this.lowBinEnd < this.lowBinStart) this.lowBinEnd = this.lowBinStart;
   }
 
   tick(nowMs: number): BackingTrackBeat | null {
@@ -106,14 +138,22 @@ export class BackingTrackAnalyzer {
       count += 1;
     }
     const lowEnergy = count > 0 ? sum / count / 255 : 0;
-    this.envShort = this.envShort * (1 - ENV_ATTACK) + lowEnergy * ENV_ATTACK;
-    this.envLong = this.envLong * (1 - ENV_DECAY) + lowEnergy * ENV_DECAY;
+    const attack = clamp01(this.params.envAttack);
+    const decay = clamp01(this.params.envDecay);
+    this.envShort = this.envShort * (1 - attack) + lowEnergy * attack;
+    this.envLong = this.envLong * (1 - decay) + lowEnergy * decay;
     const ratio = this.envLong > 1e-4 ? this.envShort / this.envLong : 0;
     const sinceLast = nowMs - this.lastBeatAt;
     let beat: BackingTrackBeat | null = null;
-    if (sinceLast >= MIN_BEAT_INTERVAL_MS && this.envShort > BEAT_FLOOR && ratio > BEAT_RATIO) {
+    if (
+      this.params.enabled
+      && sinceLast >= this.params.minIntervalMs
+      && this.envShort > this.params.beatFloor
+      && ratio > this.params.beatRatio
+    ) {
       this.lastBeatAt = nowMs;
-      const intensity = clamp01((ratio - 1) * 0.7 + (this.envShort - BEAT_FLOOR));
+      const raw = (ratio - 1) * 0.7 + (this.envShort - this.params.beatFloor);
+      const intensity = clamp01(raw * Math.max(0.05, this.params.sensitivity));
       beat = { intensity, lowEnergy: this.envShort };
       this.debugLastBeatAt = nowMs;
       this.debugLastIntensity = intensity;
@@ -141,17 +181,50 @@ export class BackingTrackAnalyzer {
     this.lastBeatAt = -Infinity;
   }
 
-  attachPane(dock: HTMLElement): void {
-    if (this.debugRoot) return;
+  attachPane(dock: HTMLElement, sculptor: EnergySculptor): void {
+    this.sculptor = sculptor;
+    if (!this.debugRoot) this.buildDebugPanel(dock);
+    if (this.registered) return;
+    this.registered = registerTweaks(dock, 'fftPulseV1', FFT_PULSE_DEFS, {
+      title: 'FFT pulse',
+      params: this.params,
+      onChange: {
+        bandHzMin: () => this.recomputeLowBand(),
+        bandHzMax: () => this.recomputeLowBand(),
+        pulseSpeed: v => this.sculptor?.setRippleShape({ speed: v }),
+        pulseWidth: v => this.sculptor?.setRippleShape({ width: v }),
+        pulseAmplitude: v => this.sculptor?.setRippleShape({ amplitude: v }),
+        pulseLifetime: v => this.sculptor?.setRippleShape({ lifetime: v }),
+      },
+    });
+  }
+
+  private buildDebugPanel(dock: HTMLElement): void {
     const root = document.createElement('div');
     root.className = 'attractor-debug-message bass-fft-debug';
     root.style.display = 'none';
 
+    const header = document.createElement('div');
+    header.style.display = 'flex';
+    header.style.alignItems = 'center';
+    header.style.gap = '8px';
+    header.style.marginBottom = '4px';
+
+    const blink = document.createElement('div');
+    blink.style.width = '14px';
+    blink.style.height = '14px';
+    blink.style.borderRadius = '50%';
+    blink.style.background = 'rgba(40, 60, 50, 0.45)';
+    blink.style.border = '1px solid rgba(120, 200, 160, 0.55)';
+    blink.style.boxShadow = 'none';
+    blink.style.flex = '0 0 auto';
+    header.appendChild(blink);
+
     const title = document.createElement('div');
-    title.textContent = 'Bass FFT (sub ~30-180Hz)';
+    title.textContent = 'FFT pulse';
     title.style.fontWeight = '600';
-    title.style.marginBottom = '4px';
-    root.appendChild(title);
+    header.appendChild(title);
+    root.appendChild(header);
 
     const barsRow = document.createElement('div');
     barsRow.style.display = 'flex';
@@ -183,6 +256,7 @@ export class BackingTrackAnalyzer {
 
     this.debugRoot = root;
     this.debugStatusEl = status;
+    this.debugBlinkEl = blink;
   }
 
   private updateDebug(nowMs: number, sample: { lowEnergy: number; ratio: number } | null): void {
@@ -222,6 +296,28 @@ export class BackingTrackAnalyzer {
       ? `0 0 18px rgba(255, 200, 110, ${0.55 - sinceBeat / BEAT_FLASH_MS * 0.5})`
       : '';
 
+    // Big green blink: solid hot during BLINK_HOLD_MS, then linear fade to
+    // resting dim ring over BLINK_FADE_MS. Always visible (in debug mode), so
+    // the hit registers even when the user isn't looking at the bars.
+    const blink = this.debugBlinkEl;
+    if (blink) {
+      const dim = 'rgba(40, 60, 50, 0.45)';
+      const dimBorder = '1px solid rgba(120, 200, 160, 0.55)';
+      if (sinceBeat < BLINK_HOLD_MS + BLINK_FADE_MS) {
+        const fade = sinceBeat < BLINK_HOLD_MS
+          ? 1
+          : 1 - (sinceBeat - BLINK_HOLD_MS) / BLINK_FADE_MS;
+        const a = clamp01(fade);
+        blink.style.background = `rgba(70, 255, 140, ${0.35 + 0.55 * a})`;
+        blink.style.border = `1px solid rgba(140, 255, 170, ${0.5 + 0.5 * a})`;
+        blink.style.boxShadow = `0 0 ${Math.round(4 + 14 * a)}px rgba(80, 255, 150, ${0.35 + 0.55 * a})`;
+      } else {
+        blink.style.background = dim;
+        blink.style.border = dimBorder;
+        blink.style.boxShadow = 'none';
+      }
+    }
+
     const status = this.debugStatusEl;
     if (status) {
       const e = sample?.lowEnergy ?? 0;
@@ -229,9 +325,11 @@ export class BackingTrackAnalyzer {
       const lastBeatStr = Number.isFinite(this.debugLastBeatAt)
         ? `${(sinceBeat / 1000).toFixed(2)}s ago @ ${this.debugLastIntensity.toFixed(2)}`
         : 'none yet';
+      const enabledTag = this.params.enabled ? '' : ' [DISABLED]';
       status.textContent =
         `now ${e.toFixed(3)}  envS ${this.envShort.toFixed(3)}  envL ${this.envLong.toFixed(3)}\n`
-        + `ratio ${r.toFixed(2)} (>${BEAT_RATIO} & envS>${BEAT_FLOOR} fires)\n`
+        + `ratio ${r.toFixed(2)} (>${this.params.beatRatio.toFixed(2)} & envS>${this.params.beatFloor.toFixed(2)} fires)${enabledTag}\n`
+        + `band ${Math.round(this.params.bandHzMin)}-${Math.round(this.params.bandHzMax)}Hz  bins ${this.lowBinStart}-${this.lowBinEnd}\n`
         + `last beat: ${lastBeatStr}`;
     }
   }
@@ -254,9 +352,12 @@ export class BackingTrackAnalyzer {
       window.removeEventListener('keydown', this.handleGestureResume);
     }
     this.gestureResumeInstalled = false;
+    this.registered?.dispose();
+    this.registered = undefined;
     this.debugRoot?.remove();
     this.debugRoot = undefined;
     this.debugStatusEl = undefined;
+    this.debugBlinkEl = undefined;
     this.debugBarEls = [];
   }
 }

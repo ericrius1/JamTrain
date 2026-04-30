@@ -102,13 +102,6 @@ export const SCULPTOR_DEFS = {
   attractorHoldSeconds:       { default: DEFAULT_ATTRACTOR_HOLD_SECONDS,       min: 1,   max: 120, step: 0.5, folder: 'Field Shape', label: 'hold s' },
   attractorTransitionSeconds: { default: DEFAULT_ATTRACTOR_TRANSITION_SECONDS, min: 0.1, max: 30,  step: 0.1, folder: 'Field Shape', label: 'xfade s' },
 
-  rippleEnabled:        { type: 'boolean' as const, default: true,           folder: 'Bass Ripple', label: 'enabled' },
-  rippleSpeed:          { default: 0.55,  min: 0.05, max: 3,    step: 0.01,  folder: 'Bass Ripple', label: 'speed m/s' },
-  rippleWidth:          { default: 0.13,  min: 0.02, max: 0.6,  step: 0.005, folder: 'Bass Ripple', label: 'shell width' },
-  rippleAmplitude:      { default: 0.55,  min: 0,    max: 4,    step: 0.01,  folder: 'Bass Ripple', label: 'impulse amp' },
-  rippleLifetime:       { default: 3.0,   min: 0.3,  max: 8,    step: 0.05,  folder: 'Bass Ripple', label: 'lifetime s' },
-  rippleSensitivity:    { default: 1.0,   min: 0.1,  max: 3,    step: 0.05,  folder: 'Bass Ripple', label: 'sensitivity' },
-
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
   projectorRingCount:   { default: 5,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
   projectorRingSpacing: { default: 0.020, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
@@ -343,10 +336,6 @@ export class EnergySculptor implements EnergySink {
     this.fieldStrengthUniform.value = this.params.fieldStrength;
     this.applyFieldVolumeParams();
     this.fieldRotationRate = this.params.fieldRotationRate;
-    this.rippleSpeedUniform.value = this.params.rippleSpeed;
-    this.rippleWidthUniform.value = this.params.rippleWidth;
-    this.rippleAmpUniform.value = this.params.rippleAmplitude;
-    this.rippleLifetimeUniform.value = this.params.rippleLifetime;
 
     this.registered = registerTweaks(paneDock, 'energySculptorThomasFlowV1', SCULPTOR_DEFS, {
       title: 'Energy Sculptor',
@@ -380,10 +369,6 @@ export class EnergySculptor implements EnergySink {
           this.fieldDebugGrid = next;
           this.rebuildFieldDebugLines();
         },
-        rippleSpeed: v => { this.rippleSpeedUniform.value = v; },
-        rippleWidth: v => { this.rippleWidthUniform.value = v; },
-        rippleAmplitude: v => { this.rippleAmpUniform.value = v; },
-        rippleLifetime: v => { this.rippleLifetimeUniform.value = v; },
         attractorOverride: v => { this.setAttractorOverride(v as AttractorMode); },
         attractorHoldSeconds: v => { this.applyAttractorHoldSeconds(v); },
         attractorTransitionSeconds: v => { this.applyAttractorTransitionSeconds(v); },
@@ -444,11 +429,18 @@ export class EnergySculptor implements EnergySink {
 
   // Bass beat from the backing track — restarts the outward ripple shell at
   // the field center. Intensity scales the impulse for that single shell.
+  // Shape (speed/width/amp/lifetime) is owned by the FFT pulse pane and
+  // pushed in via setRippleShape.
   triggerRipple(intensity = 1): void {
-    if (!this.params.rippleEnabled) return;
-    const sens = Math.max(0.05, this.params.rippleSensitivity);
     this.rippleAgeUniform.value = 0;
-    this.rippleIntensityUniform.value = clamp01(intensity * sens);
+    this.rippleIntensityUniform.value = clamp01(intensity);
+  }
+
+  setRippleShape(shape: { speed?: number; width?: number; amplitude?: number; lifetime?: number }): void {
+    if (shape.speed !== undefined) this.rippleSpeedUniform.value = shape.speed;
+    if (shape.width !== undefined) this.rippleWidthUniform.value = Math.max(0.001, shape.width);
+    if (shape.amplitude !== undefined) this.rippleAmpUniform.value = shape.amplitude;
+    if (shape.lifetime !== undefined) this.rippleLifetimeUniform.value = Math.max(0.05, shape.lifetime);
   }
 
   getSynchronyBoost(): number {
@@ -1322,7 +1314,7 @@ export class EnergySculptor implements EnergySink {
     // Center stays at the bounding-sphere center expressed in particle space
     // (positions are stored as world-relative offsets from this.center).
     this.rippleCenterUniform.value.set(0, this.fieldSphereCenterYUniform.value, 0);
-    const lifetime = Math.max(0.05, this.params.rippleLifetime);
+    const lifetime = Math.max(0.05, this.rippleLifetimeUniform.value);
     const cap = lifetime + 0.5;
     if (this.rippleAgeUniform.value < cap) {
       this.rippleAgeUniform.value = Math.min(cap, this.rippleAgeUniform.value + delta);
