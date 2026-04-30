@@ -20,7 +20,7 @@ const SPACETIME_URI = 'wss://maincloud.spacetimedb.com';
 const SPACETIME_DATABASE = 'jam-train';
 const TOKEN_STORAGE_KEY = 'jam-train-spacetime-token';
 const ROBOT_PARTNER_CREATURE = 'robot';
-const SERVER_DEFAULT_INSTRUMENT: InstrumentId = 'oar';
+const SERVER_DEFAULT_INSTRUMENT: InstrumentId = 'orb';
 const SERVER_DEFAULT_CREATURE: CreatureId = 'lion';
 
 export class MultiplayerClient {
@@ -193,7 +193,7 @@ export class MultiplayerClient {
   }
 
   private oppositeInstrument(id: InstrumentId): InstrumentId {
-    return id === 'oar' ? 'starlace' : 'oar';
+    return id === 'orb' ? 'starlace' : 'orb';
   }
 
   private async pushLocalInstrument(): Promise<void> {

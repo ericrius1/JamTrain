@@ -18,11 +18,11 @@ import {
 } from 'three/tsl';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import {
-  OAR_PAD_COUNT,
-  oarKeyboardIndexForKey,
-} from '../oarControls';
+  ORB_PAD_COUNT,
+  orbKeyboardIndexForKey,
+} from '../orbControls';
 import { CREATURE_ROBE_COLORS, type CreatureId } from '../creatures';
-import { getOarHz } from '../harmony';
+import { getOrbHz } from '../harmony';
 import { keyDirector } from '../keyDirector';
 import {
   DEFAULT_ORB_ENVELOPE,
@@ -35,13 +35,13 @@ import {
 import { clamp } from '../math';
 import { OrbCollisionBVH } from './orbs/OrbCollisionBVH';
 
-type OarPalette = 'local' | 'remote';
+type OrbPalette = 'local' | 'remote';
 
-export const OAR_DEFS = {
-  orbRadius:         { default: 0.034, min: 0.015, max: 0.32, step: 0.001, label: 'orb radius' },
-  ringRadius:        { default: 0.055, min: 0.03, max: 0.50, step: 0.002, label: 'orb spacing' },
-  pyramidStartHeight: { default: -0.10, min: -0.5, max: 0.5, step: 0.005, label: 'bottom height' },
-  pyramidRowSpacing: { default: 0.062, min: 0.04, max: 0.50, step: 0.005, folder: 'Layout', label: 'row spacing' },
+export const ORB_DEFS = {
+  orbRadius:         { default: 0.034, min: 0.015, max: 0.32, step: 0.001, folder: 'Orb', label: 'radius' },
+  ringRadius:        { default: 0.055, min: 0.03, max: 0.50, step: 0.002, folder: 'Orb', label: 'spacing' },
+  pyramidStartHeight: { default: -0.10, min: -0.5, max: 0.5, step: 0.005, folder: 'Orb', label: 'bottom height' },
+  pyramidRowSpacing: { default: 0.062, min: 0.04, max: 0.50, step: 0.005, folder: 'Orb', label: 'row spacing' },
   heldStreamAmount:  { default: 10, min: 0, max: 10000, step: 1, folder: 'Emission', label: 'emission rate' },
   envAttack:         { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 1.5, step: 0.001, folder: 'Envelope', label: 'attack s' },
   envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
@@ -49,9 +49,9 @@ export const OAR_DEFS = {
   envRelease:        { default: DEFAULT_ORB_ENVELOPE.release, min: 0.01,  max: 5.0, step: 0.01,  folder: 'Envelope', label: 'release s' },
 } as const;
 
-export type OarParams = ParamsOf<typeof OAR_DEFS>;
+export type OrbParams = ParamsOf<typeof ORB_DEFS>;
 
-const OAR_RUNTIME = {
+const ORB_RUNTIME = {
   bobAmount: 0.003,
   bobSpeed: 0.7,
   rippleSpeed: 1.28,
@@ -69,7 +69,7 @@ const OAR_RUNTIME = {
   hitTintAmount: 0.85,
 } as const;
 
-const OAR_ROBE_COOL = new THREE.Color('#6faec8');
+const ORB_ROBE_COOL = new THREE.Color('#6faec8');
 const _orbHsl = { h: 0, s: 0, l: 0 };
 
 export type OrbHit = {
@@ -101,8 +101,8 @@ export type OrbRelease = {
   envelope: OrbEnvelopeSettings;
 };
 
-type OarOptions = {
-  palette?: OarPalette;
+type OrbOptions = {
+  palette?: OrbPalette;
   creature?: CreatureId;
   title?: string;
   onHit?: (event: OrbHit) => void;
@@ -115,10 +115,10 @@ type OarOptions = {
   sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
 };
 
-// Playable orbs arranged in two horizontal rows mapped to keyboard rows:
-// home row a-l (9 orbs) below, top row q-p (10 orbs) above. Each orb maps
-// to a scale degree from the shared Jam Train harmony, continuing upward
-// by octave when the orb list spans more than one scale cycle.
+// Playable orbs are arranged in a 3D pyramid stack (see makeOrbOffsets).
+// Lower orb indices sit lower in the cluster and map to lower scale degrees;
+// indices past the diatonic cycle wrap up by octave so each pad gets its own
+// pitch even when the layout exceeds one scale cycle.
 // Maximum simultaneous wave impulses shared by the orb cluster. Once exceeded,
 // the oldest impulse is recycled. Keep enough history for overlapping strikes
 // to meet instead of making a new hit feel like it erased the previous one.
@@ -142,50 +142,61 @@ const POINTER_HELD_SOURCE_ID = 'pointer:primary';
 
 type AnyNode = any;
 
-// One octave of the Jam Train oar scale. frequencyForOrb() walks this table
+// One octave of the orb pad scale. frequencyForOrb() walks this table
 // by scale degree and transposes whole cycles up by octaves, so expanded
 // pyramids do not repeat exact pitches. The table is per-instance and tracks
 // the current key via the KeyDirector subscription set up in the constructor.
 
-// Bottom→top layer counts. Sum must equal OAR_PAD_COUNT (19). Lower indices
+// Bottom→top layer counts. Sum must equal ORB_PAD_COUNT (19). Lower indices
 // land in lower layers so frequencyForOrb() (which orders pitch by orbIndex)
 // keeps low notes at the base of the pyramid.
-const OAR_LAYER_COUNTS = [6, 5, 4, 3, 1] as const;
-const OAR_ARC_SPAN = Math.PI * 0.85;     // ~153° front-facing fan per layer
-const OAR_BASE_RADIUS_SCALE = 3.2;       // multiplier on the `ringRadius` param
-const OAR_RADIUS_FALLOFF = 0.55;         // top layers tighten toward the apex
-const OAR_DEPTH_BOW = 0.45;              // z-curvature of each arc
+const ORB_LAYER_COUNTS = [6, 5, 4, 3, 1] as const;
+const ORB_ARC_SPAN = Math.PI * 0.85;     // ~153° front-facing fan per layer
+const ORB_BASE_RADIUS_SCALE = 3.2;       // multiplier on the `ringRadius` param
+const ORB_RADIUS_FALLOFF = 0.55;         // top layers tighten toward the apex
+const ORB_DEPTH_BOW = 0.45;              // z-curvature of each arc
+// Each layer pulled forward (toward camera) by this fraction of `planeSpacing`,
+// so upper layers cascade in front of lower ones instead of stacking directly
+// above and getting hidden behind them.
+const ORB_LAYER_FORWARD_STEP = 0.55;
+// Alternate layers rotated by half an orb-step around the cluster axis, so
+// upper-layer orbs sit in the gaps between the layer below — every orb stays
+// visible from a head-on view instead of a strict pyramid silhouette.
+const ORB_LAYER_ANGLE_STAGGER = 0.5;
 
 function makeOrbOffsets(planeSpacing: number, layerSpacing: number, startHeight: number): THREE.Vector3[] {
-  const baseRadius = Math.max(planeSpacing, 1e-4) * OAR_BASE_RADIUS_SCALE;
-  const numLayers = OAR_LAYER_COUNTS.length;
+  const baseRadius = Math.max(planeSpacing, 1e-4) * ORB_BASE_RADIUS_SCALE;
+  const numLayers = ORB_LAYER_COUNTS.length;
   const offsets: THREE.Vector3[] = [];
   for (let layer = 0; layer < numLayers; layer += 1) {
-    const count = OAR_LAYER_COUNTS[layer];
+    const count = ORB_LAYER_COUNTS[layer];
     const layerT = numLayers <= 1 ? 0 : layer / (numLayers - 1);
-    const radius = baseRadius * (1 - layerT * OAR_RADIUS_FALLOFF);
+    const radius = baseRadius * (1 - layerT * ORB_RADIUS_FALLOFF);
     const y = startHeight + layer * layerSpacing;
+    const layerZBias = -layer * planeSpacing * ORB_LAYER_FORWARD_STEP;
+    const halfStep = count > 1 ? (ORB_ARC_SPAN / (count - 1)) * ORB_LAYER_ANGLE_STAGGER : 0;
+    const angleOffset = layer % 2 === 1 ? halfStep : 0;
     for (let i = 0; i < count; i += 1) {
       const t = count <= 1 ? 0.5 : i / (count - 1);
-      const angle = (t - 0.5) * OAR_ARC_SPAN;
+      const angle = (t - 0.5) * ORB_ARC_SPAN + angleOffset;
       const x = Math.sin(angle) * radius;
-      const z = -Math.cos(angle) * radius * OAR_DEPTH_BOW;
+      const z = -Math.cos(angle) * radius * ORB_DEPTH_BOW + layerZBias;
       offsets.push(new THREE.Vector3(x, y, z));
     }
   }
   return offsets;
 }
 
-function createOrbUniforms(params: OarParams) {
+function createOrbUniforms(params: OrbParams) {
   return {
-    hitTintAmount: uniform(OAR_RUNTIME.hitTintAmount),
+    hitTintAmount: uniform(ORB_RUNTIME.hitTintAmount),
     orbRadius:    uniform(params.orbRadius),
-    rippleSpeed:  uniform(OAR_RUNTIME.rippleSpeed),
-    rippleFreq:   uniform(OAR_RUNTIME.rippleFreq),
-    rippleDecay:  uniform(OAR_RUNTIME.rippleDecay),
-    rippleSigma:  uniform(OAR_RUNTIME.rippleSigma),
-    rippleDisplace: uniform(OAR_RUNTIME.rippleDisplace),
-    rippleGlow:   uniform(OAR_RUNTIME.rippleGlow),
+    rippleSpeed:  uniform(ORB_RUNTIME.rippleSpeed),
+    rippleFreq:   uniform(ORB_RUNTIME.rippleFreq),
+    rippleDecay:  uniform(ORB_RUNTIME.rippleDecay),
+    rippleSigma:  uniform(ORB_RUNTIME.rippleSigma),
+    rippleDisplace: uniform(ORB_RUNTIME.rippleDisplace),
+    rippleGlow:   uniform(ORB_RUNTIME.rippleGlow),
     gesture:      uniform(new THREE.Vector4(0, 0, 0, 0)),
     gestureDepth: uniform(0),
   };
@@ -217,7 +228,7 @@ function applyOrbRobeGradient(
 
   const base = perOrb.baseColor.value;
   base.set(CREATURE_ROBE_COLORS[creature]);
-  base.lerp(OAR_ROBE_COOL, clamp((1 - t) * 0.18 + Math.max(0, -jitter) * 0.035, 0, 0.28));
+  base.lerp(ORB_ROBE_COOL, clamp((1 - t) * 0.18 + Math.max(0, -jitter) * 0.035, 0, 0.28));
   base.getHSL(_orbHsl);
   base.setHSL(
     _orbHsl.h,
@@ -243,7 +254,7 @@ function applyOrbRobeGradient(
   );
 }
 
-type Orb = {
+type OrbInstance = {
   mesh: THREE.Mesh;
   material: THREE.MeshBasicNodeMaterial;
   lastHitAt: number;
@@ -295,11 +306,11 @@ const _pointerNdcSample = new THREE.Vector2();
 const _raycaster = new THREE.Raycaster();
 const _pointerIntersections: THREE.Intersection<THREE.Object3D>[] = [];
 
-export class Oar implements PlayerVisual {
+export class Orb implements PlayerVisual {
   readonly mesh: THREE.Group;
-  readonly params: OarParams;
+  readonly params: OrbParams;
 
-  private orbs: Orb[] = [];
+  private orbs: OrbInstance[] = [];
   private performanceTargets: THREE.Vector3[] = [];
   private elapsed = 0;
   private active = true;
@@ -373,22 +384,22 @@ export class Oar implements PlayerVisual {
   private onGestureCallback?: (gesture: OrbGestureState) => void;
   private onOrbCountChange?: (count: number) => void;
   private lastReportedOrbCount = -1;
-  private registered?: ReturnType<typeof registerTweaks<typeof OAR_DEFS>>;
+  private registered?: ReturnType<typeof registerTweaks<typeof ORB_DEFS>>;
   private camera?: THREE.Camera;
   private canvas?: HTMLCanvasElement;
   private fixedAnchor?: THREE.Vector3;
   private sculptor?: import('../sculptor/EnergyEmitter').EnergySink;
-  private palette: OarPalette;
+  private palette: OrbPalette;
   private creature: CreatureId;
   private keyDownListener?: (e: KeyboardEvent) => void;
   private keyUpListener?: (e: KeyboardEvent) => void;
   private keyBlurListener?: () => void;
   private heldSources = new Map<string, HeldPadSource>();
-  private hzTable: readonly number[] = getOarHz(keyDirector.getCurrent());
+  private hzTable: readonly number[] = getOrbHz(keyDirector.getCurrent());
   private keyUnsubscribe?: () => void;
 
-  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'oar', opts: OarOptions = {}) {
-    this.params = { ...Object.fromEntries(Object.entries(OAR_DEFS).map(([k, d]) => [k, d.default])) } as OarParams;
+  constructor(scene: THREE.Scene, paneDock?: HTMLElement, paneKey = 'orb', opts: OrbOptions = {}) {
+    this.params = { ...Object.fromEntries(Object.entries(ORB_DEFS).map(([k, d]) => [k, d.default])) } as OrbParams;
     this.onHitCallback = opts.onHit;
     this.onReleaseCallback = opts.onRelease;
     this.onGestureCallback = opts.onGesture;
@@ -405,7 +416,7 @@ export class Oar implements PlayerVisual {
     scene.add(this.mesh);
 
     this.keyUnsubscribe = keyDirector.onChange(({ current }) => {
-      this.hzTable = getOarHz(current);
+      this.hzTable = getOrbHz(current);
     });
 
     this.uniforms = createOrbUniforms(this.params);
@@ -419,8 +430,8 @@ export class Oar implements PlayerVisual {
     // pyramidBaseRow → rebuildOrbs(); ensure something exists in case
     // registerTweaks doesn't fire (no callback registered for that key).
 
-    this.registered = registerTweaks(paneDock, paneKey, OAR_DEFS, {
-      title: opts.title ?? 'Piano Pads',
+    this.registered = registerTweaks(paneDock, paneKey, ORB_DEFS, {
+      title: opts.title ?? 'Orb Pads',
       params: this.params,
       onChange: {
         orbRadius:    v => {
@@ -434,7 +445,7 @@ export class Oar implements PlayerVisual {
     });
 
     // Layout-affecting tweaks now only nudge positions; the orb count is
-    // fixed at OAR_PAD_COUNT, so build the orbs eagerly.
+    // fixed at ORB_PAD_COUNT, so build the orbs eagerly.
     if (this.orbs.length === 0) this.rebuildOrbs();
 
     if (this.camera && this.canvas) this.attachPointerEvents(this.canvas);
@@ -588,8 +599,8 @@ export class Oar implements PlayerVisual {
         : { offsetY: 0, scale: 0 };
     }
     const isIn = this.revealDirection === 1;
-    const total = isIn ? Oar.REVEAL_DURATION_IN : Oar.REVEAL_DURATION_OUT;
-    const perOrb = isIn ? Oar.REVEAL_PER_ORB_IN : Oar.REVEAL_PER_ORB_OUT;
+    const total = isIn ? Orb.REVEAL_DURATION_IN : Orb.REVEAL_DURATION_OUT;
+    const perOrb = isIn ? Orb.REVEAL_PER_ORB_IN : Orb.REVEAL_PER_ORB_OUT;
     const stagger = Math.max(0, total - perOrb) / Math.max(1, this.orbs.length - 1);
     // Outro sweeps the opposite way so the cluster collapses center-out
     // instead of repeating the intro pattern in reverse.
@@ -603,7 +614,7 @@ export class Oar implements PlayerVisual {
       : Math.pow(t, 3);
     const orbT = isIn ? eased : 1 - eased;
     return {
-      offsetY: -Oar.REVEAL_DROP_DISTANCE * (1 - orbT),
+      offsetY: -Orb.REVEAL_DROP_DISTANCE * (1 - orbT),
       scale: orbT,
     };
   }
@@ -639,7 +650,7 @@ export class Oar implements PlayerVisual {
     } else if (!this.pointerInside && !this.pointerDown) {
       _palmTmp.copy(leftPalm).add(rightPalm).multiplyScalar(0.5);
       _palmTmp.z -= 0.06;
-      const alpha = 1 - Math.exp(-delta / Math.max(0.05, OAR_RUNTIME.anchorSmoothing));
+      const alpha = 1 - Math.exp(-delta / Math.max(0.05, ORB_RUNTIME.anchorSmoothing));
       this.anchor.lerp(_palmTmp, alpha);
     }
     this.placeGroup();
@@ -652,7 +663,7 @@ export class Oar implements PlayerVisual {
     for (let i = 0; i < this.orbs.length; i += 1) {
       const orb = this.orbs[i];
       // Subtle bob — each orb has its own phase.
-      const bob = Math.sin(this.elapsed * OAR_RUNTIME.bobSpeed * 1.3 + i * 1.21) * OAR_RUNTIME.bobAmount;
+      const bob = Math.sin(this.elapsed * ORB_RUNTIME.bobSpeed * 1.3 + i * 1.21) * ORB_RUNTIME.bobAmount;
       const reveal = this.orbReveal(i);
       orb.mesh.position.set(orb.offset.x, orb.offset.y + bob + reveal.offsetY, orb.offset.z);
       orb.mesh.scale.setScalar(baseRadius * reveal.scale);
@@ -706,8 +717,8 @@ export class Oar implements PlayerVisual {
   private tickReveal(): void {
     if (!this.revealActive) return;
     const total = this.revealDirection === 1
-      ? Oar.REVEAL_DURATION_IN
-      : Oar.REVEAL_DURATION_OUT;
+      ? Orb.REVEAL_DURATION_IN
+      : Orb.REVEAL_DURATION_OUT;
     const elapsedSinceStart = this.elapsed - this.revealStartedAt;
     if (elapsedSinceStart < total + 0.05) return;
     this.revealActive = false;
@@ -732,7 +743,7 @@ export class Oar implements PlayerVisual {
     };
   }
 
-  private startOrbEnvelope(orb: Orb, velocity: number): void {
+  private startOrbEnvelope(orb: OrbInstance, velocity: number): void {
     const envelope = this.currentEnvelope();
     const peak = clamp(0.56 + velocity * 0.44, 0.05, 1);
     orb.envelopePhase = 'attack';
@@ -743,14 +754,14 @@ export class Oar implements PlayerVisual {
     orb.envelopeReleaseFrom = orb.hitPulse;
   }
 
-  private beginOrbRelease(orb: Orb): void {
+  private beginOrbRelease(orb: OrbInstance): void {
     if (orb.envelopePhase === 'idle' || orb.envelopePhase === 'release') return;
     orb.envelopePhase = 'release';
     orb.envelopeStartedAt = this.elapsed;
     orb.envelopeReleaseFrom = orb.hitPulse;
   }
 
-  private updateOrbEnvelope(orb: Orb): void {
+  private updateOrbEnvelope(orb: OrbInstance): void {
     const envelope = this.currentEnvelope();
     const age = this.elapsed - orb.envelopeStartedAt;
     switch (orb.envelopePhase) {
@@ -911,7 +922,7 @@ export class Oar implements PlayerVisual {
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement | null)?.isContentEditable) return;
       if (!this.isInteractive()) return;
       const key = e.key.toLowerCase();
-      const idx = oarKeyboardIndexForKey(key, this.orbs.length);
+      const idx = orbKeyboardIndexForKey(key, this.orbs.length);
       if (idx === undefined) return;
       e.preventDefault();
       this.fireKeyboardHit(key, idx);
@@ -1175,7 +1186,7 @@ export class Oar implements PlayerVisual {
   private firePointerHit(orbIndex: number, velocity: number, worldPoint: THREE.Vector3): boolean {
     const orb = this.orbs[orbIndex];
     if (!orb) return false;
-    if (this.elapsed - orb.lastHitAt <= OAR_RUNTIME.hitCooldown) return false;
+    if (this.elapsed - orb.lastHitAt <= ORB_RUNTIME.hitCooldown) return false;
     this.dispatchHit(orbIndex, velocity, worldPoint, true);
     return true;
   }
@@ -1329,7 +1340,7 @@ export class Oar implements PlayerVisual {
     return this.hzTable[pitchClass] * Math.pow(2, octaveShift);
   }
 
-  private notifyOrbCount(count: number = OAR_PAD_COUNT): void {
+  private notifyOrbCount(count: number = ORB_PAD_COUNT): void {
     if (count === this.lastReportedOrbCount) return;
     this.lastReportedOrbCount = count;
     this.onOrbCountChange?.(count);
@@ -1353,8 +1364,8 @@ export class Oar implements PlayerVisual {
       this.contactHits.length = 0;
       this.currentContactHits.length = 0;
 
-      const contactRadius = contact.kind === 'palm' ? OAR_RUNTIME.palmRadius : OAR_RUNTIME.fingerRadius;
-      const hitRadius = this.params.orbRadius + contactRadius + OAR_RUNTIME.hitDistance;
+      const contactRadius = contact.kind === 'palm' ? ORB_RUNTIME.palmRadius : ORB_RUNTIME.fingerRadius;
+      const hitRadius = this.params.orbRadius + contactRadius + ORB_RUNTIME.hitDistance;
       this.collisionBVH.collectPointHits(contact.position, hitRadius, this.currentContactHits);
       this.collisionBVH.collectSweptPointHits(previous, contact.position, hitRadius, this.contactHits);
 
@@ -1362,7 +1373,7 @@ export class Oar implements PlayerVisual {
         this.currentContactKeys.add(this.contactKey(contact.id, orbIndex));
       }
 
-      const fastEnough = speed > OAR_RUNTIME.hitVelMin;
+      const fastEnough = speed > ORB_RUNTIME.hitVelMin;
       for (const orbIndex of this.contactHits) {
         const key = this.contactKey(contact.id, orbIndex);
         const currentlyOverlapping = this.currentContactHits.includes(orbIndex);
@@ -1387,7 +1398,7 @@ export class Oar implements PlayerVisual {
       const candidate = this.hitCandidates[i];
       if (!candidate) continue;
       const orb = this.orbs[i];
-      if (this.elapsed - orb.lastHitAt <= OAR_RUNTIME.hitCooldown) continue;
+      if (this.elapsed - orb.lastHitAt <= ORB_RUNTIME.hitCooldown) continue;
       this.fireHit(i, candidate.contact, candidate.speed);
     }
 
@@ -1448,7 +1459,7 @@ export class Oar implements PlayerVisual {
     const spark = this.orbs[orbIndex]?.uniforms.sparkColor;
     if (!spark) return;
     sink.emit({
-      kind: 'oar',
+      kind: 'orb',
       origin: worldPosition.clone(),
       direction: dir.clone(),
       color: { r: spark.r, g: spark.g, b: spark.b },
@@ -1530,7 +1541,7 @@ export class Oar implements PlayerVisual {
     })();
 
     const colorNode = Fn(() => {
-      // Oar base lighting — fake key light + fresnel rim. No real
+      // Orb base lighting — fake key light + fresnel rim. No real
       // PBR; everything goes through MeshBasicNodeMaterial per the project
       // convention.
       const surfDir = positionLocal.normalize().toVar('orbSurfDir');

@@ -1,6 +1,6 @@
 import type * as THREE from 'three/webgpu';
 
-export type ParticleKind = 'oar' | 'starlace';
+export type ParticleKind = 'orb' | 'starlace';
 
 /**
  * Discrete emit request handed from an instrument to the sculptor each frame.

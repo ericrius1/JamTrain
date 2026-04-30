@@ -114,17 +114,20 @@ function findAvailableVariant(ctx: any, baseName: string): string {
   return baseName;
 }
 
-const DEFAULT_INSTRUMENT = 'oar';
+const DEFAULT_INSTRUMENT = 'orb';
 const DEFAULT_CREATURE = 'lion';
-// 'drum' kept in the allowlist so older clients can keep talking to the
-// server until they refresh; the client normalizes legacy 'drum' → 'oar'.
-const ALLOWED_INSTRUMENTS = new Set(['oar', 'starlace', 'drum']);
+// Legacy 'oar' / 'drum' kept in the allowlist so older clients can keep
+// talking to the server until they refresh. The server normalizes them to
+// 'orb' before persisting so all readers see the new id.
+const ALLOWED_INSTRUMENTS = new Set(['orb', 'starlace', 'oar', 'drum']);
+const INSTRUMENT_ALIASES: Record<string, string> = { oar: 'orb', drum: 'orb' };
 const ALLOWED_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit', 'robot']);
 const SEAT_CREATURES = new Set(['lion', 'elk', 'fox', 'rabbit']);
 
 function cleanSeatInstrument(instrument: string): string | null {
   const clean = instrument.trim().toLowerCase();
-  return ALLOWED_INSTRUMENTS.has(clean) ? clean : null;
+  if (!ALLOWED_INSTRUMENTS.has(clean)) return null;
+  return INSTRUMENT_ALIASES[clean] ?? clean;
 }
 
 function cleanSeatCreature(creature: string): string | null {
@@ -133,7 +136,7 @@ function cleanSeatCreature(creature: string): string | null {
 }
 
 function oppositeSeatInstrument(instrument: string): string {
-  return cleanSeatInstrument(instrument) === 'starlace' ? 'oar' : 'starlace';
+  return cleanSeatInstrument(instrument) === 'starlace' ? 'orb' : 'starlace';
 }
 
 function firstDifferentSeatCreature(creature: string): string {

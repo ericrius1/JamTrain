@@ -123,9 +123,9 @@ const TAU = Math.PI * 2;
 const MIN_PARTICLE_LIFETIME = 1;
 
 const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
-  oarOar: 'lorenz',
+  orbOrb: 'lorenz',
   melodyMelody: 'thomas',
-  oarMelody: 'aizawa',
+  orbMelody: 'aizawa',
 };
 
 /**
@@ -276,7 +276,7 @@ export class EnergySculptor implements EnergySink {
   private integrateCrossfadeCompute!: THREE.ComputeNode;
 
   // Frame state.
-  private currentArchetype: ArchetypeId = 'oarMelody';
+  private currentArchetype: ArchetypeId = 'orbMelody';
   private currentAttractor: AttractorKind = 'thomas';
   private transitionTarget: AttractorKind = 'thomas';
   private attractorCycleIndex = 0;

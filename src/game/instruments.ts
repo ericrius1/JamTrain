@@ -2,9 +2,9 @@ import type * as THREE from 'three/webgpu';
 import type { CreatureId } from './creatures';
 import type { FingerJointName, FingerName, Handedness } from './types';
 
-export type InstrumentId = 'oar' | 'starlace';
+export type InstrumentId = 'orb' | 'starlace';
 
-export const INSTRUMENT_IDS: readonly InstrumentId[] = ['oar', 'starlace'];
+export const INSTRUMENT_IDS: readonly InstrumentId[] = ['orb', 'starlace'];
 
 export type VoiceState = {
   /** True between attack and release for at least one held note. */
@@ -92,9 +92,9 @@ export type InstrumentMeta = {
 };
 
 export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
-  oar: {
-    id: 'oar',
-    label: 'Piano Pads',
+  orb: {
+    id: 'orb',
+    label: 'Orb Pads',
     subtitle: 'analog piano · warm pads',
     color: '#7ad9ff',
     iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="6" width="17" height="12" rx="1.8"/><path d="M3.5 11h17M7 11v7M10.3 11v7M13.7 11v7M17 11v7"/><path d="M6.8 6v4M10.2 6v4M15.4 6v4"/></svg>`,
@@ -109,17 +109,17 @@ export const INSTRUMENTS: Record<InstrumentId, InstrumentMeta> = {
 };
 
 export function isInstrumentId(value: string): value is InstrumentId {
-  return value === 'oar' || value === 'starlace';
+  return value === 'orb' || value === 'starlace';
 }
 
 /**
- * Map any string (including legacy 'drum'/'loom'/'chime'/'orbs') to a valid
- * InstrumentId. Used at every read boundary that might receive stale data
- * (e.g. SpacetimeDB partner instrument from an older client).
+ * Map any string (including legacy 'oar'/'drum'/'loom'/'chime'/'orbs') to a
+ * valid InstrumentId. Used at every read boundary that might receive stale
+ * data (e.g. SpacetimeDB partner instrument from an older client).
  */
 export function normalizeInstrumentId(value: string | undefined | null): InstrumentId {
   if (value === 'starlace') return 'starlace';
-  return 'oar';
+  return 'orb';
 }
 
 /**

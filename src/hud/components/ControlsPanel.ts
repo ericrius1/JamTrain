@@ -1,12 +1,12 @@
 import type { InstrumentId } from '../../game/instruments';
 import {
-  OAR_KEY_ROW_HOME,
-  OAR_KEY_ROW_TOP,
-  OAR_PAD_COUNT,
-} from '../../game/oarControls';
+  ORB_KEY_ROW_HOME,
+  ORB_KEY_ROW_TOP,
+  ORB_PAD_COUNT,
+} from '../../game/orbControls';
 
 const STORAGE_KEY = 'jamtrain.controlsPanel.collapsed';
-const DEFAULT_OAR_ORB_COUNT = OAR_PAD_COUNT;
+const DEFAULT_ORB_COUNT = ORB_PAD_COUNT;
 const TOUCH_QUERY = '(max-width: 768px), (pointer: coarse) and (hover: none)';
 
 type ControlEntry = {
@@ -35,10 +35,10 @@ const STARLACE_TOUCH_CONTROLS: ControlsContent = {
   rows: [{ keys: ['Swipe'], hint: 'across the stars' }],
 };
 
-function oarTouchControls(orbCount: number): ControlsContent {
+function orbTouchControls(orbCount: number): ControlsContent {
   const hint = orbCount === 1 ? 'across the pad' : `across the ${orbCount} pads`;
   return {
-    blurb: 'Swipe across the piano pads to play.',
+    blurb: 'Swipe across the orb pads to play.',
     rows: [{ keys: ['Swipe'], hint }],
   };
 }
@@ -47,8 +47,8 @@ export class ControlsPanel {
   readonly el: HTMLDetailsElement;
   private summaryTitleEl: HTMLSpanElement;
   private bodyEl: HTMLDivElement;
-  private current: InstrumentId = 'oar';
-  private oarOrbCount: number = DEFAULT_OAR_ORB_COUNT;
+  private current: InstrumentId = 'orb';
+  private orbCount: number = DEFAULT_ORB_COUNT;
   private touchMql?: MediaQueryList;
   private touchListener?: () => void;
 
@@ -106,17 +106,17 @@ export class ControlsPanel {
     this.render();
   }
 
-  setOarOrbCount(count: number): void {
+  setOrbCount(count: number): void {
     const next = Math.max(1, Math.floor(count));
-    if (next === this.oarOrbCount) return;
-    this.oarOrbCount = next;
-    if (this.current === 'oar') this.render();
+    if (next === this.orbCount) return;
+    this.orbCount = next;
+    if (this.current === 'orb') this.render();
   }
 
   private render(): void {
     const touch = this.touchMql?.matches ?? matchMedia(TOUCH_QUERY).matches;
-    const content = this.current === 'oar'
-      ? (touch ? oarTouchControls(this.oarOrbCount) : oarControlsForOrbCount(this.oarOrbCount))
+    const content = this.current === 'orb'
+      ? (touch ? orbTouchControls(this.orbCount) : orbControlsForOrbCount(this.orbCount))
       : (touch ? STARLACE_TOUCH_CONTROLS : STARLACE_CONTROLS);
     this.summaryTitleEl.textContent = labelFor(this.current);
 
@@ -136,12 +136,12 @@ export class ControlsPanel {
   }
 }
 
-function oarControlsForOrbCount(orbCount: number): ControlsContent {
-  const homeRange = rangeLabel(OAR_KEY_ROW_HOME);
-  const topRange = rangeLabel(OAR_KEY_ROW_TOP);
+function orbControlsForOrbCount(orbCount: number): ControlsContent {
+  const homeRange = rangeLabel(ORB_KEY_ROW_HOME);
+  const topRange = rangeLabel(ORB_KEY_ROW_TOP);
 
   return {
-    blurb: 'Strike the piano pads to play.',
+    blurb: 'Strike the orb pads to play.',
     rows: [
       { keys: [homeRange, topRange], hint: `play the ${orbCount} pads` },
       { keys: ['Mouse'], hint: 'click or drag through a pad' },
@@ -180,7 +180,7 @@ function buildRow(entry: ControlEntry): HTMLDivElement {
 }
 
 function labelFor(id: InstrumentId): string {
-  return id === 'oar' ? 'Piano Pads' : 'Starlace';
+  return id === 'orb' ? 'Orb Pads' : 'Starlace';
 }
 
 function readCollapsedState(): boolean {

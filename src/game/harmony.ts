@@ -29,7 +29,7 @@ const STARLACE_STEPS        = [
   14, 15, 16, 17, 18, 19, 20,
   21, 22, 23, 24, 25,
 ];
-const OAR_STEPS             = [0, 1, 2, 3, 4, 5, 6];
+const ORB_PAD_STEPS         = [0, 1, 2, 3, 4, 5, 6];
 
 const STARLACE_CHORD_STEPS: readonly (readonly number[])[] = [
   [0, 3, 7],
@@ -99,8 +99,8 @@ export function getStarlaceChords(key: Key): JamStarlaceChord[] {
   });
 }
 
-export function getOarHz(key: Key): number[] {
-  return OAR_STEPS.map(s => midiToHz(scaleStepMidi(key, REF_OCT_VOICES, s)));
+export function getOrbHz(key: Key): number[] {
+  return ORB_PAD_STEPS.map(s => midiToHz(scaleStepMidi(key, REF_OCT_VOICES, s)));
 }
 
 export function getKeyName(key: Key): string {

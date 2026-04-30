@@ -2,6 +2,26 @@ export type ToneModule = typeof import('tone');
 
 type AudioBusName = 'instruments' | 'effects';
 
+export type InstrumentFxParams = {
+  reverbWet: number;
+  reverbDecay: number;
+  reverbPreDelay: number;
+  delayWet: number;
+  delayTime: number;
+  delayFeedback: number;
+};
+
+const DEFAULT_INSTRUMENT_FX: InstrumentFxParams = {
+  reverbWet: 0.22,
+  reverbDecay: 2.2,
+  reverbPreDelay: 0.01,
+  delayWet: 0.18,
+  delayTime: 0.32,
+  delayFeedback: 0.35,
+};
+
+const FX_RAMP = 0.05;
+
 /**
  * Owns the one graph that is allowed to touch Tone's destination. Feature
  * engines get buses, then the final compressor/limiter sees the real sum.
@@ -11,10 +31,14 @@ export class JamAudioGraph {
   private running = false;
 
   private instrumentBus?: any;
+  private instrumentDelay?: any;
+  private instrumentReverb?: any;
   private effectsBus?: any;
   private master?: any;
   private compressor?: any;
   private limiter?: any;
+
+  private fxParams: InstrumentFxParams = { ...DEFAULT_INSTRUMENT_FX };
 
   // Snapshot of the master gain at the moment we mute for backgrounding, so
   // we can restore the same value on resume regardless of whether anything
@@ -39,7 +63,17 @@ export class JamAudioGraph {
     }).connect(this.limiter);
     this.master = new Tone.Gain(0.92).connect(this.compressor);
 
-    this.instrumentBus = new Tone.Gain(1).connect(this.master);
+    this.instrumentReverb = new Tone.Reverb({
+      decay: this.fxParams.reverbDecay,
+      preDelay: this.fxParams.reverbPreDelay,
+      wet: this.fxParams.reverbWet,
+    }).connect(this.master);
+    this.instrumentDelay = new Tone.FeedbackDelay({
+      delayTime: this.fxParams.delayTime,
+      feedback: this.fxParams.delayFeedback,
+      wet: this.fxParams.delayWet,
+    }).connect(this.instrumentReverb);
+    this.instrumentBus = new Tone.Gain(1).connect(this.instrumentDelay);
     this.effectsBus = new Tone.Gain(0.85).connect(this.master);
 
     this.attachStateRecovery();
@@ -83,6 +117,34 @@ export class JamAudioGraph {
     return (this.effectsBus?.input as AudioNode | undefined) ?? null;
   }
 
+  setInstrumentFxParam<K extends keyof InstrumentFxParams>(name: K, value: InstrumentFxParams[K]): void {
+    this.fxParams[name] = value;
+    const reverb = this.instrumentReverb;
+    const delay = this.instrumentDelay;
+    switch (name) {
+      case 'reverbWet':
+        reverb?.wet.rampTo(value, FX_RAMP);
+        break;
+      case 'reverbDecay':
+        // Reverb.decay rebuilds the impulse response — only set when running
+        // to avoid churn before start().
+        if (reverb) reverb.decay = value;
+        break;
+      case 'reverbPreDelay':
+        if (reverb) reverb.preDelay = value;
+        break;
+      case 'delayWet':
+        delay?.wet.rampTo(value, FX_RAMP);
+        break;
+      case 'delayTime':
+        delay?.delayTime.rampTo(value, FX_RAMP);
+        break;
+      case 'delayFeedback':
+        delay?.feedback.rampTo(value, FX_RAMP);
+        break;
+    }
+  }
+
   async setSuspended(suspended: boolean): Promise<void> {
     if (!this.tone) return;
     const ctx = (this.tone.getContext() as unknown as { rawContext: AudioContext }).rawContext;
@@ -124,11 +186,15 @@ export class JamAudioGraph {
     if (!this.running) return;
     this.running = false;
     this.instrumentBus?.dispose?.();
+    this.instrumentDelay?.dispose?.();
+    this.instrumentReverb?.dispose?.();
     this.effectsBus?.dispose?.();
     this.master?.dispose?.();
     this.compressor?.dispose?.();
     this.limiter?.dispose?.();
     this.instrumentBus = undefined;
+    this.instrumentDelay = undefined;
+    this.instrumentReverb = undefined;
     this.effectsBus = undefined;
     this.master = undefined;
     this.compressor = undefined;

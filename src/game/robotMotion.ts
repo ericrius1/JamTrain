@@ -272,31 +272,31 @@ export class RobotMotionController {
 
     const gesture = this.ensurePerformanceGesture(handedness, elapsed, performance.instrument, targets);
     const progress = clamp((elapsed - gesture.startedAt) / Math.max(gesture.duration, 0.001), 0, 1);
-    const isOar = performance.instrument === 'oar';
+    const isOrb = performance.instrument === 'orb';
     const side = handedness === 'left' ? -1 : 1;
-    const approachEnd = isOar ? 0.68 : 0.86;
+    const approachEnd = isOrb ? 0.68 : 0.86;
     const approach = easeInOutCubic(smoothstepScalar(0, approachEnd, progress));
-    const release = isOar
+    const release = isOrb
       ? smoothstepScalar(0.70, 1, progress)
       : smoothstepScalar(0.88, 1, progress);
-    const contactAmount = isOar
+    const contactAmount = isOrb
       ? smoothstepScalar(0.42, 0.62, progress) * (1 - smoothstepScalar(0.84, 1, progress))
       : smoothstepScalar(0.18, 0.58, progress) * (1 - smoothstepScalar(0.94, 1, progress));
     const path = lerpVec(gesture.from, gesture.to, approach);
     const arc = Math.sin(approach * Math.PI) * (1 - release * 0.8);
-    const phraseSway = Math.sin(progress * Math.PI * 2 + gesture.seed * 5.7) * (isOar ? 0.018 : 0.04);
-    const depthSway = Math.sin(progress * Math.PI + gesture.seed * 7.1) * (isOar ? 0.035 : 0.055);
+    const phraseSway = Math.sin(progress * Math.PI * 2 + gesture.seed * 5.7) * (isOrb ? 0.018 : 0.04);
+    const depthSway = Math.sin(progress * Math.PI + gesture.seed * 7.1) * (isOrb ? 0.035 : 0.055);
     const palmTarget = vec(
       clamp(path.x + side * phraseSway, -0.96, 0.96),
-      clamp(path.y + arc * (isOar ? 0.15 : 0.065) + release * (isOar ? 0.05 : 0.015), 0.10, 1.62),
-      clamp(path.z + depthSway * (1 - contactAmount * 0.65) + release * (isOar ? 0.035 : 0.02), -0.42, 1.02),
+      clamp(path.y + arc * (isOrb ? 0.15 : 0.065) + release * (isOrb ? 0.05 : 0.015), 0.10, 1.62),
+      clamp(path.z + depthSway * (1 - contactAmount * 0.65) + release * (isOrb ? 0.035 : 0.02), -0.42, 1.02),
     );
     const wristTarget = vec(
-      clamp(palmTarget.x - side * (0.065 + contactAmount * (isOar ? 0.015 : 0.005)), -1.0, 1.0),
-      clamp(palmTarget.y - 0.17 - contactAmount * (isOar ? 0.025 : 0.005), 0.02, 1.35),
-      clamp(palmTarget.z + 0.055 + release * (isOar ? 0.055 : 0.025), -0.42, 1.04),
+      clamp(palmTarget.x - side * (0.065 + contactAmount * (isOrb ? 0.015 : 0.005)), -1.0, 1.0),
+      clamp(palmTarget.y - 0.17 - contactAmount * (isOrb ? 0.025 : 0.005), 0.02, 1.35),
+      clamp(palmTarget.z + 0.055 + release * (isOrb ? 0.055 : 0.025), -0.42, 1.04),
     );
-    const amount = isOar ? 0.86 : 0.78;
+    const amount = isOrb ? 0.86 : 0.78;
     wrist.x = lerp(wrist.x, wristTarget.x, amount);
     wrist.y = lerp(wrist.y, wristTarget.y, amount);
     wrist.z = lerp(wrist.z, wristTarget.z, amount);
@@ -304,7 +304,7 @@ export class RobotMotionController {
     for (const finger of fingerNames) {
       const index = fingerNames.indexOf(finger);
       const lead = finger === 'index' || finger === 'middle' ? 1 : finger === 'ring' ? 0.62 : finger === 'thumb' ? 0.46 : 0.38;
-      const targetCurl = isOar
+      const targetCurl = isOrb
         ? 0.18 + (1 - lead) * 0.24 + contactAmount * 0.08
         : 0.08 + (1 - lead) * 0.16 + Math.sin(progress * Math.PI + index) * 0.035;
       curls[finger] = lerp(curls[finger], clamp(targetCurl, 0.04, 0.58), amount * (0.48 + lead * 0.32));
@@ -344,7 +344,7 @@ export class RobotMotionController {
       ? cloneVec(this.previousHands[handedness].palm)
       : this.defaultPerformancePalm(handedness);
     const to = this.clampPerformanceTarget(targets[targetIndex]);
-    const duration = instrument === 'oar'
+    const duration = instrument === 'orb'
       ? lerp(0.58, 0.96, hash(seed + 1.1))
       : lerp(0.92, 1.58, hash(seed + 1.1));
     const initialDelay = current ? 0 : (handedness === 'left' ? duration * 0.34 : 0);
@@ -397,9 +397,9 @@ export class RobotMotionController {
   }
 
   private applyPerformanceHandShape(hand: HandPose, intent: RobotPerformanceIntent): void {
-    const isOar = intent.instrument === 'oar';
+    const isOrb = intent.instrument === 'orb';
     const side = hand.handedness === 'left' ? -1 : 1;
-    const palmAmount = intent.amount * (isOar ? 0.34 : 0.42);
+    const palmAmount = intent.amount * (isOrb ? 0.34 : 0.42);
     hand.palm = lerpVec(hand.palm, intent.palm, palmAmount);
 
     for (const finger of fingerNames) {
@@ -407,23 +407,23 @@ export class RobotMotionController {
       const lead = finger === 'index' || finger === 'middle' ? 1 : finger === 'ring' ? 0.62 : finger === 'thumb' ? 0.48 : 0.36;
       const spread = fingerSpread[finger] * side;
       const fingerAmount = clamp(intent.amount * (0.30 + intent.contactAmount * 0.70) * (0.52 + lead * 0.48), 0, 1);
-      const glide = isOar
+      const glide = isOrb
         ? 0
         : Math.sin(intent.progress * Math.PI * 2 + intent.seed + index * 0.61) * 0.026;
       const tipTarget = vec(
-        clamp(intent.aim.x + spread * (isOar ? 0.045 : 0.080) + glide * side, -0.98, 0.98),
-        clamp(intent.aim.y + (isOar ? (1 - lead) * 0.032 : lead * 0.024 + glide * 0.35), 0.12, 1.58),
-        clamp(intent.aim.z + (isOar ? (1 - lead) * 0.052 : Math.cos(intent.progress * Math.PI + index) * 0.028), -0.40, 1.0),
+        clamp(intent.aim.x + spread * (isOrb ? 0.045 : 0.080) + glide * side, -0.98, 0.98),
+        clamp(intent.aim.y + (isOrb ? (1 - lead) * 0.032 : lead * 0.024 + glide * 0.35), 0.12, 1.58),
+        clamp(intent.aim.z + (isOrb ? (1 - lead) * 0.052 : Math.cos(intent.progress * Math.PI + index) * 0.028), -0.40, 1.0),
       );
       const baseTarget = vec(
-        hand.palm.x + spread * (isOar ? 0.26 : 0.35),
+        hand.palm.x + spread * (isOrb ? 0.26 : 0.35),
         hand.palm.y + 0.028 + index * 0.004,
-        hand.palm.z + (isOar ? 0.010 : 0.006),
+        hand.palm.z + (isOrb ? 0.010 : 0.006),
       );
       const midTarget = vec(
-        baseTarget.x + (tipTarget.x - baseTarget.x) * (isOar ? 0.48 : 0.56),
-        baseTarget.y + (tipTarget.y - baseTarget.y) * (isOar ? 0.52 : 0.58) + lead * (isOar ? 0.026 : 0.016),
-        baseTarget.z + (tipTarget.z - baseTarget.z) * (isOar ? 0.50 : 0.58),
+        baseTarget.x + (tipTarget.x - baseTarget.x) * (isOrb ? 0.48 : 0.56),
+        baseTarget.y + (tipTarget.y - baseTarget.y) * (isOrb ? 0.52 : 0.58) + lead * (isOrb ? 0.026 : 0.016),
+        baseTarget.z + (tipTarget.z - baseTarget.z) * (isOrb ? 0.50 : 0.58),
       );
       const pose = hand.fingers[finger];
       pose.base = lerpVec(pose.base, baseTarget, fingerAmount);
@@ -431,7 +431,7 @@ export class RobotMotionController {
       pose.tip = lerpVec(pose.tip, tipTarget, fingerAmount);
       pose.curl = lerp(
         pose.curl,
-        clamp(isOar ? 0.08 + (1 - lead) * 0.24 : 0.05 + (1 - lead) * 0.16, 0.04, 0.42),
+        clamp(isOrb ? 0.08 + (1 - lead) * 0.24 : 0.05 + (1 - lead) * 0.16, 0.04, 0.42),
         fingerAmount,
       );
     }

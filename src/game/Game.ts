@@ -9,7 +9,7 @@ import { HandTracker } from './handTracking';
 import { MidiInputController, type MidiNoteEvent, type MidiState } from './midiInput';
 import { clamp, hash } from './math';
 import { MultiplayerClient } from './multiplayer';
-import { Oar } from './visuals/Oar';
+import { Orb } from './visuals/Orb';
 import { Starlace } from './visuals/Starlace';
 import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
@@ -39,6 +39,15 @@ const PLAYERS_DEFS = {
 
 const INSTRUMENTS_DEFS = {
   playerOffset: { default: 0.7, min: 0, max: 1.0, step: 0.01, label: 'player offset' },
+} as const;
+
+const INSTRUMENT_FX_DEFS = {
+  reverbWet:      { default: 0.22, min: 0, max: 1,    step: 0.01, folder: 'reverb', label: 'wet' },
+  reverbDecay:    { default: 2.2,  min: 0.1, max: 10, step: 0.1,  folder: 'reverb', label: 'decay (s)' },
+  reverbPreDelay: { default: 0.01, min: 0, max: 0.2,  step: 0.005, folder: 'reverb', label: 'pre-delay' },
+  delayWet:       { default: 0.18, min: 0, max: 1,    step: 0.01, folder: 'delay', label: 'wet' },
+  delayTime:      { default: 0.32, min: 0, max: 1,    step: 0.01, folder: 'delay', label: 'time (s)' },
+  delayFeedback:  { default: 0.35, min: 0, max: 0.95, step: 0.01, folder: 'delay', label: 'feedback' },
 } as const;
 
 const INSTRUMENT_ANCHOR_Y = 0.98;
@@ -169,8 +178,8 @@ export class Game {
   private poseSession!: PoseSession;
   private broadcastTransport!: BroadcastChannelPoseTransport;
   private remoteStreamListeners = new Set<(stream: MediaStream | null) => void>();
-  private localOarOrbCountListeners = new Set<(count: number) => void>();
-  private localOarOrbCount = 0;
+  private localOrbCountListeners = new Set<(count: number) => void>();
+  private localOrbCount = 0;
   private localRig: HumanoidRig;
   private remoteRig: HumanoidRig;
   private robotMotion: RobotMotionController;
@@ -180,11 +189,11 @@ export class Game {
     local: {},
     remote: {},
   };
-  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'oar', remote: 'starlace' };
+  private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'orb', remote: 'starlace' };
   private playerCreatures: Record<PlayerSlot, CreatureId> = { local: 'lion', remote: 'robot' };
   private sculptor!: EnergySculptor;
   private backingTrackAnalyzer = new BackingTrackAnalyzer();
-  private lastOarHitAt = -10;
+  private lastOrbHitAt = -10;
   private lastStarlacePluckAt = -10;
   private lastSynchronyAt = -10;
   // Sliding window of human note-on times (in elapsed seconds). Old entries are
@@ -232,6 +241,8 @@ export class Game {
   private readonly playersParams = makeParams(PLAYERS_DEFS);
   private instrumentsTweaks?: ReturnType<typeof registerTweaks<typeof INSTRUMENTS_DEFS>>;
   private readonly instrumentsParams = makeParams(INSTRUMENTS_DEFS);
+  private instrumentFxTweaks?: ReturnType<typeof registerTweaks<typeof INSTRUMENT_FX_DEFS>>;
+  private readonly instrumentFxParams = makeParams(INSTRUMENT_FX_DEFS);
   readonly paneDock: HTMLElement;
   private roomId: string;
   private roomSeed: number;
@@ -351,6 +362,7 @@ export class Game {
     this.refreshArchetype();
     this.setupPlayersPane();
     this.setupInstrumentsPane();
+    this.setupInstrumentFxPane();
     this.handTracker.attachPane(this.paneDock);
     attachHandDepthPane(this.paneDock);
     attachMousePosePane(this.paneDock);
@@ -363,7 +375,7 @@ export class Game {
   }
 
   // Suspends the shared Tone audio context whenever the tab is hidden or the
-  // window loses focus, so switching to another app silences the bed, oar,
+  // window loses focus, so switching to another app silences the bed, orb,
   // and synth — otherwise the camera keeps tracking and a hand near the face
   // (e.g. while thinking in an editor) starts playing notes. Releases held
   // synth voices first so the user doesn't return to a stuck note.
@@ -462,9 +474,9 @@ export class Game {
     this.remoteStreamListeners.add(listener);
   }
 
-  onLocalOarOrbCountChange(listener: (count: number) => void): void {
-    this.localOarOrbCountListeners.add(listener);
-    if (this.localOarOrbCount > 0) listener(this.localOarOrbCount);
+  onLocalOrbCountChange(listener: (count: number) => void): void {
+    this.localOrbCountListeners.add(listener);
+    if (this.localOrbCount > 0) listener(this.localOrbCount);
   }
 
   // Arms / disarms the push-to-talk mic. Acquiring the stream the first time
@@ -587,6 +599,8 @@ export class Game {
     this.cabinLightingTweaks?.dispose();
     this.introSceneTweaks?.dispose();
     this.playersTweaks?.dispose();
+    this.instrumentsTweaks?.dispose();
+    this.instrumentFxTweaks?.dispose();
     this.disposeCabinPlate();
     this.paneDock.remove();
     this.renderer.dispose();
@@ -928,6 +942,22 @@ export class Game {
     });
   }
 
+  private setupInstrumentFxPane(): void {
+    if (this.instrumentFxTweaks) return;
+    this.instrumentFxTweaks = registerTweaks(this.paneDock, 'instrumentFx', INSTRUMENT_FX_DEFS, {
+      title: 'Instrument FX',
+      params: this.instrumentFxParams,
+      onChange: {
+        reverbWet:      v => this.audioGraph.setInstrumentFxParam('reverbWet', v),
+        reverbDecay:    v => this.audioGraph.setInstrumentFxParam('reverbDecay', v),
+        reverbPreDelay: v => this.audioGraph.setInstrumentFxParam('reverbPreDelay', v),
+        delayWet:       v => this.audioGraph.setInstrumentFxParam('delayWet', v),
+        delayTime:      v => this.audioGraph.setInstrumentFxParam('delayTime', v),
+        delayFeedback:  v => this.audioGraph.setInstrumentFxParam('delayFeedback', v),
+      },
+    });
+  }
+
   private installPlayerVisuals(): void {
     // Only construct each player's currently-active instrument visual at
     // boot. The other instrument is built lazily on first swap via
@@ -975,15 +1005,15 @@ export class Game {
         },
       });
     } else {
-      visual = new Oar(this.scene, paneDock, `oar-${player}`, {
+      visual = new Orb(this.scene, paneDock, `orb-${player}`, {
         palette: player,
         creature: this.playerCreatures[player],
-        title: `Piano Pads (${player === 'local' ? 'Local' : 'Partner'})`,
+        title: `Orb Pads (${player === 'local' ? 'Local' : 'Partner'})`,
         camera: player === 'local' ? this.camera : undefined,
         canvas: player === 'local' ? this.canvas : undefined,
         sculptor: this.sculptor,
         anchor,
-        onOrbCountChange: player === 'local' ? count => this.setLocalOarOrbCount(count) : undefined,
+        onOrbCountChange: player === 'local' ? count => this.setLocalOrbCount(count) : undefined,
         onHit: hit => {
           if (hit.held && hit.sourceId) {
             this.handSynth.triggerOrbNoteOn(player, hit.sourceId, hit.frequency, hit.velocity, hit.orbIndex, hit.envelope);
@@ -991,7 +1021,7 @@ export class Game {
             this.handSynth.triggerOrbHit(player, hit.frequency, hit.velocity, hit.orbIndex, hit.envelope);
           }
           this.cueRobotInstrumentStrike(player, hit.hand, hit.worldPosition, hit.velocity);
-          this.lastOarHitAt = performance.now() / 1000;
+          this.lastOrbHitAt = performance.now() / 1000;
           if (player === 'local') this.recordHumanNote();
           this.checkSynchrony();
         },
@@ -1031,7 +1061,7 @@ export class Game {
   private async prewarmPlayerVisuals(): Promise<void> {
     const visuals = new Set<PlayerVisual>();
     for (const slot of ['local', 'remote'] as const) {
-      for (const id of ['oar', 'starlace'] as const) {
+      for (const id of ['orb', 'starlace'] as const) {
         const visual = this.playerVisualCache[slot][id];
         if (visual) visuals.add(visual);
       }
@@ -1072,10 +1102,10 @@ export class Game {
     for (const visual of visuals) visual.dispose();
   }
 
-  private setLocalOarOrbCount(count: number): void {
-    if (count === this.localOarOrbCount) return;
-    this.localOarOrbCount = count;
-    for (const listener of this.localOarOrbCountListeners) listener(count);
+  private setLocalOrbCount(count: number): void {
+    if (count === this.localOrbCount) return;
+    this.localOrbCount = count;
+    for (const listener of this.localOrbCountListeners) listener(count);
   }
 
   private async swapPlayerVisual(player: PlayerSlot, id: InstrumentId): Promise<void> {
@@ -1108,7 +1138,7 @@ export class Game {
 
   private checkSynchrony(): void {
     const now = performance.now() / 1000;
-    if (Math.abs(this.lastOarHitAt - this.lastStarlacePluckAt) < 0.4 &&
+    if (Math.abs(this.lastOrbHitAt - this.lastStarlacePluckAt) < 0.4 &&
         now - this.lastSynchronyAt > 0.25) {
       this.lastSynchronyAt = now;
       this.sculptor?.fireSynchrony();
@@ -1168,8 +1198,8 @@ export class Game {
   }
 
   private refreshArchetype(): void {
-    const localKind = this.playerInstruments.local === 'starlace' ? 'starlace' : 'oar';
-    const remoteKind = this.playerInstruments.remote === 'starlace' ? 'starlace' : 'oar';
+    const localKind = this.playerInstruments.local === 'starlace' ? 'starlace' : 'orb';
+    const remoteKind = this.playerInstruments.remote === 'starlace' ? 'starlace' : 'orb';
     this.sculptor?.setArchetype(pickArchetype(localKind, remoteKind));
   }
 
