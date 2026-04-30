@@ -1378,24 +1378,9 @@
   /* Decorative outer frame — eats screen real estate on small phones. */
   #stage-wrap::before { display: none; }
 
-  /* Title plaque: condense; show only "Jam Train" + room. The footer
-     metadata gets compacted via title-footer rules below. */
-  .title-plaque {
-    top: 10px;
-    left: 10px;
-    min-width: 0;
-    max-width: 52vw;
-    padding: 10px 12px 9px;
-  }
-  .title-plaque .stamp { font-size: 9px; margin-bottom: 2px !important; }
-  .title-name { font-size: 18px; }
-  .title-tagline { display: none; }
-  .title-plaque .hline { display: none; }
-  .title-footer { gap: 10px; }
-  .title-footer .label { font-size: 8px; letter-spacing: 0.18em; }
-  .title-footer .room { font-size: 11px; }
-  .title-footer .line { display: none; }
-  .title-footer > div:last-child { display: none; }
+  /* Title plaque: hidden on mobile. Destination/room metadata is a desktop
+     nicety and on phones it crowded the player plaques and pickers. */
+  .title-plaque { display: none; }
 
   /* Share — keep, but smaller and tighter to the corner. */
   .share-button {

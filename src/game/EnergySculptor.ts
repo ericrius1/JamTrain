@@ -258,6 +258,9 @@ export class EnergySculptor implements EnergySink {
 
   // Decorative scene elements.
   private static TIMER_SEGMENTS = 96;
+  private static readonly PROJECTOR_RING_BOB_SPEED = 1.08;
+  private static readonly PROJECTOR_RING_BOB_SPEED_STEP = 0.13;
+  private static readonly PROJECTOR_RING_BOB_PHASE_STEP = 0.82;
   private projectorRings: THREE.Line[] = [];
   private projectorRingMaterial?: THREE.LineBasicMaterial;
   private projectorRingGeom?: THREE.BufferGeometry;
@@ -1010,15 +1013,23 @@ export class EnergySculptor implements EnergySink {
   }
 
   private layoutProjectorRings(): void {
+    this.positionProjectorRings(0);
+  }
+
+  private positionProjectorRings(time: number): void {
     const baseRadius = this.params.timerRingRadius;
     const spacing = this.params.projectorRingSpacing;
     const radiusScale = this.params.projectorRingScale;
     const baseY = this.center.y + this.params.projectorBaseY;
+    const bobAmplitude = Math.min(0.006, Math.max(0.0015, spacing * 0.22));
     for (let i = 0; i < this.projectorRings.length; i += 1) {
       const ring = this.projectorRings[i];
       const r = baseRadius * Math.pow(radiusScale, i);
+      const bobSpeed = EnergySculptor.PROJECTOR_RING_BOB_SPEED + i * EnergySculptor.PROJECTOR_RING_BOB_SPEED_STEP;
+      const bobPhase = i * EnergySculptor.PROJECTOR_RING_BOB_PHASE_STEP;
+      const bob = Math.sin(time * bobSpeed + bobPhase) * bobAmplitude;
       ring.scale.set(r, 1, r);
-      ring.position.set(this.center.x, baseY + i * spacing, this.center.z);
+      ring.position.set(this.center.x, baseY + i * spacing + bob, this.center.z);
     }
   }
 
@@ -1026,6 +1037,7 @@ export class EnergySculptor implements EnergySink {
     if (!this.projectorRingMaterial) return;
     const build = Math.min(1, this.roundProgress);
     this.projectorRingMaterial.opacity = this.dissolveMode > 0 ? 0.18 : 0.12 + build * 0.18;
+    this.positionProjectorRings(this.elapsed);
   }
 
   // Mutually irrational base periods (in seconds) for the three Euler axes.
