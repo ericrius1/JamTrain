@@ -3,8 +3,6 @@ import {
   Fn,
   If,
   Return,
-  atan,
-  cameraViewMatrix,
   float,
   instanceIndex,
   instancedArray,
@@ -66,6 +64,8 @@ const BLENDING_LOOKUP: Record<BlendingMode, THREE.Blending> = {
   none: THREE.NoBlending,
 };
 
+const PARTICLE_COUNT = 1_000_000;
+
 const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
   thomas: 'Thomas',
   lorenz: 'Lorenz',
@@ -83,7 +83,6 @@ const DEFAULT_ATTRACTOR_HOLD_SECONDS = 20;
 const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 
 export const SCULPTOR_DEFS = {
-  particleCount:      { default: 300000, min: 4096, max: 300000, step: 256, label: 'particle count', hidden: false },
   particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
@@ -104,9 +103,6 @@ export const SCULPTOR_DEFS = {
   attractorOverride:  { type: 'select' as const, default: 'cycle' as const, options: ATTRACTOR_OPTIONS, folder: 'Field Shape', label: 'attractor' },
   attractorHoldSeconds:       { default: DEFAULT_ATTRACTOR_HOLD_SECONDS,       min: 1,   max: 120, step: 0.5, folder: 'Field Shape', label: 'hold s' },
   attractorTransitionSeconds: { default: DEFAULT_ATTRACTOR_TRANSITION_SECONDS, min: 0.1, max: 30,  step: 0.1, folder: 'Field Shape', label: 'xfade s' },
-
-  speedGlow:          { default: 0.7,   min: 0,     max: 2,    step: 0.01,  folder: 'Appearance', label: 'speed glow' },
-  stretchScale:       { default: 0.06,  min: 0,     max: 0.4,  step: 0.005, folder: 'Appearance', label: 'accel stretch' },
 
   timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
   projectorRingCount:   { default: 5,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
@@ -146,8 +142,9 @@ export class EnergySculptor implements EnergySink {
   private mesh!: THREE.InstancedMesh;
   private material!: THREE.SpriteNodeMaterial;
 
-  private count: number;
+  private readonly count = PARTICLE_COUNT;
   private spawnCursorCpu = 0;
+  private activeSlotCountCpu = 0;
   private pendingEmits: EmitRequest[] = [];
 
   // CPU-side bookkeeping for the live-particle counter shown in DevOverlay.
@@ -155,12 +152,13 @@ export class EnergySculptor implements EnergySink {
   // time; `getAliveParticleCount` prunes expired batches and sums the rest.
   private aliveBatches: { spawnedAt: number; count: number; lifeMax: number }[] = [];
 
-  // Per-particle GPU storage.
-  private positionsBuffer!: THREE.StorageBufferNode<'vec3'>;
-  private velocitiesBuffer!: THREE.StorageBufferNode<'vec3'>;
-  private colorsBuffer!: THREE.StorageBufferNode<'vec3'>;
-  // x = age (seconds), y = lifeMax (seconds), z = smoothedAccel, w = reserved
-  private metaBuffer!: THREE.StorageBufferNode<'vec4'>;
+  // Per-particle GPU storage. Packed to keep the hot path at three storage
+  // reads/writes instead of four:
+  // positionAge = (position.xyz, age seconds)
+  // colorLife = (color.rgb, lifeMax seconds)
+  private positionAgeBuffer!: THREE.StorageBufferNode<'vec4'>;
+  private velocityBuffer!: THREE.StorageBufferNode<'vec3'>;
+  private colorLifeBuffer!: THREE.StorageBufferNode<'vec4'>;
 
   // Spawn queue uniforms (uniformArray mutated on CPU each frame, auto-uploaded).
   private spawnPosArray: THREE.Vector3[] = [];
@@ -177,6 +175,7 @@ export class EnergySculptor implements EnergySink {
   private spawnCountUniform = uniform(0);
   private spawnCursorUniform = uniform(0);
   private attractorSelectUniform = uniform(1);
+  private activeSlotCountUniform = uniform(0);
   private spawnsThisFrame = 0;
 
   // Integration uniforms.
@@ -187,8 +186,6 @@ export class EnergySculptor implements EnergySink {
   private lifeMaxUniform = uniform(28);
   private opacityFadeStartUniform = uniform(0.90);
   private centerUniform = uniform(new THREE.Vector3());
-  private speedGlowUniform = uniform(0.7);
-  private stretchScaleUniform = uniform(0.06);
   private particleSizeUniform = uniform(0.022);
   private particleOpacityUniform = uniform(0.85);
 
@@ -259,7 +256,8 @@ export class EnergySculptor implements EnergySink {
 
   // Compute passes (ComputeNode produced by Fn(...)().compute(N)).
   private emitCompute!: THREE.ComputeNode;
-  private integrateCompute!: THREE.ComputeNode;
+  private integrateComputeByAttractor!: Record<AttractorKind, THREE.ComputeNode>;
+  private integrateCrossfadeCompute!: THREE.ComputeNode;
 
   // Frame state.
   private currentArchetype: ArchetypeId = 'oarMelody';
@@ -312,7 +310,6 @@ export class EnergySculptor implements EnergySink {
     this.renderer = renderer;
     this.center = center.clone();
     this.params = { ...Object.fromEntries(Object.entries(SCULPTOR_DEFS).map(([k, d]) => [k, d.default])) } as SculptorParams;
-    this.count = this.params.particleCount;
 
     this.allocateBuffers();
     this.allocateSpawnQueue();
@@ -329,8 +326,6 @@ export class EnergySculptor implements EnergySink {
     this.particleOpacityUniform.value = this.params.particleOpacity;
     this.applyParticleLifetime();
     this.opacityFadeStartUniform.value = this.params.opacityFadeStart;
-    this.speedGlowUniform.value = this.params.speedGlow;
-    this.stretchScaleUniform.value = this.params.stretchScale;
     this.fieldFalloffStartUniform.value = this.params.fieldFalloffStart;
     this.fieldFalloffEndUniform.value = this.params.fieldFalloffEnd;
     this.finalFieldEffectUniform.value = this.params.finalFieldEffect;
@@ -350,8 +345,6 @@ export class EnergySculptor implements EnergySink {
         projectorBaseY: () => this.layoutProjectorRings(),
         particleSize: v => { this.particleSizeUniform.value = v; },
         particleOpacity: v => { this.particleOpacityUniform.value = v; },
-        speedGlow: v => { this.speedGlowUniform.value = v; },
-        stretchScale: v => { this.stretchScaleUniform.value = v; },
         particleLifetime: v => { this.applyParticleLifetime(v); },
         opacityFadeStart: v => { this.opacityFadeStartUniform.value = v; },
         blendingMode: v => {
@@ -487,7 +480,7 @@ export class EnergySculptor implements EnergySink {
     if (this.spawnsThisFrame > 0) {
       this.renderer.compute(this.emitCompute);
     }
-    this.renderer.compute(this.integrateCompute);
+    this.dispatchIntegrateCompute();
   }
 
   // Used after a hidden-tab pause: expire particle lifetimes without applying
@@ -498,9 +491,16 @@ export class EnergySculptor implements EnergySink {
     const previousAgeDt = this.ageDtUniform.value;
     this.dtUniform.value = 0;
     this.ageDtUniform.value = seconds;
-    this.renderer.compute(this.integrateCompute);
+    this.dispatchIntegrateCompute();
     this.dtUniform.value = previousDt;
     this.ageDtUniform.value = previousAgeDt;
+  }
+
+  private dispatchIntegrateCompute(): void {
+    const compute = this.crossfadeRemaining > 0
+      ? this.integrateCrossfadeCompute
+      : this.integrateComputeByAttractor[this.currentAttractor];
+    this.renderer.compute(compute);
   }
 
   dispose(): void {
@@ -687,12 +687,11 @@ export class EnergySculptor implements EnergySink {
   }
 
   private allocateBuffers(): void {
-    // All particles start zeroed. lifeMax=0 means dead, so the freshly
+    // All particles start zeroed. colorLife.w=0 means dead, so the freshly
     // allocated pool draws nothing.
-    this.positionsBuffer = instancedArray(this.count, 'vec3');
-    this.velocitiesBuffer = instancedArray(this.count, 'vec3');
-    this.colorsBuffer = instancedArray(this.count, 'vec3');
-    this.metaBuffer = instancedArray(this.count, 'vec4');
+    this.positionAgeBuffer = instancedArray(this.count, 'vec4');
+    this.velocityBuffer = instancedArray(this.count, 'vec3');
+    this.colorLifeBuffer = instancedArray(this.count, 'vec4');
   }
 
   private allocateSpawnQueue(): void {
@@ -1524,4 +1523,3 @@ function clampRange(value: number, min: number, max: number, fallback: number): 
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, value));
 }
-
