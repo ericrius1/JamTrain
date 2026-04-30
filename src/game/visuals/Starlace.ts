@@ -344,8 +344,8 @@ export class Starlace implements PlayerVisual {
     this.sparkMaterial = new THREE.MeshBasicMaterial({
       color: 0xffffff,
       transparent: true,
-      opacity: 0.64,
-      blending: THREE.NormalBlending,
+      opacity: 0.95,
+      blending: THREE.AdditiveBlending,
       depthWrite: false,
       vertexColors: true,
     });
@@ -620,9 +620,9 @@ export class Starlace implements PlayerVisual {
       this.clearPointerState();
     }
     this.decayPulses(delta);
+    this.writeSparks();
     this.writeLines();
     this.writeNodes();
-    this.writeSparks();
     this.tickReveal();
   }
 
@@ -726,10 +726,20 @@ export class Starlace implements PlayerVisual {
       degree[p.j] += 1;
     }
     this.adjacency = Array.from({ length: this.nodes.length }, () => []);
-    for (const [a, b] of this.edges) {
+    this.edgeIndexByPair.clear();
+    for (let e = 0; e < this.edges.length; e += 1) {
+      const [a, b] = this.edges[e];
       this.adjacency[a].push(b);
       this.adjacency[b].push(a);
+      this.edgeIndexByPair.set(this.edgePairKey(a, b), e);
     }
+    this.edgeSparkBoost = new Float32Array(this.edges.length);
+  }
+
+  private edgePairKey(a: number, b: number): number {
+    const lo = a < b ? a : b;
+    const hi = a < b ? b : a;
+    return lo * 4096 + hi;
   }
 
   private buildKeyboardPitchBuckets(): void {
@@ -858,9 +868,10 @@ export class Starlace implements PlayerVisual {
       const distanceFade = 1 - smoothstep01(
         (distance - STARLACE_LINK_FADE_START) / Math.max(0.001, STARLACE_MAX_LINK_SPAN - STARLACE_LINK_FADE_START),
       );
-      const edgePulse = Math.max(a.pulse, b.pulse);
-      const lineGlow = eased * clamp(0.18 + distanceFade * 0.86 + edgePulse * 0.24 + this.smoothedEnergy * 0.14, 0, 1.12);
-      const pulseGlow = eased * clamp(edgePulse * 0.92 + this.smoothedPulse * 0.18, 0, 1.08);
+      const sparkBoost = this.edgeSparkBoost[e] ?? 0;
+      const edgePulse = Math.max(a.pulse, b.pulse, sparkBoost);
+      const lineGlow = eased * clamp(0.18 + distanceFade * 0.86 + edgePulse * 0.24 + this.smoothedEnergy * 0.14 + sparkBoost * 0.45, 0, 1.45);
+      const pulseGlow = eased * clamp(edgePulse * 0.92 + this.smoothedPulse * 0.18 + sparkBoost * 0.95, 0, 1.55);
       this.linePositions[cursor] = a.world.x;
       this.pulseLinePositions[cursor++] = a.world.x;
       this.linePositions[cursor] = a.world.y;
@@ -947,6 +958,12 @@ export class Starlace implements PlayerVisual {
   }
 
   private writeSparks(): void {
+    // Energy traveling through a node = a colored ripple along the link.
+    // The spark sphere is the comet head (additive, source-note color, sine
+    // bloom mid-flight); edgeSparkBoost lights the link itself in unison so
+    // the whole edge surges as the wave passes through.
+    const boost = this.edgeSparkBoost;
+    for (let e = 0; e < boost.length; e += 1) boost[e] = 0;
     let visible = 0;
     for (let i = 0; i < this.sparks.length; i += 1) {
       const spark = this.sparks[i];
@@ -956,17 +973,27 @@ export class Starlace implements PlayerVisual {
       const b = this.nodes[spark.to];
       const t = easeOutCubic(age);
       _scratch.copy(a.world).lerp(b.world, t);
-      const lift = Math.sin(age * Math.PI) * this.params.sparkSize * 1.8;
+      const lift = Math.sin(age * Math.PI) * this.params.sparkSize * 1.6;
       _scratch.addScaledVector(this.fieldUp, lift);
-      const size = this.params.sparkSize * (1 - age * 0.6) * (0.35 + spark.intensity);
+      // Sine bloom: small at endpoints, full glow at midpoint -> reads as a
+      // wavefront swelling as it crosses, not a fading dot.
+      const bloom = Math.sin(age * Math.PI);
+      const size = this.params.sparkSize * (0.55 + bloom * 1.05) * (0.55 + spark.intensity * 0.55);
       _dummy.position.copy(_scratch);
       _dummy.scale.setScalar(size);
       _dummy.updateMatrix();
       this.sparkMesh.setMatrixAt(visible, _dummy.matrix);
-      this.noteColorForNode(a, _colorA).lerp(this.noteColorForNode(b, _colorB), t);
-      _colorA.lerp(this.hot, 0.08).multiplyScalar(0.92 + spark.intensity * 0.34);
+      // Color: blend from source note color toward dest, biased toward source
+      // (ripple "carries" the note that fired). Additive blending + bright
+      // multiplier gives the glow.
+      this.noteColorForNode(a, _colorA).lerp(this.noteColorForNode(b, _colorB), t * 0.55);
+      _colorA.multiplyScalar(0.85 + spark.intensity * 0.7 + bloom * 0.6);
       this.sparkMesh.setColorAt(visible, _colorA);
       visible += 1;
+      if (spark.edgeIndex >= 0 && spark.edgeIndex < boost.length) {
+        const edgeContribution = bloom * (0.55 + spark.intensity * 0.85);
+        if (edgeContribution > boost[spark.edgeIndex]) boost[spark.edgeIndex] = edgeContribution;
+      }
       if (visible >= MAX_SPARKS) break;
     }
     for (let i = visible; i < MAX_SPARKS; i += 1) {
@@ -1687,8 +1714,10 @@ export class Starlace implements PlayerVisual {
     const spark = this.sparks[this.sparkCursor % MAX_SPARKS];
     spark.from = from;
     spark.to = to;
+    spark.edgeIndex = this.edgeIndexByPair.get(this.edgePairKey(from, to)) ?? -1;
     spark.start = this.elapsed;
-    spark.duration = 0.22 + hash(from * 3.17 + to * 7.31) * 0.22;
+    // Longer durations = ripple feel (was 0.22-0.44s).
+    spark.duration = 0.36 + hash(from * 3.17 + to * 7.31) * 0.32;
     spark.intensity = clamp(intensity, 0, 1);
     this.sparkCursor += 1;
   }
