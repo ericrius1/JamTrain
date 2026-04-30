@@ -561,10 +561,6 @@ export class Game {
     this.backingTrackAnalyzer.attachPane(this.paneDock, this.sculptor);
   }
 
-  toggleParticles(): void {
-    this.devTweaks?.set('particlesEnabled', !this.devParams.particlesEnabled);
-  }
-
   private setupDevPane(): void {
     if (this.devTweaks) return;
     this.devTweaks = registerTweaks(this.paneDock, 'dev', DEV_DEFS, {

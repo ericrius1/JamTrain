@@ -13,20 +13,17 @@ export class DevOverlay {
   private onToggle?: (visible: boolean) => void;
   private onCameraCycle?: () => void;
   private getParticleCount?: () => number;
-  private onParticleToggle?: () => void;
 
   constructor(
     paneDock: HTMLElement,
     onToggle?: (visible: boolean) => void,
     onCameraCycle?: () => void,
     getParticleCount?: () => number,
-    onParticleToggle?: () => void,
   ) {
     this.paneDock = paneDock;
     this.onToggle = onToggle;
     this.onCameraCycle = onCameraCycle;
     this.getParticleCount = getParticleCount;
-    this.onParticleToggle = onParticleToggle;
     this.paneDock.classList.add('hidden');
 
     this.stats = new Stats();
@@ -79,10 +76,6 @@ export class DevOverlay {
         e.preventDefault();
         resetAllTweaks();
         return;
-      }
-      if (e.key === 'p' || e.key === 'P') {
-        e.preventDefault();
-        this.onParticleToggle?.();
       }
     };
     window.addEventListener('keydown', this.keyHandler);
