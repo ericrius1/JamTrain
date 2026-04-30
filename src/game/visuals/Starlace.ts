@@ -987,6 +987,11 @@ export class Starlace implements PlayerVisual {
     let maxPulse = 0;
     let cursor = 0;
     let colorCursor = 0;
+    const segments = this.pluckSegments;
+    const invSeg = 1 / segments;
+    const amp = this.params.pluckAmplitude;
+    const freq = this.params.pluckFrequency;
+    const wavePhaseBase = this.elapsed * freq * TAU;
     for (let e = 0; e < this.edges.length; e += 1) {
       const [aIdx, bIdx] = this.edges[e];
       const a = this.nodes[aIdx];
@@ -996,9 +1001,9 @@ export class Starlace implements PlayerVisual {
       // line spans the full edge as before.
       const t = this.edgeRevealT[e] ?? 1;
       const eased = smoothstep01(t);
-      const bx = a.world.x + (b.world.x - a.world.x) * eased;
-      const by = a.world.y + (b.world.y - a.world.y) * eased;
-      const bz = a.world.z + (b.world.z - a.world.z) * eased;
+      const endX = a.world.x + (b.world.x - a.world.x) * eased;
+      const endY = a.world.y + (b.world.y - a.world.y) * eased;
+      const endZ = a.world.z + (b.world.z - a.world.z) * eased;
       const distance = this.edgeDistances[e] ?? STARLACE_MAX_LINK_SPAN;
       const distanceFade = 1 - smoothstep01(
         (distance - STARLACE_LINK_FADE_START) / Math.max(0.001, STARLACE_MAX_LINK_SPAN - STARLACE_LINK_FADE_START),
@@ -1006,18 +1011,23 @@ export class Starlace implements PlayerVisual {
       const edgePulse = Math.max(a.pulse, b.pulse);
       const lineGlow = eased * clamp(0.18 + distanceFade * 0.86 + edgePulse * 0.24 + this.smoothedEnergy * 0.14, 0, 1.12);
       const pulseGlow = eased * clamp(edgePulse * 0.92 + this.smoothedPulse * 0.18, 0, 1.08);
-      this.linePositions[cursor] = a.world.x;
-      this.pulseLinePositions[cursor++] = a.world.x;
-      this.linePositions[cursor] = a.world.y;
-      this.pulseLinePositions[cursor++] = a.world.y;
-      this.linePositions[cursor] = a.world.z;
-      this.pulseLinePositions[cursor++] = a.world.z;
-      this.linePositions[cursor] = bx;
-      this.pulseLinePositions[cursor++] = bx;
-      this.linePositions[cursor] = by;
-      this.pulseLinePositions[cursor++] = by;
-      this.linePositions[cursor] = bz;
-      this.pulseLinePositions[cursor++] = bz;
+
+      // Plucked-string vibration: middle vertices offset perpendicular to
+      // edge axis, pinned at both endpoints (sin(πs) shape). Two perp axes
+      // give an elliptical wobble so the string doesn't read as flat.
+      const pluck = this.edgePluck[e];
+      this._edgeDir.set(endX - a.world.x, endY - a.world.y, endZ - a.world.z);
+      const edgeLen = this._edgeDir.length();
+      if (edgeLen > 1e-5) this._edgeDir.multiplyScalar(1 / edgeLen);
+      this._perp1.crossVectors(this._edgeDir, this.fieldUp);
+      if (this._perp1.lengthSq() < 1e-6) this._perp1.crossVectors(this._edgeDir, this.fieldSide);
+      if (this._perp1.lengthSq() < 1e-6) this._perp1.set(0, 1, 0);
+      this._perp1.normalize();
+      this._perp2.crossVectors(this._edgeDir, this._perp1).normalize();
+      const phase = wavePhaseBase + this.edgePluckPhase[e];
+      const wave1 = Math.sin(phase);
+      const wave2 = Math.sin(phase + Math.PI * 0.5) * 0.55;
+      const ampScaled = amp * pluck * eased;
 
       this.noteColorForNode(a, _colorB);
       this.noteColorForNode(b, _colorC);
@@ -1029,19 +1039,75 @@ export class Starlace implements PlayerVisual {
       _colorB.lerp(this.hot, 0.10 + edgePulse * 0.08).multiplyScalar(pulseGlow * 0.92);
       _colorC.lerp(this.hot, 0.10 + edgePulse * 0.08).multiplyScalar(pulseGlow * 0.92);
 
-      this.lineColors[colorCursor] = _colorA.r;
-      this.pulseLineColors[colorCursor++] = _colorB.r;
-      this.lineColors[colorCursor] = _colorA.g;
-      this.pulseLineColors[colorCursor++] = _colorB.g;
-      this.lineColors[colorCursor] = _colorA.b;
-      this.pulseLineColors[colorCursor++] = _colorB.b;
+      const ax = a.world.x;
+      const ay = a.world.y;
+      const az = a.world.z;
+      const dx = endX - ax;
+      const dy = endY - ay;
+      const dz = endZ - az;
+      const p1x = this._perp1.x;
+      const p1y = this._perp1.y;
+      const p1z = this._perp1.z;
+      const p2x = this._perp2.x;
+      const p2y = this._perp2.y;
+      const p2z = this._perp2.z;
 
-      this.lineColors[colorCursor] = _colorA.r;
-      this.pulseLineColors[colorCursor++] = _colorC.r;
-      this.lineColors[colorCursor] = _colorA.g;
-      this.pulseLineColors[colorCursor++] = _colorC.g;
-      this.lineColors[colorCursor] = _colorA.b;
-      this.pulseLineColors[colorCursor++] = _colorC.b;
+      const sampleAt = (s: number, out: { x: number; y: number; z: number }) => {
+        const baseX = ax + dx * s;
+        const baseY = ay + dy * s;
+        const baseZ = az + dz * s;
+        // sin(πs) pins both ends; ampScaled = 0 when no pluck → straight line.
+        const shape = Math.sin(Math.PI * s);
+        const offset = shape * ampScaled;
+        const off1 = offset * wave1;
+        const off2 = offset * wave2;
+        out.x = baseX + p1x * off1 + p2x * off2;
+        out.y = baseY + p1y * off1 + p2y * off2;
+        out.z = baseZ + p1z * off1 + p2z * off2;
+      };
+
+      const pNow = { x: 0, y: 0, z: 0 };
+      const pNext = { x: 0, y: 0, z: 0 };
+      sampleAt(0, pNow);
+      for (let k = 0; k < segments; k += 1) {
+        const s1 = (k + 1) * invSeg;
+        sampleAt(s1, pNext);
+        // segment k start vertex
+        this.linePositions[cursor] = pNow.x;
+        this.pulseLinePositions[cursor++] = pNow.x;
+        this.linePositions[cursor] = pNow.y;
+        this.pulseLinePositions[cursor++] = pNow.y;
+        this.linePositions[cursor] = pNow.z;
+        this.pulseLinePositions[cursor++] = pNow.z;
+        // segment k end vertex
+        this.linePositions[cursor] = pNext.x;
+        this.pulseLinePositions[cursor++] = pNext.x;
+        this.linePositions[cursor] = pNext.y;
+        this.pulseLinePositions[cursor++] = pNext.y;
+        this.linePositions[cursor] = pNext.z;
+        this.pulseLinePositions[cursor++] = pNext.z;
+
+        // Color along edge: lerp endpoint colors by midpoint s.
+        const sMid = (k + 0.5) * invSeg;
+        const baseR = _colorA.r;
+        const baseG = _colorA.g;
+        const baseB_ = _colorA.b;
+        const pulseR = _colorB.r * (1 - sMid) + _colorC.r * sMid;
+        const pulseG = _colorB.g * (1 - sMid) + _colorC.g * sMid;
+        const pulseB = _colorB.b * (1 - sMid) + _colorC.b * sMid;
+        for (let v = 0; v < 2; v += 1) {
+          this.lineColors[colorCursor] = baseR;
+          this.pulseLineColors[colorCursor++] = pulseR;
+          this.lineColors[colorCursor] = baseG;
+          this.pulseLineColors[colorCursor++] = pulseG;
+          this.lineColors[colorCursor] = baseB_;
+          this.pulseLineColors[colorCursor++] = pulseB;
+        }
+
+        pNow.x = pNext.x;
+        pNow.y = pNext.y;
+        pNow.z = pNext.z;
+      }
       maxPulse = Math.max(maxPulse, a.pulse, b.pulse);
     }
     this.maxPulse += (maxPulse - this.maxPulse) * 0.35;
