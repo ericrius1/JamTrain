@@ -459,6 +459,72 @@
 .corner-filigree.bl { bottom: 8px; left: 8px;   transform: rotate(-90deg); }
 .corner-filigree.br { bottom: 8px; right: 8px;  transform: rotate(180deg); }
 
+/* Tweakpane dock — top-right of viewport. A single collapsible <details>
+   wraps every per-system pane so the user can roll the whole stack up out
+   of the way. Inner content scrolls inside max-height; summary is sticky
+   so the toggle stays reachable while scrolled. Mounted on #stage-wrap
+   (not #stage) so the controls keep their native size on narrow viewports
+   instead of shrinking with the letterboxed scene. */
+.tweak-pane-dock {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 280px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  pointer-events: auto;
+  background: linear-gradient(180deg, rgba(40, 24, 10, 0.92), rgba(20, 12, 6, 0.92));
+  border: 1px solid var(--brass-2);
+  border-radius: 4px;
+  box-shadow:
+    inset 0 1px 0 rgba(246, 179, 51, 0.25),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.55),
+    0 6px 22px rgba(0, 0, 0, 0.55);
+}
+.tweak-pane-dock > .tp-dfwv {
+  position: static;
+  width: 100%;
+}
+.tweak-pane-dock.hidden { display: none; }
+
+.tweak-pane-dock-summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 8px 12px 7px;
+  font-family: 'IM Fell English SC', serif;
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--sun);
+  background: linear-gradient(180deg, rgba(56, 38, 18, 0.96), rgba(30, 20, 10, 0.96));
+  border-bottom: 1px solid var(--brass-3);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.tweak-pane-dock-summary::-webkit-details-marker { display: none; }
+.tweak-pane-dock-summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--brass);
+  transition: transform 0.18s ease;
+  display: inline-block;
+}
+.tweak-pane-dock[open] > .tweak-pane-dock-summary::before {
+  transform: rotate(90deg);
+}
+.tweak-pane-dock-summary:hover {
+  color: #ffd06a;
+}
+
 .attractor-debug-message {
   margin: 8px 10px 0;
   padding: 8px 10px;

@@ -932,9 +932,13 @@ export class Starlace implements PlayerVisual {
       const pitchGlow = 1 - Math.abs((node.noteIndex / (this.hzTable.length - 1)) - this.smoothedPitch);
       const pulse = clamp(node.pulse + pitchGlow * this.smoothedEnergy * 0.18 + twinkle * 0.07, 0, 1);
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
-      const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.10) * reveal;
+      // Stronger pulse-driven swell + halo so a fired node visibly "lights up"
+      // whether the trigger is direct contact or a ripple arriving from a
+      // neighbor. Was: pulse*1.10 size, max materialGlow 0.88.
+      const flash = Math.pow(node.pulse, 1.05);
+      const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.55 + flash * 0.65) * reveal;
       const drawSize = Math.max(size, 0.0001);
-      const materialGlow = reveal * clamp(0.10 + twinkle * 0.05 + pulse * 0.12 + Math.pow(node.pulse, 1.15) * 0.62, 0, 0.88);
+      const materialGlow = reveal * clamp(0.10 + twinkle * 0.05 + pulse * 0.12 + flash * 1.05, 0, 1.30);
 
       _dummy.position.copy(node.world);
       _dummy.rotation.set(

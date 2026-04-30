@@ -346,6 +346,7 @@ async function createRuntime(): Promise<RuntimeApi> {
   ];
 
   const dev = new DevOverlay(
+    game.paneDock,
     visible => {
       if (!visible) game.setCameraMode('game');
       game.setDebugVisible(visible);
@@ -476,8 +477,8 @@ async function createRuntime(): Promise<RuntimeApi> {
   hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
   hud.setRemoteVolume(avPrefs.voiceVolume);
 
-  // Pressing R resets runtime params; piggyback on the same registry to also
-  // restore the mixer panel to in-code defaults.
+  // Pressing R in debug mode resets tweakpane params; piggyback on the same
+  // registry to also restore the mixer panel to in-code defaults.
   registerResetHook('av-prefs', () => {
     avPrefs.musicVolume = defaultAvPrefs.musicVolume;
     avPrefs.backingTrackVolume = defaultAvPrefs.backingTrackVolume;

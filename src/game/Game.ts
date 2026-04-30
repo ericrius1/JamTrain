@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { JamAudioGraph } from './audioGraph';
+import { attachHandDepthPane } from './handDepth';
 import { HandSynthEngine } from './handSynth';
 import { HandTracker } from './handTracking';
 import { MidiInputController, type MidiNoteEvent, type MidiState } from './midiInput';
@@ -14,7 +15,7 @@ import { pickArchetype } from './sculptor/archetypeShared';
 import type { HandContactPoint, InstrumentId, PlayerVisual } from './instruments';
 import { isInstrumentId, normalizeInstrumentId } from './instruments';
 import { isCreatureId, type CreatureId } from './creatures';
-import { makePlayerPose } from './pose';
+import { attachMousePosePane, makePlayerPose } from './pose';
 import { BroadcastChannelPoseTransport } from './pose/BroadcastChannelPoseTransport';
 import { PoseSession } from './pose/PoseSession';
 import { WebRtcPoseTransport } from './pose/WebRtcPoseTransport';
@@ -211,6 +212,7 @@ export class Game {
   private readonly playersParams = makeParams(PLAYERS_DEFS);
   private instrumentsTweaks?: ReturnType<typeof registerTweaks<typeof INSTRUMENTS_DEFS>>;
   private readonly instrumentsParams = makeParams(INSTRUMENTS_DEFS);
+  readonly paneDock: HTMLElement;
   private roomId: string;
   private roomSeed: number;
   private localPose?: PlayerPose;
@@ -236,6 +238,7 @@ export class Game {
   ) {
     this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
     this.renderer.setPixelRatio(1)
+    this.paneDock = this.createPaneDock();
     this.setupIntroScenePane();
     this.setupCabinLightingPane();
     this.handTracker = new HandTracker(ui.inputStatus);
@@ -259,7 +262,7 @@ export class Game {
     this.roomId = this.multiplayer.getRoom();
     this.roomSeed = hashString(this.roomId);
     keyDirector.setRoomSeed(this.roomSeed);
-    keyDirector.attachPane();
+    keyDirector.attachPane(this.paneDock);
     this.multiplayer.onStateChange(state => {
       ui.connectionStatus.textContent = state;
     });
@@ -310,8 +313,8 @@ export class Game {
       this.applyPlayerBackOffset();
       this.updatePlayerVisualAnchors();
     });
-    this.robotMotion = new RobotMotionController();
-    this.scenery = new ScenerySystem(this.scene, undefined, {
+    this.robotMotion = new RobotMotionController(this.paneDock);
+    this.scenery = new ScenerySystem(this.scene, this.paneDock, {
       roomSeed: this.roomSeed,
     });
   }
@@ -322,12 +325,15 @@ export class Game {
     this.createCabin();
     await this.renderer.init();
     this.setupOrbitControls();
-    this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.renderer);
+    this.sculptor = new EnergySculptor(this.scene, this.sculptureTarget, this.renderer, this.paneDock);
     this.installPlayerVisuals();
     await this.prewarmPlayerVisuals();
     this.refreshArchetype();
     this.setupPlayersPane();
     this.setupInstrumentsPane();
+    this.handTracker.attachPane(this.paneDock);
+    attachHandDepthPane(this.paneDock);
+    attachMousePosePane(this.paneDock);
     window.addEventListener('resize', () => this.resize());
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
     window.addEventListener('blur', this.handleVisibilityChange);
@@ -544,6 +550,7 @@ export class Game {
     this.introSceneTweaks?.dispose();
     this.playersTweaks?.dispose();
     this.disposeCabinPlate();
+    this.paneDock.remove();
     this.renderer.dispose();
   }
 
@@ -580,7 +587,7 @@ export class Game {
 
   private setupCameraPane(): void {
     if (this.cameraTweaks) return;
-    this.cameraTweaks = registerTweaks(undefined, 'camera', CAMERA_DEFS, {
+    this.cameraTweaks = registerTweaks(this.paneDock, 'camera', CAMERA_DEFS, {
       title: 'Camera',
       params: this.cameraParams,
       onChange: {
@@ -591,7 +598,7 @@ export class Game {
 
   private setupIntroScenePane(): void {
     if (this.introSceneTweaks) return;
-    this.introSceneTweaks = registerTweaks(undefined, 'introScene', INTRO_SCENE_DEFS, {
+    this.introSceneTweaks = registerTweaks(this.paneDock, 'introScene', INTRO_SCENE_DEFS, {
       title: 'Intro Scene',
       expanded: true,
       params: this.introSceneParams,
@@ -863,7 +870,7 @@ export class Game {
 
   private setupPlayersPane(): void {
     if (this.playersTweaks) return;
-    this.playersTweaks = registerTweaks(undefined, 'players-v2', PLAYERS_DEFS, {
+    this.playersTweaks = registerTweaks(this.paneDock, 'players-v2', PLAYERS_DEFS, {
       title: 'Players',
       params: this.playersParams,
       onChange: {
@@ -874,7 +881,7 @@ export class Game {
 
   private setupInstrumentsPane(): void {
     if (this.instrumentsTweaks) return;
-    this.instrumentsTweaks = registerTweaks(undefined, 'instruments', INSTRUMENTS_DEFS, {
+    this.instrumentsTweaks = registerTweaks(this.paneDock, 'instruments', INSTRUMENTS_DEFS, {
       title: 'Instruments',
       params: this.instrumentsParams,
       onChange: {
@@ -898,8 +905,9 @@ export class Game {
     const seatIndex = player === 'local' ? this.multiplayer.localSeatIndex : this.multiplayer.partnerSeatIndex;
     const anchor = this.computeInstrumentAnchor(seatIndex);
     let visual: PlayerVisual;
+    const paneDock = player === 'local' ? this.paneDock : undefined;
     if (id === 'starlace') {
-      visual = new Starlace(this.scene, undefined, `starlace-${player}`, {
+      visual = new Starlace(this.scene, paneDock, `starlace-${player}`, {
         palette: player,
         title: `Starlace (${player === 'local' ? 'Local' : 'Partner'})`,
         sculptor: this.sculptor,
@@ -927,7 +935,7 @@ export class Game {
         },
       });
     } else {
-      visual = new Drum(this.scene, undefined, `drum-${player}`, {
+      visual = new Drum(this.scene, paneDock, `drum-${player}`, {
         palette: player,
         creature: this.playerCreatures[player],
         title: `Piano Pads (${player === 'local' ? 'Local' : 'Partner'})`,
@@ -1138,7 +1146,7 @@ export class Game {
   private setupCabinPane(): void {
     if (this.cabinTweaks) return;
     const rebuild = () => this.buildCabinGeometry();
-    this.cabinTweaks = registerTweaks(undefined, 'cabin', CABIN_DEFS, {
+    this.cabinTweaks = registerTweaks(this.paneDock, 'cabin', CABIN_DEFS, {
       title: 'Cabin',
       params: this.cabinParams,
       onChange: {
@@ -1151,7 +1159,7 @@ export class Game {
 
   private setupCabinLightingPane(): void {
     if (this.cabinLightingTweaks) return;
-    this.cabinLightingTweaks = registerTweaks(undefined, 'cabin-local-lighting', CABIN_LIGHTING_DEFS, {
+    this.cabinLightingTweaks = registerTweaks(this.paneDock, 'cabin-local-lighting', CABIN_LIGHTING_DEFS, {
       title: 'Cabin Lighting',
       params: this.cabinLightingParams,
     });
@@ -1470,4 +1478,21 @@ export class Game {
     this.renderer.setSize(width, height, false);
   }
 
+  private createPaneDock(): HTMLElement {
+    // Single collapsible <details> wrapper so all the per-system tweakpanes
+    // fold into one meta panel that the user can roll up out of the way.
+    const dock = document.createElement('details');
+    dock.className = 'tweak-pane-dock';
+    dock.open = true;
+    const summary = document.createElement('summary');
+    summary.className = 'tweak-pane-dock-summary';
+    summary.textContent = 'Tweaks';
+    dock.appendChild(summary);
+    // Mount on #stage-wrap (viewport-fixed) rather than #stage so the pane
+    // keeps its native size on narrow viewports instead of shrinking with
+    // the letterboxed scene.
+    const host = document.getElementById('stage-wrap') ?? document.body;
+    host.appendChild(dock);
+    return dock;
+  }
 }

@@ -82,6 +82,7 @@ input {
 #stage-wrap.intro-active #ui,
 #stage-wrap.intro-active #stage,
 #stage-wrap.intro-active #vignette,
+#stage-wrap.intro-active .tweak-pane-dock,
 #stage-wrap.intro-active .video-panel {
   visibility: hidden;
 }
