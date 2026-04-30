@@ -214,21 +214,30 @@ export class BackingTrackAnalyzer {
     header.style.gap = '8px';
     header.style.marginBottom = '4px';
 
-    const blink = document.createElement('div');
-    blink.style.width = '14px';
-    blink.style.height = '14px';
-    blink.style.borderRadius = '50%';
-    blink.style.background = 'rgba(40, 60, 50, 0.45)';
-    blink.style.border = '1px solid rgba(120, 200, 160, 0.55)';
-    blink.style.boxShadow = 'none';
-    blink.style.flex = '0 0 auto';
-    header.appendChild(blink);
-
     const title = document.createElement('div');
     title.textContent = 'FFT pulse';
     title.style.fontWeight = '600';
     header.appendChild(title);
     root.appendChild(header);
+
+    // Floating beat LED — pinned to viewport (not the scrolling dock) so it
+    // stays visible no matter how far the user has scrolled the tweakpane.
+    const blink = document.createElement('div');
+    blink.className = 'fft-pulse-beat-led';
+    blink.style.display = 'none';
+    blink.style.position = 'fixed';
+    blink.style.top = '32px';
+    blink.style.right = '316px';
+    blink.style.width = '22px';
+    blink.style.height = '22px';
+    blink.style.borderRadius = '50%';
+    blink.style.background = 'rgba(40, 60, 50, 0.45)';
+    blink.style.border = '1px solid rgba(120, 200, 160, 0.55)';
+    blink.style.boxShadow = 'none';
+    blink.style.zIndex = '20';
+    blink.style.pointerEvents = 'none';
+    blink.title = 'FFT pulse beat';
+    document.body.appendChild(blink);
 
     const barsRow = document.createElement('div');
     barsRow.style.display = 'flex';
