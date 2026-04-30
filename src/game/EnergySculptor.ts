@@ -106,11 +106,11 @@ export const SCULPTOR_DEFS = {
   attractorHoldSeconds:       { default: DEFAULT_ATTRACTOR_HOLD_SECONDS,       min: 1,   max: 120, step: 0.5, folder: 'Field Shape', label: 'hold s' },
   attractorTransitionSeconds: { default: DEFAULT_ATTRACTOR_TRANSITION_SECONDS, min: 0.1, max: 30,  step: 0.1, folder: 'Field Shape', label: 'xfade s' },
 
-  timerRingRadius:      { default: 0.46,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
+  timerRingRadius:      { default: 0.38,  min: 0.18, max: 1.2,  step: 0.01,  folder: 'Projector', label: 'base radius' },
   projectorRingCount:   { default: 5,     min: 1,    max: 5,    step: 1,     folder: 'Projector', label: 'ring count' },
   projectorRingSpacing: { default: 0.020, min: 0.01, max: 0.25, step: 0.005, folder: 'Projector', label: 'ring spacing' },
   projectorRingScale:   { default: 0.58,  min: 0.4,  max: 1.0,  step: 0.01,  folder: 'Projector', label: 'ring scale' },
-  projectorBaseY:       { default: -0.32, min: -0.6, max: 0.3,  step: 0.01,  folder: 'Projector', label: 'base height' },
+  projectorBaseY:       { default: -0.38, min: -0.6, max: 0.3,  step: 0.01,  folder: 'Projector', label: 'base height' },
   timerRingColor:       { type: 'color', default: '#66ffff', folder: 'Projector', label: 'projector rings' },
 } as const;
 
