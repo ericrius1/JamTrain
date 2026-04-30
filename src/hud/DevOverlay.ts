@@ -1,4 +1,5 @@
 import Stats from 'stats.js';
+import { setDebugVisible } from './debugMode';
 import { resetAllTweaks } from './tweakDefs';
 
 export class DevOverlay {
@@ -66,7 +67,8 @@ export class DevOverlay {
         this.toggle();
         return;
       }
-      if (this.visible && (e.key === 'c' || e.key === 'C')) {
+      if (!this.visible) return;
+      if (e.key === 'c' || e.key === 'C') {
         e.preventDefault();
         this.onCameraCycle?.();
         return;
@@ -81,6 +83,7 @@ export class DevOverlay {
 
   toggle(): void {
     this.visible = !this.visible;
+    setDebugVisible(this.visible);
     this.paneDock.classList.toggle('hidden', !this.visible);
     this.statsContainer.classList.toggle('hidden', !this.visible);
     this.infoPanel.classList.toggle('hidden', !this.visible);

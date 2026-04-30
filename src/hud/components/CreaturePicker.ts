@@ -1,4 +1,5 @@
 import { CREATURE_IDS, CREATURES, type CreatureId } from '../../game/creatures';
+import { preloadCreatureAssets } from '../../game/rig/illustratedPuppets';
 
 export type CreaturePickerOpts = {
   side: 'left' | 'right';
@@ -33,6 +34,13 @@ export class CreaturePicker {
       btn.addEventListener('click', () => {
         if (this.readonlyMode) return;
         this.setSelected(id, true);
+      });
+      // Warm the browser cache for this creature's WebPs as soon as the
+      // user hovers, so the click → setCreature texture fetch is instant.
+      // Idempotent: repeated enters dedupe via preloadCreatureAssets.
+      btn.addEventListener('pointerenter', () => {
+        if (this.readonlyMode) return;
+        void preloadCreatureAssets(id);
       });
       this.buttons[id] = btn;
       this.el.appendChild(btn);

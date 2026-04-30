@@ -7,6 +7,7 @@ import {
   vec3,
   viewportMipTexture,
 } from 'three/tsl';
+import { isDebugVisible } from '../../hud/debugMode';
 import { registerTweaks, type ParamsOf } from '../../hud/tweakDefs';
 import { getStarlaceHz } from '../harmony';
 import { keyDirector } from '../keyDirector';
@@ -78,6 +79,12 @@ type StarNode = {
   world: THREE.Vector3;
 };
 
+type KeyboardMotifStep = {
+  rootIndex: number;
+  chordSize: 1 | 2 | 3;
+  nodeIndices: number[];
+};
+
 type KeyboardPathState = {
   keyIndex: number;
   homeNoteIndex: number;
@@ -93,6 +100,10 @@ type KeyboardPathState = {
   phraseSeed: number;
   recentNodes: number[];
   velocity: number;
+  motifSteps: KeyboardMotifStep[];
+  motifRepeatsLeft: number;
+  motifReplay: boolean;
+  lastCycleIndex: number;
 };
 
 const MAX_HITS_PER_FRAME = 10;
@@ -174,6 +185,8 @@ export class Starlace implements PlayerVisual {
   private nodeGeometry?: THREE.BufferGeometry;
   private nodeMesh?: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicNodeMaterial>;
   private nodeMaterial?: THREE.MeshBasicNodeMaterial;
+  private nodeGlowMesh?: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
+  private nodeGlowMaterial?: THREE.MeshBasicMaterial;
   private nodeGemParams?: THREE.InstancedBufferAttribute;
 
   private elapsed = 0;
@@ -236,7 +249,6 @@ export class Starlace implements PlayerVisual {
   private keyUpListener?: (e: KeyboardEvent) => void;
   private keyBlurListener?: () => void;
   private keyboardPitchNodes: number[][] = [];
-  private keyboardStartCursor: number[] = [];
   private keyboardPaths = new Map<string, KeyboardPathState>();
   private keyboardHeldKeys = new Set<string>();
   private camera?: THREE.Camera;
@@ -602,38 +614,39 @@ export class Starlace implements PlayerVisual {
     this.pulseLineMaterial.dispose();
     this.nodeGeometry?.dispose();
     this.nodeMaterial?.dispose();
+    this.nodeGlowMaterial?.dispose();
     this.mesh.removeFromParent();
   }
 
   private createNodes(): void {
-    // 3D radial cluster: deterministic Halton-ish sampling over an ellipsoid,
-    // density-biased toward the center so the constellation reads as a
-    // star-cluster rather than a uniform cloud.
-    const NODE_COUNT = 36;
-    for (let i = 0; i < NODE_COUNT; i += 1) {
-      const r1 = hash(i * 9.17 + 0.23);
-      const r2 = hash(i * 5.73 + 1.10);
-      const r3 = hash(i * 6.91 + 2.20);
-      const r4 = hash(i * 8.31 + 3.30);
-      // Spherical sample with bias: smaller exponent -> denser core.
-      const radius = Math.pow(r1, 0.55);
-      const theta = r2 * TAU;
-      const phi = Math.acos(2 * r3 - 1);
-      // Convert to ellipsoidal u/v/z in [-0.5, 0.5].
-      const u = 0.5 * radius * Math.sin(phi) * Math.cos(theta);
-      const v = 0.5 * radius * Math.cos(phi);
-      const z = 0.5 * radius * Math.sin(phi) * Math.sin(theta);
-      const seed = r4;
-      this.nodes.push({
-        u,
-        v,
-        z,
-        seed,
-        noteIndex: 0,
-        pulse: 0,
-        lastHitAt: -100,
-        world: new THREE.Vector3(),
-      });
+    // Three horizontal rows mirror the three keyboard rows so each key plucks
+    // its dedicated node. Bottom row z-m (7), home row a-l (9), top row q-p
+    // (10). Each row spans the harp's width; depth (z) and small v jitter
+    // give the cluster volume without breaking the row mapping.
+    const rowCounts = Starlace.KEY_ROWS.map(r => r.length);
+    const rowVs = [-0.36, 0.0, 0.36];
+    let i = 0;
+    for (let r = 0; r < rowCounts.length; r += 1) {
+      const count = rowCounts[r];
+      const baseV = rowVs[r];
+      for (let c = 0; c < count; c += 1) {
+        const t = count === 1 ? 0.5 : c / (count - 1);
+        const u = (t - 0.5) * 0.92;
+        const seed = hash(i * 8.31 + 3.30);
+        const jitterV = (hash(i * 9.17 + 0.23) - 0.5) * 0.06;
+        const z = (hash(i * 6.91 + 2.20) - 0.5) * 0.55;
+        this.nodes.push({
+          u,
+          v: baseV + jitterV,
+          z,
+          seed,
+          noteIndex: 0,
+          pulse: 0,
+          lastHitAt: -100,
+          world: new THREE.Vector3(),
+        });
+        i += 1;
+      }
     }
     this.assignNodePitches();
   }
@@ -708,7 +721,6 @@ export class Starlace implements PlayerVisual {
         return nodeA.u === nodeB.u ? nodeA.v - nodeB.v : nodeA.u - nodeB.u;
       });
     }
-    this.keyboardStartCursor = Array.from({ length: this.hzTable.length }, () => 0);
   }
 
   private buildNodeMeshes(): void {
@@ -733,7 +745,7 @@ export class Starlace implements PlayerVisual {
     const refractedUv = screenUV.add(normalView.xy.mul(refractStrength));
     const frostedBackdrop = viewportMipTexture(refractedUv, gemParamsNode.y.add(hitGlow.mul(float(0.36))));
     const faceCore = normalView.z.mul(normalView.z).pow(float(1.15));
-    const innerGlow = faceCore.mul(float(0.28)).add(hitGlow.mul(float(0.42))).add(faceCore.mul(hitGlow).mul(float(0.56)));
+    const innerGlow = faceCore.mul(float(0.28)).add(hitGlow.mul(float(0.72))).add(faceCore.mul(hitGlow).mul(float(0.92)));
     const material = new THREE.MeshBasicNodeMaterial({
       color: 0xf0f7ff,
       transparent: true,
@@ -756,7 +768,24 @@ export class Starlace implements PlayerVisual {
     this.nodeMesh.frustumCulled = false;
     this.nodeMesh.renderOrder = 20;
     this.nodeMaterial = material;
-    this.mesh.add(this.nodeMesh);
+
+    const glowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: 0.48,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      vertexColors: true,
+    });
+    glowMaterial.toneMapped = false;
+    this.nodeGlowMesh = new THREE.InstancedMesh(this.nodeGeometry, glowMaterial, this.nodes.length);
+    this.nodeGlowMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.nodeGlowMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.nodes.length * 3), 3);
+    this.nodeGlowMesh.frustumCulled = false;
+    this.nodeGlowMesh.renderOrder = 19;
+    this.nodeGlowMaterial = glowMaterial;
+
+    this.mesh.add(this.nodeGlowMesh, this.nodeMesh);
   }
 
   private resolveAxes(delta: number): void {
@@ -873,6 +902,7 @@ export class Starlace implements PlayerVisual {
 
   private writeNodes(): void {
     const mesh = this.nodeMesh;
+    const glowMesh = this.nodeGlowMesh;
     const material = this.nodeMaterial;
     const gemParams = this.nodeGemParams;
     const gemParamArray = gemParams?.array as Float32Array | undefined;
@@ -884,13 +914,12 @@ export class Starlace implements PlayerVisual {
       const pitchGlow = 1 - Math.abs((node.noteIndex / (this.hzTable.length - 1)) - this.smoothedPitch);
       const pulse = clamp(node.pulse + pitchGlow * this.smoothedEnergy * 0.18 + twinkle * 0.07, 0, 1);
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
-      // Triggered nodes light up a bit: small size bump + a stronger contribution
-      // from the gem's own material glow (drives refraction + inner glow inside
-      // the TSL material — no halos or external sprites).
+      // Triggered nodes mostly brighten; the mesh scale only nudges up so hits
+      // read as a flash instead of a popping size change.
       const flash = Math.pow(node.pulse, 1.10);
-      const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.25 + flash * 0.30) * reveal;
+      const size = this.params.nodeRadius * (0.82 + twinkle * 0.18 + pulse * 0.25 + flash * 0.08) * reveal;
       const drawSize = Math.max(size, 0.0001);
-      const materialGlow = reveal * clamp(0.10 + twinkle * 0.05 + pulse * 0.12 + flash * 0.85, 0, 1.05);
+      const materialGlow = reveal * clamp(0.10 + twinkle * 0.04 + pulse * 0.16 + flash * 1.35, 0, 1.70);
 
       _dummy.position.copy(node.world);
       _dummy.rotation.set(
@@ -905,10 +934,24 @@ export class Starlace implements PlayerVisual {
       this.nodeGemColor(node, pulse, twinkle, _colorA);
       mesh.setColorAt(i, _colorA);
       if (gemParamArray) gemParamArray[i * 4 + 3] = materialGlow;
+
+      if (glowMesh) {
+        const glow = reveal * smoothstep01(node.pulse);
+        const glowSize = this.params.nodeRadius * (1.18 + flash * 0.26) * reveal;
+        _dummy.scale.setScalar(glow > 0.004 ? glowSize : 0.0001);
+        _dummy.updateMatrix();
+        glowMesh.setMatrixAt(i, _dummy.matrix);
+        _colorB.copy(this.hot).lerp(STARLACE_FROST_WHITE, 0.22 + flash * 0.18).multiplyScalar(glow * (0.76 + flash * 0.64));
+        glowMesh.setColorAt(i, _colorB);
+      }
     }
 
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (glowMesh) {
+      glowMesh.instanceMatrix.needsUpdate = true;
+      if (glowMesh.instanceColor) glowMesh.instanceColor.needsUpdate = true;
+    }
     if (gemParams) gemParams.needsUpdate = true;
     material.opacity = clamp(0.80 + this.maxPulse * 0.06 + this.smoothedPulse * 0.04, 0.80, 0.90);
   }
@@ -1237,7 +1280,16 @@ export class Starlace implements PlayerVisual {
     }
   }
 
-  private static readonly KEY_MAP: ReadonlyArray<string> = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'];
+  // Three keyboard rows map directly to dedicated nodes. Indices 0..6 = bottom
+  // row (z-m), 7..15 = home row (a-l), 16..25 = top row (q-p). Node count
+  // matches: see STARLACE_KEY_ROWS / NODE_COUNT in createNodes.
+  private static readonly KEY_ROWS: ReadonlyArray<ReadonlyArray<string>> = [
+    ['z', 'x', 'c', 'v', 'b', 'n', 'm'],
+    ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
+    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
+  ];
+  private static readonly KEY_MAP: ReadonlyArray<string> = Starlace.KEY_ROWS.flat();
+  private static readonly DEBUG_SHADOWED_KEYS = new Set(['c', 'n', 'm']);
   private static readonly KEYBOARD_RECENT_LIMIT = 8;
 
   private attachKeyboardEvents(): void {
@@ -1248,8 +1300,11 @@ export class Starlace implements PlayerVisual {
       const key = e.key.toLowerCase();
       const idx = Starlace.KEY_MAP.indexOf(key);
       if (idx < 0 || e.repeat || this.keyboardHeldKeys.has(key)) return;
+      // c/n/m do double duty as debug-overlay shortcuts; when the overlay is
+      // open let those keys belong to debug, otherwise they're instrument keys.
+      if (isDebugVisible() && Starlace.DEBUG_SHADOWED_KEYS.has(key)) return;
       e.preventDefault();
-      this.startKeyboardPath(key, idx);
+      this.startKeyboardPath(key, idx, 0.74, idx);
     };
     this.keyUpListener = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
@@ -1332,6 +1387,7 @@ export class Starlace implements PlayerVisual {
     // Triangle ripple: out then back. cycleLength = 2*maxRing keeps the wave
     // periodic so a held key feels like waves rolling in, not a random walk.
     const cycleLength = Math.max(4, maxRing * 2);
+    const phraseSeed = hash(keyIndex * 17.31 + homeNoteIndex * 3.19 + this.elapsed * 0.71);
 
     const state: KeyboardPathState = {
       keyIndex,
@@ -1345,9 +1401,13 @@ export class Starlace implements PlayerVisual {
       nextAt: this.elapsed,
       step: 0,
       totalStages: this.keyboardPhraseJumps() + 1,
-      phraseSeed: hash(keyIndex * 17.31 + this.elapsed * 0.71 + (this.keyboardStartCursor[homeNoteIndex] ?? 0) * 3.19),
+      phraseSeed,
       recentNodes: [],
       velocity: clamp(velocity, 0.2, 1),
+      motifSteps: [],
+      motifRepeatsLeft: this.keyboardMotifRepeatCount(phraseSeed),
+      motifReplay: false,
+      lastCycleIndex: 0,
     };
     this.keyboardHeldKeys.add(key);
     this.fireKeyboardStage(state);
@@ -1387,12 +1447,31 @@ export class Starlace implements PlayerVisual {
   private fireKeyboardStage(state: KeyboardPathState): number {
     const phraseLength = Math.max(1, state.totalStages);
     const stageInPhrase = positiveModulo(state.step, phraseLength);
-    const rootIndex = this.keyboardStageRootIndex(state, stageInPhrase);
-    // Chord blooms at ring 0 (origin / start of each ripple cycle); outer
-    // rings play single notes -> arpeggio cascading outward from the bloom.
     const ringTarget = this.ringTargetForStep(state, state.step);
-    const chordSize = this.keyboardChordSizeForRing(ringTarget, state.maxRing);
-    const nodes = this.pickKeyboardChordNodes(state, chordSize, rootIndex);
+    const motifStep = positiveModulo(state.step, Math.max(2, state.cycleLength));
+    const replayStep = state.motifReplay ? state.motifSteps[motifStep] : undefined;
+    let rootIndex = replayStep?.rootIndex ?? this.keyboardStageRootIndex(state, stageInPhrase, ringTarget);
+    let chordSize = replayStep?.chordSize ?? this.keyboardChordSizeForRing(ringTarget, state.maxRing);
+    let nodes = replayStep?.nodeIndices.filter(index => this.nodes[index]) ?? [];
+
+    // The held key/node is the bass anchor. Outer rings can wander, but every
+    // returned ripple begins the next arpeggio on this same root note.
+    if (ringTarget === 0) {
+      rootIndex = state.homeNoteIndex;
+      chordSize = 1;
+      nodes = [state.startNode];
+    }
+
+    if (nodes.length === 0) {
+      nodes = this.pickKeyboardChordNodes(state, chordSize, rootIndex, ringTarget);
+      if (!state.motifReplay && nodes.length > 0) {
+        state.motifSteps[motifStep] = {
+          rootIndex,
+          chordSize,
+          nodeIndices: [...nodes],
+        };
+      }
+    }
     if (nodes.length === 0) return 0;
     state.previousNode = state.currentNode;
     state.currentNode = nodes[0];
@@ -1404,7 +1483,7 @@ export class Starlace implements PlayerVisual {
   private keyboardChordSizeForRing(ringTarget: number, maxRing: number): 1 | 2 | 3 {
     const maxNotes = this.keyboardChordMaxNotes();
     if (maxNotes <= 1) return 1;
-    if (ringTarget === 0) return clamp(maxNotes, 1, 3) as 1 | 2 | 3;
+    if (ringTarget === 0) return 1;
     if (ringTarget === 1 && maxRing >= 2) return clamp(Math.min(2, maxNotes), 1, 3) as 1 | 2 | 3;
     return 1;
   }
@@ -1412,14 +1491,26 @@ export class Starlace implements PlayerVisual {
   private refreshKeyboardPhrase(state: KeyboardPathState): void {
     const phraseLength = this.keyboardPhraseJumps() + 1;
     state.totalStages = phraseLength;
-    if (state.step <= 0 || positiveModulo(state.step, phraseLength) !== 0) return;
+    const cycleLength = Math.max(2, state.cycleLength);
+    const cycleIndex = Math.floor(Math.max(0, state.step) / cycleLength);
+    if (state.step <= 0 || positiveModulo(state.step, cycleLength) !== 0 || cycleIndex === state.lastCycleIndex) return;
 
+    state.lastCycleIndex = cycleIndex;
+    if (state.motifRepeatsLeft > 0 && state.motifSteps.length > 0) {
+      state.motifRepeatsLeft -= 1;
+      state.motifReplay = true;
+      return;
+    }
+
+    state.motifReplay = false;
+    state.motifSteps = [];
     state.phraseSeed = hash(
       state.phraseSeed * 17.19 +
       state.step * 0.37 +
       state.currentNode * 3.11 +
       this.elapsed * 0.07,
     );
+    state.motifRepeatsLeft = this.keyboardMotifRepeatCount(state.phraseSeed);
     if (state.recentNodes.length > 3) {
       state.recentNodes.splice(0, state.recentNodes.length - 3);
     }
@@ -1431,17 +1522,17 @@ export class Starlace implements PlayerVisual {
 
   private pickKeyboardStartNode(homeNoteIndex: number): number {
     const exact = this.keyboardPitchNodes[homeNoteIndex] ?? [];
-    if (exact.length > 0) {
-      const cursor = this.keyboardStartCursor[homeNoteIndex] ?? 0;
-      this.keyboardStartCursor[homeNoteIndex] = cursor + 1;
-      return exact[cursor % exact.length];
-    }
-
     let best = -1;
     let bestScore = Infinity;
-    for (let i = 0; i < this.nodes.length; i += 1) {
+    const candidates = exact.length > 0 ? exact : this.nodes.map((_, i) => i);
+    for (const i of candidates) {
       const node = this.nodes[i];
-      const score = Math.abs(node.noteIndex - homeNoteIndex) * 10 + Math.abs(node.u) + Math.abs(node.v) * 0.4;
+      const score =
+        Math.abs(node.noteIndex - homeNoteIndex) * 10 +
+        node.u * node.u * 1.15 +
+        node.v * node.v * 0.90 +
+        node.z * node.z * 0.55 +
+        i * 0.0001;
       if (score >= bestScore) continue;
       best = i;
       bestScore = score;
@@ -1449,14 +1540,19 @@ export class Starlace implements PlayerVisual {
     return best;
   }
 
-  private pickKeyboardChordNodes(state: KeyboardPathState, chordSize: 1 | 2 | 3, rootIndex: number): number[] {
+  private pickKeyboardChordNodes(
+    state: KeyboardPathState,
+    chordSize: 1 | 2 | 3,
+    rootIndex: number,
+    ringTarget: number,
+  ): number[] {
     const noteIndexes = this.keyboardChordNoteIndexes(rootIndex, chordSize);
     const picked: number[] = [];
     let anchor = state.currentNode;
 
     for (const noteIndex of noteIndexes) {
-      const nodeIndex = picked.length === 0 && state.step === 0
-        ? state.currentNode
+      const nodeIndex = picked.length === 0 && (state.step === 0 || ringTarget === 0)
+        ? state.startNode
         : this.pickKeyboardChordNode(noteIndex, state, picked, anchor);
       if (nodeIndex < 0) continue;
       picked.push(nodeIndex);
@@ -1466,7 +1562,8 @@ export class Starlace implements PlayerVisual {
     return picked;
   }
 
-  private keyboardStageRootIndex(state: KeyboardPathState, stageInPhrase: number): number {
+  private keyboardStageRootIndex(state: KeyboardPathState, stageInPhrase: number, ringTarget: number): number {
+    if (ringTarget === 0) return state.homeNoteIndex;
     const phraseLength = Math.max(1, state.totalStages);
     const wander = clamp(this.params.keyPathWander, 0, 1);
     const phraseOffsets = [0, 2, 4, 2, 5, 4, 3, 1, 0, -1, 2, 4, 5] as const;
@@ -1570,6 +1667,13 @@ export class Starlace implements PlayerVisual {
 
   private keyboardPhraseJumps(): number {
     return Math.round(clamp(this.params.keyPhraseJumps, 2, 24));
+  }
+
+  private keyboardMotifRepeatCount(seed: number): number {
+    const roll = hash(seed * 23.17 + 0.41);
+    if (roll > 0.82) return 2;
+    if (roll > 0.48) return 1;
+    return 0;
   }
 
   // BFS distance from a start node along the lattice adjacency.

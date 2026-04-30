@@ -98,12 +98,11 @@ requestAnimationFrame(() => {
   });
 });
 
+// Static assets needed to draw the very first frame regardless of who's in
+// the room. Creature WebPs are intentionally not included — those are
+// preloaded after multiplayer sync resolves which two creatures are actually
+// active; the rest are lazy-loaded on picker hover/click.
 function preloadCriticalAssets(): Promise<void> {
-  const creatureIds = ['lion', 'elk', 'fox', 'robot'];
-  const puppetParts = ['body.webp', 'upper-arm.webp', 'forearm.webp'];
-  const puppetHand = (creature: string): string =>
-    `${creature}/${creature === 'lion' ? 'paw-cupped.webp' : 'hand-cupped.webp'}`;
-
   const urls: string[] = [
     '/cabin/illustrated-cabin-plate-v2-color.webp',
     '/cabin/illustrated-cabin-plate-v2-medium.webp',
@@ -111,10 +110,6 @@ function preloadCriticalAssets(): Promise<void> {
     '/cabin/illustrated-cabin-plate-v2-alpha.webp',
     '/scenery/far-terrain-chunk-01-alpine-lake.webp',
     '/scenery/far-terrain-chunk-02-fog-forest.webp',
-    ...creatureIds.flatMap(creature => [
-      `/puppets/${puppetHand(creature)}`,
-      ...puppetParts.map(part => `/puppets/${creature}/${part}`),
-    ]),
   ];
 
   return Promise.all(
@@ -200,6 +195,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     { isInstrumentId },
     { preloadHandpose },
     { registerResetHook },
+    { preloadCreatureAssets },
   ] = await Promise.all([
     import('./game/Game'),
     import('./hud/Hud'),
@@ -209,6 +205,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     import('./game/instruments'),
     import('./game/handTracking'),
     import('./hud/tweakDefs'),
+    import('./game/rig/illustratedPuppets'),
   ]);
 
   const defaultAvPrefs: AvPrefs = {
@@ -447,6 +444,7 @@ async function createRuntime(): Promise<RuntimeApi> {
   const handleRobotMuteKey = (e: KeyboardEvent): void => {
     if (e.key !== 'm' && e.key !== 'M') return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!dev.isVisible()) return;
     const target = e.target as HTMLElement | null;
     if (target?.matches('input, textarea, [contenteditable=true]')) return;
     if (!started) return;
@@ -517,7 +515,12 @@ async function createRuntime(): Promise<RuntimeApi> {
   // instrument has already animated in.
   game.connectMultiplayer();
   await waitForInitialMultiplayerSync(game);
-  await criticalAssetsLoaded;
+  const creaturePreloads: Promise<void>[] = [];
+  const localCreatureId = game.multiplayer.getLocalCreature();
+  const partnerCreatureId = game.multiplayer.getPartnerCreature();
+  if (isCreatureId(localCreatureId)) creaturePreloads.push(preloadCreatureAssets(localCreatureId));
+  if (isCreatureId(partnerCreatureId)) creaturePreloads.push(preloadCreatureAssets(partnerCreatureId));
+  await Promise.all([criticalAssetsLoaded, ...creaturePreloads]);
   await game.whenNextFrameRendered();
   schedulePostSceneWarmup();
 

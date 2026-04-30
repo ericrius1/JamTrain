@@ -351,18 +351,20 @@ export class HandSynthEngine {
   }
 
   setOrbGain(value: number): void {
-    this.applyBusGain(this.orbBus, value);
+    // Piano pads need more headroom than the Starlace bed; old fader at 100%
+    // sits around the new fader at 50%.
+    this.applyBusGain(this.orbBus, value, 2.3);
   }
 
   setStarlaceGain(value: number): void {
     this.applyBusGain(this.starlaceBus, value);
   }
 
-  private applyBusGain(bus: any, value: number): void {
+  private applyBusGain(bus: any, value: number, maxLinear: number = 1): void {
     if (!bus) return;
     const CURVE_EXP = 1.2;
     const v = value <= 0 ? 0 : Math.min(1, value);
-    const linear = Math.pow(v, CURVE_EXP);
+    const linear = maxLinear * Math.pow(v, CURVE_EXP);
     bus.gain.rampTo?.(linear, PARAM_RAMP) ?? (bus.gain.value = linear);
   }
 

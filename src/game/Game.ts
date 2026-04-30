@@ -249,7 +249,7 @@ export class Game {
     urlRoom: string,
     private ui: GameUi
   ) {
-    this.renderer = new THREE.WebGPURenderer({ canvas, antialias: true });
+    this.renderer = new THREE.WebGPURenderer({ canvas, antialias: false });
     this.renderer.setPixelRatio(1)
     this.paneDock = this.createPaneDock();
     this.setupIntroScenePane();
@@ -916,10 +916,11 @@ export class Game {
   }
 
   private installPlayerVisuals(): void {
-    this.ensurePlayerVisual('local', 'oar');
-    this.ensurePlayerVisual('local', 'starlace');
-    this.ensurePlayerVisual('remote', 'oar');
-    this.ensurePlayerVisual('remote', 'starlace');
+    // Only construct each player's currently-active instrument visual at
+    // boot. The other instrument is built lazily on first swap via
+    // ensurePlayerVisual() inside swapPlayerVisual. Costs a one-time
+    // shader compile on first swap; saves the up-front 2× construction
+    // and prewarm work for visuals nobody is using.
     this.installPlayerVisualImmediate('local', this.playerInstruments.local);
     this.installPlayerVisualImmediate('remote', this.playerInstruments.remote);
   }

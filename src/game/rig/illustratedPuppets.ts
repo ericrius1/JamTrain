@@ -328,3 +328,30 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
 export function getIllustratedPuppetSpec(id: CreatureId): IllustratedPuppetSpec | null {
   return ILLUSTRATED_PUPPETS[id] ?? null;
 }
+
+const creaturePreloadPromises = new Map<CreatureId, Promise<void>>();
+
+export function getCreatureAssetUrls(id: CreatureId): string[] {
+  const spec = ILLUSTRATED_PUPPETS[id];
+  if (!spec) return [];
+  return [spec.body.url, spec.arms.upper.url, spec.arms.forearm.url, spec.arms.hand.url];
+}
+
+// Warms the browser cache for one creature's WebP parts. Idempotent — repeated
+// calls return the same Promise so picker hover + boot preload never duplicate
+// fetches. Decoding still happens lazily when THREE.TextureLoader pulls them.
+export function preloadCreatureAssets(id: CreatureId): Promise<void> {
+  const existing = creaturePreloadPromises.get(id);
+  if (existing) return existing;
+  const urls = getCreatureAssetUrls(id);
+  const promise = Promise.all(
+    urls.map(url => new Promise<void>(resolve => {
+      const img = new Image();
+      img.onload = () => resolve();
+      img.onerror = () => resolve();
+      img.src = url;
+    }))
+  ).then(() => undefined);
+  creaturePreloadPromises.set(id, promise);
+  return promise;
+}

@@ -64,7 +64,7 @@ const BLENDING_LOOKUP: Record<BlendingMode, THREE.Blending> = {
   none: THREE.NoBlending,
 };
 
-const PARTICLE_COUNT = 1_000_000;
+const PARTICLE_COUNT = 524288;
 
 const ATTRACTOR_LABELS: Record<AttractorKind, string> = {
   thomas: 'Thomas',
@@ -85,7 +85,7 @@ const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 export const SCULPTOR_DEFS = {
   particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
-  particleLifetime:   { default: 100,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
+  particleLifetime:   { default: 50,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'fade start' },
   blendingMode:       { type: 'select' as const, default: 'additive' as const, options: BLENDING_OPTIONS, folder: 'Particles', label: 'blending' },
 
@@ -480,13 +480,14 @@ export class EnergySculptor implements EnergySink {
     if (this.spawnsThisFrame > 0) {
       this.renderer.compute(this.emitCompute);
     }
-    this.dispatchIntegrateCompute();
+    if (this.activeSlotCountCpu > 0) this.dispatchIntegrateCompute();
   }
 
   // Used after a hidden-tab pause: expire particle lifetimes without applying
   // a huge physics step that would fling the sculpture when rendering resumes.
   advanceLifecycle(seconds: number): void {
     if (!Number.isFinite(seconds) || seconds <= 0) return;
+    if (this.activeSlotCountCpu <= 0) return;
     const previousDt = this.dtUniform.value;
     const previousAgeDt = this.ageDtUniform.value;
     this.dtUniform.value = 0;
@@ -712,10 +713,9 @@ export class EnergySculptor implements EnergySink {
   }
 
   private buildComputePipelines(): void {
-    const positions = this.positionsBuffer;
-    const velocities = this.velocitiesBuffer;
-    const colors = this.colorsBuffer;
-    const meta = this.metaBuffer;
+    const positionAge = this.positionAgeBuffer;
+    const velocities = this.velocityBuffer;
+    const colorLife = this.colorLifeBuffer;
     const spawnQueueCapacity = SPAWN_QUEUE_CAPACITY;
 
     // Emit pass: write at the cursor-derived slot unconditionally. Pool size is
@@ -733,18 +733,41 @@ export class EnergySculptor implements EnergySink {
       const spawnColor = this.spawnColorUniform.element(i);
       const spawnMeta = this.spawnMetaUniform.element(i);
       const slot = spawnCursorU.add(i).mod(uint(this.count));
-      positions.element(slot).assign(spawnPos);
+      positionAge.element(slot).assign(vec4(spawnPos.x, spawnPos.y, spawnPos.z, 0));
       velocities.element(slot).assign(spawnVel);
-      colors.element(slot).assign(spawnColor);
-      // meta = (age=0, lifeMax, smoothedAccel=0, reserved=0)
-      meta.element(slot).assign(vec4(0, spawnMeta.x, 0, 0));
+      colorLife.element(slot).assign(vec4(spawnColor.x, spawnColor.y, spawnColor.z, spawnMeta.x));
     });
     this.emitCompute = emitFn().compute(spawnQueueCapacity);
 
+    const sampleFlowByKind = (kind: AttractorKind, samplePos: any) => {
+      switch (kind) {
+        case 'thomas':
+          return thomasFlow(samplePos, this.thomasA);
+        case 'lorenz':
+          return lorenzFlow(samplePos, this.lorenzSigma, this.lorenzRho, this.lorenzBeta);
+        case 'aizawa':
+          return aizawaFlow(
+            samplePos,
+            this.aizawaA,
+            this.aizawaB,
+            this.aizawaC,
+            this.aizawaD,
+            this.aizawaE,
+            this.aizawaF,
+          );
+        case 'halvorsen':
+          return halvorsenFlow(samplePos, this.halvorsenA);
+        case 'rossler':
+          return rosslerFlow(samplePos, this.rosslerA, this.rosslerB, this.rosslerC);
+        case 'dadras':
+          return dadrasFlow(samplePos, this.dadrasP, this.dadrasO, this.dadrasR, this.dadrasC, this.dadrasE);
+      }
+    };
+
     // Helper: branch over the attractor index uniform and assign the matching
-    // flow vector. Used twice — once for the current attractor and once for
-    // the crossfade target — so we can lerp between two fields smoothly.
-    const sampleFlow = (sel: any, samplePos: any) => {
+    // flow vector. Only used by the crossfade kernel; normal playback uses
+    // per-attractor kernels so settled high-count frames avoid this branch set.
+    const sampleSelectedFlow = (sel: any, samplePos: any) => {
       const out = vec3(0).toVar();
       If(sel.lessThan(0.5), () => {
         out.assign(thomasFlow(samplePos, this.thomasA));
@@ -782,113 +805,132 @@ export class EnergySculptor implements EnergySink {
       return out;
     };
 
-    // Integrate pass: per-particle attractor flow + life update.
-    const integrateFn = Fn(() => {
-      const i = instanceIndex;
-      const m = meta.element(i).toVar();
-      // Skip dead particles. Lifetime is the authoritative alive flag; render
-      // alpha is visual-only so fade behavior cannot shorten the configured
-      // particle lifetime or make faded particles reusable early.
-      If(m.y.lessThanEqual(0).or(m.x.greaterThanEqual(m.y)), () => {
-        Return();
+    const makeIntegrateCompute = (sampleFlow: (samplePos: any) => any): THREE.ComputeNode => {
+      // Integrate pass: per-particle attractor flow + life update.
+      const integrateFn = Fn(() => {
+        const i = instanceIndex;
+        const activeSlotsU = this.activeSlotCountUniform.toUint();
+        If(i.greaterThanEqual(activeSlotsU), () => {
+          Return();
+        });
+
+        const pAge = positionAge.element(i).toVar();
+        const lifeMax = colorLife.element(i).w;
+        // Skip dead particles. Lifetime is the authoritative alive flag; render
+        // alpha is visual-only so fade behavior cannot shorten the configured
+        // particle lifetime or make faded particles reusable early.
+        If(lifeMax.lessThanEqual(0).or(pAge.w.greaterThanEqual(lifeMax)), () => {
+          Return();
+        });
+
+        const pos = pAge.xyz.toVar();
+        const vel = velocities.element(i).toVar();
+        const newAge = pAge.w.add(this.ageDtUniform);
+
+        // Age fraction (0 born -> 1 dead). Compute this before sampling the
+        // attractor so low-affinity settled particles can take the cheap path.
+        const lifeT = pAge.w.div(lifeMax.max(0.0001)).clamp(0, 1);
+        const falloffStart = this.fieldFalloffStartUniform.clamp(0, 1);
+        const falloffFinalAt = this.fieldFalloffEndUniform.clamp(0, 1).max(falloffStart);
+        const falloffRaw = lifeT.sub(falloffStart).div(falloffFinalAt.sub(falloffStart).max(0.0001)).clamp(0, 1);
+        const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
+        const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
+
+        // Once affinity is low, stop paying for attractor sampling and boundary
+        // work. The particle simply coasts while drag bleeds out remaining
+        // velocity, preserving the settled sculpture at much lower ALU cost.
+        If(fieldEffect.lessThanEqual(0.2), () => {
+          const settleDrag = this.dtUniform
+            .mul(4.0)
+            .mul(float(1).sub(fieldEffect))
+            .clamp(0, 1);
+          const settledVel = mix(vel, vec3(0), settleDrag);
+          const settledPos = pos.add(settledVel.mul(this.dtUniform));
+          positionAge.element(i).assign(vec4(settledPos.x, settledPos.y, settledPos.z, newAge));
+          velocities.element(i).assign(settledVel);
+          Return();
+        });
+
+        // Sample the attractor in a slowly-rotating frame: unrotate the position
+        // (R^-1 * p), evaluate the flow there, then rotate the flow back into
+        // particle space (R * f). The orbits stay structurally intact but tumble
+        // through world space, giving a "moving through a meta-realm" feel.
+        const fieldCenterWorld = vec3(0, this.fieldSphereCenterYUniform, 0);
+        const samplePos = this.sampleRotInvUniform.mul(
+          pos.sub(fieldCenterWorld).div(this.worldScaleUniform.max(0.001)),
+        );
+        const sampledFlow = sampleFlow(samplePos);
+        const rawFlow = this.sampleRotUniform.mul(sampledFlow) as any;
+        const flowLen = rawFlow.length();
+        const flow = rawFlow.div(flowLen.max(0.0001)).mul(flowLen.clamp(0, 3.25));
+
+        // The field is the only sculpting force. Treat it as a velocity field
+        // with light inertia instead of a raw acceleration so Thomas particles
+        // trace the attractor lobes rather than ballistically filling the bounds.
+        // Affinity controls both field speed and coupling. Scaling only the
+        // desired velocity still allowed low-affinity particles to re-follow a
+        // transitioning field with full responsiveness.
+        const desiredVel = flow
+          .mul(this.flowSpeedUniform)
+          .mul(this.worldScaleUniform)
+          .mul(this.fieldStrengthUniform)
+          .mul(fieldEffect);
+        const fieldFollow = this.dtUniform.mul(6.5).mul(fieldEffect).clamp(0, 1);
+        const newVel = mix(vel, desiredVel, fieldFollow).toVar();
+        const settleDrag = this.dtUniform
+          .mul(4.0)
+          .mul(float(1).sub(fieldEffect))
+          .clamp(0, 1);
+        newVel.assign(mix(newVel, vec3(0), settleDrag));
+
+        const containedPos = pos.add(newVel.mul(this.dtUniform)).toVar();
+        const sphereCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
+        const fromSphereCenter = containedPos.sub(sphereCenter);
+        const sphereDist = fromSphereCenter.length();
+        const sphereRadius = this.fieldSphereRadiusUniform.max(0.01);
+        const sphereNormal = fromSphereCenter.div(sphereDist.max(0.0001));
+        const radialSpeed = newVel.dot(sphereNormal);
+        const softRadius = sphereRadius.mul(1.02);
+        const outsideT = sphereDist.sub(softRadius).div(sphereRadius.mul(0.22).max(0.001)).clamp(0, 1);
+
+        // The sphere is a guardrail, not the sculpture. Outside the radius we
+        // softly remove outward radial velocity and add a small inward drift;
+        // only well beyond the guardrail do we clamp as an escape hatch.
+        If(outsideT.greaterThan(0), () => {
+          const outwardSpeed = radialSpeed.max(0);
+          const inwardSpeed = outsideT.mul(0.38).mul(fieldEffect);
+          newVel.assign(newVel.sub(sphereNormal.mul(outwardSpeed.mul(outsideT))).sub(sphereNormal.mul(inwardSpeed)));
+          containedPos.assign(pos.add(newVel.mul(this.dtUniform)));
+        });
+        const hardFromSphereCenter = containedPos.sub(sphereCenter);
+        const hardDist = hardFromSphereCenter.length();
+        const hardRadius = sphereRadius.mul(1.18);
+        const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
+        If(hardDist.greaterThan(hardRadius), () => {
+          const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
+          containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)));
+          newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
+        });
+
+        positionAge.element(i).assign(vec4(containedPos.x, containedPos.y, containedPos.z, newAge));
+        velocities.element(i).assign(newVel);
       });
-      const pos = positions.element(i).toVar();
-      const vel = velocities.element(i).toVar();
-      // Capture pre-integration speed so we can derive a signed acceleration
-      // (positive when the particle is speeding up, negative when slowing).
-      // Used by the renderer to stretch / squish the sprite along travel.
-      const oldSpeed = vel.length().toVar();
+      return integrateFn().compute(this.count);
+    };
 
-      // Sample the attractor in a slowly-rotating frame: unrotate the position
-      // (R^-1 * p), evaluate the flow there, then rotate the flow back into
-      // particle space (R * f). The orbits stay structurally intact but tumble
-      // through world space, giving a "moving through a meta-realm" feel.
-      const fieldCenterWorld = vec3(0, this.fieldSphereCenterYUniform, 0);
-      const samplePos = this.sampleRotInvUniform.mul(
-        pos.sub(fieldCenterWorld).div(this.worldScaleUniform.max(0.001)),
-      );
-      const flowA = sampleFlow(this.attractorSelectUniform, samplePos);
-      const flowB = sampleFlow(this.attractorTargetUniform, samplePos);
-      const sampledFlow = mix(flowA, flowB, this.crossfadeWeightUniform);
-      const rawFlow = this.sampleRotUniform.mul(sampledFlow);
-      const flowLen = rawFlow.length();
-      const flow = rawFlow.div(flowLen.max(0.0001)).mul(flowLen.clamp(0, 3.25));
-
-      // Age fraction (0 born -> 1 dead).
-      const lifeT = m.x.div(m.y.max(0.0001)).clamp(0, 1);
-
-      // Field affinity stays full until the configured normalized start, then
-      // reaches the configured final affinity by the configured normalized end.
-      const falloffStart = this.fieldFalloffStartUniform.clamp(0, 1);
-      const falloffFinalAt = this.fieldFalloffEndUniform.clamp(0, 1).max(falloffStart);
-      const falloffRaw = lifeT.sub(falloffStart).div(falloffFinalAt.sub(falloffStart).max(0.0001)).clamp(0, 1);
-      const falloffT = falloffRaw.mul(falloffRaw).mul(float(3).sub(falloffRaw.mul(2)));
-      const fieldEffect = mix(float(1), this.finalFieldEffectUniform, falloffT).clamp(0, 1);
-
-      // The field is the only sculpting force. Treat it as a velocity field
-      // with light inertia instead of a raw acceleration so Thomas particles
-      // trace the attractor lobes rather than ballistically filling the bounds.
-      // Affinity controls both field speed and coupling. Scaling only the
-      // desired velocity still allowed low-affinity particles to re-follow a
-      // transitioning field with full responsiveness.
-      const desiredVel = flow
-        .mul(this.flowSpeedUniform)
-        .mul(this.worldScaleUniform)
-        .mul(this.fieldStrengthUniform)
-        .mul(fieldEffect);
-      const fieldFollow = this.dtUniform.mul(6.5).mul(fieldEffect).clamp(0, 1);
-      const newVel = mix(vel, desiredVel, fieldFollow).toVar();
-      const settleDrag = this.dtUniform
-        .mul(4.0)
-        .mul(float(1).sub(fieldEffect))
-        .clamp(0, 1);
-      newVel.assign(mix(newVel, vec3(0), settleDrag));
-
-      const containedPos = pos.add(newVel.mul(this.dtUniform)).toVar();
-      const sphereCenter = vec3(0, this.fieldSphereCenterYUniform, 0);
-      const fromSphereCenter = containedPos.sub(sphereCenter);
-      const sphereDist = fromSphereCenter.length();
-      const sphereRadius = this.fieldSphereRadiusUniform.max(0.01);
-      const sphereNormal = fromSphereCenter.div(sphereDist.max(0.0001));
-      const radialSpeed = newVel.dot(sphereNormal);
-      const softRadius = sphereRadius.mul(1.02);
-      const outsideT = sphereDist.sub(softRadius).div(sphereRadius.mul(0.22).max(0.001)).clamp(0, 1);
-
-      // The sphere is a guardrail, not the sculpture. Outside the radius we
-      // softly remove outward radial velocity and add a small inward drift;
-      // only well beyond the guardrail do we clamp as an escape hatch.
-      If(outsideT.greaterThan(0), () => {
-        const outwardSpeed = radialSpeed.max(0);
-        const inwardSpeed = outsideT.mul(0.38).mul(fieldEffect);
-        newVel.assign(newVel.sub(sphereNormal.mul(outwardSpeed.mul(outsideT))).sub(sphereNormal.mul(inwardSpeed)));
-        containedPos.assign(pos.add(newVel.mul(this.dtUniform)));
-      });
-      const hardFromSphereCenter = containedPos.sub(sphereCenter);
-      const hardDist = hardFromSphereCenter.length();
-      const hardRadius = sphereRadius.mul(1.18);
-      const hardNormal = hardFromSphereCenter.div(hardDist.max(0.0001));
-      If(hardDist.greaterThan(hardRadius), () => {
-        const hardOutwardSpeed = newVel.dot(hardNormal).max(0);
-        containedPos.assign(sphereCenter.add(hardNormal.mul(hardRadius)));
-        newVel.assign(newVel.sub(hardNormal.mul(hardOutwardSpeed)));
-      });
-
-      // Age update. Particle death is only age >= lifeMax; field affinity never
-      // changes lifeMax or the aging rate.
-      const newAge = m.x.add(this.ageDtUniform);
-      const lifeMax = m.y;
-
-      // Signed acceleration along the path, low-passed across frames so the
-      // visual stretch doesn't strobe on every integration tick.
-      const newSpeed = newVel.length();
-      const instantAccel = newSpeed.sub(oldSpeed).div(this.dtUniform.max(1e-4));
-      const smoothedAccel = mix(instantAccel, m.z, 0.7);
-
-      positions.element(i).assign(containedPos);
-      velocities.element(i).assign(newVel);
-      meta.element(i).assign(vec4(newAge, lifeMax, smoothedAccel, 0));
+    this.integrateComputeByAttractor = {
+      thomas: makeIntegrateCompute((samplePos: any) => sampleFlowByKind('thomas', samplePos)),
+      lorenz: makeIntegrateCompute((samplePos: any) => sampleFlowByKind('lorenz', samplePos)),
+      aizawa: makeIntegrateCompute((samplePos: any) => sampleFlowByKind('aizawa', samplePos)),
+      halvorsen: makeIntegrateCompute((samplePos: any) => sampleFlowByKind('halvorsen', samplePos)),
+      rossler: makeIntegrateCompute((samplePos: any) => sampleFlowByKind('rossler', samplePos)),
+      dadras: makeIntegrateCompute((samplePos: any) => sampleFlowByKind('dadras', samplePos)),
+    };
+    this.integrateCrossfadeCompute = makeIntegrateCompute((samplePos: any) => {
+      const flowA = sampleSelectedFlow(this.attractorSelectUniform, samplePos);
+      const flowB = sampleSelectedFlow(this.attractorTargetUniform, samplePos);
+      return mix(flowA, flowB, this.crossfadeWeightUniform);
     });
-    this.integrateCompute = integrateFn().compute(this.count);
   }
 
   private buildRenderMesh(): void {
@@ -900,61 +942,35 @@ export class EnergySculptor implements EnergySink {
     });
 
     // Position: particles are stored as world-relative offsets from center.
-    const localPos = this.positionsBuffer.toAttribute();
-    material.positionNode = localPos.add(this.centerUniform);
+    const positionAge = this.positionAgeBuffer.toAttribute();
+    material.positionNode = positionAge.xyz.add(this.centerUniform);
 
-    const m = this.metaBuffer.toAttribute();
-    const age = m.x;
-    const lifeMax = m.y;
+    const age = positionAge.w;
+    const colorLife = this.colorLifeBuffer.toAttribute();
+    const lifeMax = colorLife.w;
     const lifeT = age.div(lifeMax.max(0.0001)).clamp(0, 1);
     const fadeStart = this.opacityFadeStartUniform.clamp(0, 1);
     const born = age.div(0.04).clamp(0, 1);
     const fadeOut = float(1).sub(lifeT).div(float(1).sub(fadeStart).max(0.0001)).clamp(0, 1);
     const alpha = born.mul(fadeOut);
-    const accel = m.z;
-    const vel = this.velocitiesBuffer.toAttribute();
-    const speed = vel.length();
-
-    // Acceleration → directional stretch. Positive accel stretches the sprite
-    // along the velocity direction; negative accel squishes it (inverse on
-    // perpendicular). At rest the factor is 1.0 → perfect circle.
-    const stretchAmount = accel.mul(this.stretchScaleUniform).clamp(-0.55, 0.85);
-    // Mute stretch on near-stationary particles so freshly-spawned dots stay
-    // round instead of getting a random rotation from numerical jitter.
-    const speedRamp = speed.mul(2.0).clamp(0, 1);
-    const stretchFactor = float(1).add(stretchAmount.mul(speedRamp));
-    const stretchSafe = stretchFactor.max(0.45);
-
-    // Project world-space velocity into camera-view space so the sprite's
-    // X axis (after billboarding) can be aligned with the on-screen velocity
-    // direction. Length-zero velocities (just-spawned, frozen) fall back to
-    // angle 0 — the speedRamp gate above already disables their stretch.
-    const viewVel = cameraViewMatrix.mul(vec4(
-      vel.x,
-      vel.y,
-      vel.z,
-      0,
-    ));
-    const angle = atan(viewVel.y, viewVel.x);
-    material.rotationNode = angle;
 
     // Sprite size stays stable across lifetime; fade-out is opacity-only.
     const sizeBase = this.particleSizeUniform;
-    material.scaleNode = vec2(sizeBase.mul(stretchSafe), sizeBase.div(stretchSafe));
+    material.scaleNode = vec2(sizeBase, sizeBase);
 
-    // Color: base color brightened only by motion. Render alpha is derived here
-    // from age/lifeMax, so field affinity cannot affect opacity or death time.
-    const baseColor = this.colorsBuffer.toAttribute();
-    const speedTerm = speed.mul(0.05).clamp(0, 1).mul(this.speedGlowUniform);
-    const glow = float(0.55).add(speedTerm);
+    // Color alpha is derived here from age/lifeMax, so field affinity cannot
+    // affect opacity or death time.
+    const baseColor = colorLife.xyz;
     const r = uv().sub(0.5).length();
     const disc = smoothstep(0.5, 0.42, r);
-    const lit = baseColor.mul(glow).mul(alpha);
+    const lit = baseColor.mul(0.72).mul(alpha);
     material.colorNode = lit;
     material.opacityNode = alpha.mul(this.particleOpacityUniform).mul(disc);
 
     this.material = material;
     this.mesh = new THREE.InstancedMesh(geometry, material, this.count);
+    this.mesh.count = 0;
+    this.mesh.visible = false;
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 32;
     this.scene.add(this.mesh);
@@ -1457,6 +1473,10 @@ export class EnergySculptor implements EnergySink {
     this.spawnCursorUniform.value = this.spawnCursorCpu;
     this.spawnCursorCpu = (this.spawnCursorCpu + cursor) % this.count;
     if (cursor > 0) {
+      this.activeSlotCountCpu = Math.min(this.count, this.activeSlotCountCpu + cursor);
+      this.activeSlotCountUniform.value = this.activeSlotCountCpu;
+      this.mesh.count = this.activeSlotCountCpu;
+      this.mesh.visible = true;
       this.aliveBatches.push({ spawnedAt: this.elapsed, count: cursor, lifeMax: lifeBase });
     }
   }

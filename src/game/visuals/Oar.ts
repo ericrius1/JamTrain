@@ -46,7 +46,7 @@ export const OAR_DEFS = {
   orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
   pyramidRowSpacing: { default: 0.105, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
-  heldStreamAmount:  { default: 100, min: 0, max: 10000, step: 1, folder: 'Emission', label: 'emission rate' },
+  heldStreamAmount:  { default: 10, min: 0, max: 10000, step: 1, folder: 'Emission', label: 'emission rate' },
   envAttack:         { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 1.5, step: 0.001, folder: 'Envelope', label: 'attack s' },
   envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
   envSustain:        { default: DEFAULT_ORB_ENVELOPE.sustain, min: 0,     max: 1,   step: 0.01,  folder: 'Envelope', label: 'sustain' },
