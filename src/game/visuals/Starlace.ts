@@ -207,8 +207,8 @@ export class Starlace implements PlayerVisual {
   private nodeRevealT: number[] = [];
   private edgeRevealT: number[] = [];
   private revealOriginIndex = 0;
-  private static readonly REVEAL_DURATION_IN = 1.55;
-  private static readonly REVEAL_DURATION_OUT = 0.85;
+  private static readonly REVEAL_DURATION_IN = 1.0;
+  private static readonly REVEAL_DURATION_OUT = 0.55;
   private static readonly REVEAL_FRONT_SOFTNESS = 0.85;
   // Steady lo-fi 8th/16th arpeggio grid. Mostly 16ths (1.0), with occasional
   // 8th breaths (2.0) and rare double-time runs (0.5). No stop-and-start; reads
@@ -619,27 +619,29 @@ export class Starlace implements PlayerVisual {
   }
 
   private createNodes(): void {
-    // Two horizontal rows mirror the two keyboard rows so each key plucks
-    // its dedicated node. Home row a-l (9) sits below top row q-p (10).
-    // Each row spans the harp's width; depth (z) and small v jitter give
-    // the cluster volume without breaking the row mapping. Rows skew
-    // downward so the top row stays below the player's chin.
+    // Three horizontal rows mirror the three keyboard rows so each letter
+    // key plucks its dedicated node. Bottom z-m (7), home a-l (9), top q-p
+    // (10) — 26 nodes total. Each row spans the harp's width; per-row z
+    // bases stagger the rows into visual layers (back/middle/front) while
+    // small v and z jitter keeps the cluster from looking gridlike.
     const rowCounts = Starlace.KEY_ROWS.map(r => r.length);
-    const rowVs = [-0.55, 0.05];
+    const rowVs = [-0.46, 0.0, 0.46];
+    const rowZBases = [0.22, -0.18, 0.10];
     let i = 0;
     for (let r = 0; r < rowCounts.length; r += 1) {
       const count = rowCounts[r];
       const baseV = rowVs[r];
+      const baseZ = rowZBases[r];
       for (let c = 0; c < count; c += 1) {
         const t = count === 1 ? 0.5 : c / (count - 1);
         const u = (t - 0.5) * 0.92;
         const seed = hash(i * 8.31 + 3.30);
         const jitterV = (hash(i * 9.17 + 0.23) - 0.5) * 0.06;
-        const z = (hash(i * 6.91 + 2.20) - 0.5) * 0.55;
+        const jitterZ = (hash(i * 6.91 + 2.20) - 0.5) * 0.32;
         this.nodes.push({
           u,
           v: baseV + jitterV,
-          z,
+          z: baseZ + jitterZ,
           seed,
           noteIndex: 0,
           pulse: 0,
@@ -703,6 +705,7 @@ export class Starlace implements PlayerVisual {
       degree[p.j] += 1;
     }
     this.addCrossRowEdges(seen);
+    this.ensureConnected(seen);
     this.adjacency = Array.from({ length: this.nodes.length }, () => []);
     for (const [a, b] of this.edges) {
       this.adjacency[a].push(b);
@@ -711,8 +714,10 @@ export class Starlace implements PlayerVisual {
   }
 
   private addCrossRowEdges(seen: Set<string>): void {
-    // Three rows form three horizontal slices. Sprinkle a few cross-row
-    // links so the slices read as one woven lace, not three stacked strips.
+    // Three rows form three horizontal slices. Stitch them with a few
+    // cross-row links so the lace reads as one woven cluster, not three
+    // stacked strips. Stored distance is clamped into the mid-fade band so
+    // these long links render visible but secondary to intra-row threads.
     const rowCounts = Starlace.KEY_ROWS.map(r => r.length);
     const rowStarts: number[] = [];
     let acc = 0;
@@ -720,7 +725,9 @@ export class Starlace implements PlayerVisual {
       rowStarts.push(acc);
       acc += c;
     }
-    const linksPerPair = 4;
+    const linksPerPair = 5;
+    const crossRowFadeDistance = STARLACE_LINK_FADE_START
+      + (STARLACE_MAX_LINK_SPAN - STARLACE_LINK_FADE_START) * 0.45;
     for (let r = 0; r < rowCounts.length - 1; r += 1) {
       const aStart = rowStarts[r];
       const aCount = rowCounts[r];
@@ -749,9 +756,83 @@ export class Starlace implements PlayerVisual {
         const key = `${lo}:${hi}`;
         if (seen.has(key)) continue;
         this.edges.push([lo, hi]);
-        this.edgeDistances.push(bestD);
+        this.edgeDistances.push(Math.min(bestD, crossRowFadeDistance));
         seen.add(key);
       }
+    }
+  }
+
+  private ensureConnected(seen: Set<string>): void {
+    // Walk the existing edge graph and bridge any orphan components with
+    // their shortest available cross-component edge. Guarantees every node
+    // (every letter key) is reachable, so plucks ripple through one
+    // continuous lace instead of dying at component boundaries.
+    const n = this.nodes.length;
+    const parent = new Array<number>(n);
+    for (let i = 0; i < n; i += 1) parent[i] = i;
+    const find = (x: number): number => {
+      let root = x;
+      while (parent[root] !== root) root = parent[root];
+      while (parent[x] !== root) {
+        const next = parent[x];
+        parent[x] = root;
+        x = next;
+      }
+      return root;
+    };
+    const unite = (a: number, b: number): boolean => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra === rb) return false;
+      parent[ra] = rb;
+      return true;
+    };
+    for (const [a, b] of this.edges) unite(a, b);
+
+    while (true) {
+      const components = new Map<number, number[]>();
+      for (let i = 0; i < n; i += 1) {
+        const root = find(i);
+        let bucket = components.get(root);
+        if (!bucket) {
+          bucket = [];
+          components.set(root, bucket);
+        }
+        bucket.push(i);
+      }
+      if (components.size <= 1) return;
+      const groups = Array.from(components.values());
+      groups.sort((a, b) => b.length - a.length);
+      const main = groups[0];
+      const orphan = groups[1];
+      let bestI = -1;
+      let bestJ = -1;
+      let bestD = Infinity;
+      for (const i of main) {
+        const a = this.nodes[i];
+        for (const j of orphan) {
+          const b = this.nodes[j];
+          const du = a.u - b.u;
+          const dv = a.v - b.v;
+          const dz = (a.z - b.z) * 1.15;
+          const d = Math.sqrt(du * du + dv * dv + dz * dz);
+          if (d < bestD) {
+            bestD = d;
+            bestI = i;
+            bestJ = j;
+          }
+        }
+      }
+      if (bestI < 0 || bestJ < 0) return;
+      const lo = Math.min(bestI, bestJ);
+      const hi = Math.max(bestI, bestJ);
+      const key = `${lo}:${hi}`;
+      if (!seen.has(key)) {
+        this.edges.push([lo, hi]);
+        this.edgeDistances.push(Math.min(bestD, STARLACE_MAX_LINK_SPAN * 0.85));
+        seen.add(key);
+      }
+      unite(lo, hi);
     }
   }
 
@@ -1327,10 +1408,12 @@ export class Starlace implements PlayerVisual {
     }
   }
 
-  // Two keyboard rows map directly to dedicated nodes. Indices 0..8 = home
-  // row (a-l), 9..18 = top row (q-p). Bottom row (z-m) is reserved for
-  // debug shortcuts (c camera, n reset, m robot mute) and not an instrument.
+  // Three keyboard rows map directly to dedicated nodes. Indices 0..6 =
+  // bottom row (z-m), 7..15 = home row (a-l), 16..25 = top row (q-p).
+  // c/n/m are shadowed by debug shortcuts when the overlay is open (see
+  // attachKeyboardEvents), free to play as instrument keys otherwise.
   private static readonly KEY_ROWS: ReadonlyArray<ReadonlyArray<string>> = [
+    ['z', 'x', 'c', 'v', 'b', 'n', 'm'],
     ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'],
     ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'],
   ];

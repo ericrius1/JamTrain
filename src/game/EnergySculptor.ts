@@ -85,7 +85,7 @@ const DEFAULT_ATTRACTOR_HOLD_SECONDS = 20;
 const DEFAULT_ATTRACTOR_TRANSITION_SECONDS = 5;
 
 export const SCULPTOR_DEFS = {
-  particleSize:       { default: 0.01, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
+  particleSize:       { default: 0.005, min: 0.001, max: 0.03, step: 0.001, folder: 'Particles', label: 'particle size' },
   particleOpacity:    { default: 0.85,  min: 0.1,   max: 1,    step: 0.01,  folder: 'Particles', label: 'particle opacity' },
   particleLifetime:   { default: 50,    min: 1,     max: 240,  step: 0.5,   folder: 'Particles', label: 'particle lifetime' },
   opacityFadeStart:   { default: 0.90,  min: 0,     max: 1,    step: 0.01,  folder: 'Particles', label: 'fade start' },
@@ -123,8 +123,6 @@ export type SculptorParams = ParamsOf<typeof SCULPTOR_DEFS>;
 
 const TAU = Math.PI * 2;
 const MIN_PARTICLE_LIFETIME = 1;
-const THOMAS_SEED_A = 0.19;
-const THOMAS_TARGET_COUNT = 4096;
 
 const ARCHETYPE_TO_ATTRACTOR: Record<ArchetypeId, AttractorKind> = {
   oarOar: 'lorenz',
@@ -300,9 +298,6 @@ export class EnergySculptor implements EnergySink {
   private fieldDebugVisible = false;
   private fieldDebugScratchSample = new THREE.Vector3();
   private fieldDebugScratchFlow = new THREE.Vector3();
-  private thomasSeedTargets: THREE.Vector3[] = [];
-  private thomasTargetScratch = new THREE.Vector3();
-  private thomasTargetCursor = 0;
   private attractorDebugMessage?: HTMLDivElement;
   private affinityDebugParticleAge = 0;
   private affinityDebugParticleLifeMax = 0;
@@ -326,8 +321,6 @@ export class EnergySculptor implements EnergySink {
     this.buildRenderMesh();
     this.buildProjectorRings();
     this.buildFieldDebugLines();
-    this.buildThomasSeedTargets();
-
     this.applyAttractorPreset(this.currentAttractor);
     this.buildAttractorDebugMessage(paneDock);
     this.centerUniform.value.copy(this.center);
@@ -473,6 +466,7 @@ export class EnergySculptor implements EnergySink {
     // Synchrony only drives the decorative ring. Particle motion is governed
     // by the field plus the lifetime-based settling controls.
     this.synchronyBoost = Math.max(0, this.synchronyBoost * Math.exp(-delta * 4.5));
+    this.tickVolumeAuto(delta);
     this.updateProjectorRing();
     this.tickSampleRotation();
     this.tickAttractorCrossfade(delta);
@@ -1281,64 +1275,39 @@ export class EnergySculptor implements EnergySink {
   }
 
   private applyFieldVolumeParams(): void {
-    const scale = Math.max(0.01, this.params.fieldVolumeScale);
+    const baseScale = this.volumeAutoOverride ?? this.params.fieldVolumeScale;
+    const scale = Math.max(0.01, baseScale);
     this.fieldSphereRadiusUniform.value = this.params.fieldSphereRadius * scale;
     this.fieldSphereCenterYUniform.value = this.params.fieldSphereCenterY;
   }
 
-  private buildThomasSeedTargets(): void {
-    this.thomasSeedTargets.length = 0;
-    let x = 0.1;
-    let y = 0;
-    let z = 0;
-    const dt = 0.035;
-    const warmup = 4000;
-    const sampleStride = 12;
-    const totalSteps = warmup + THOMAS_TARGET_COUNT * sampleStride;
-
-    const deriv = (px: number, py: number, pz: number): [number, number, number] => [
-      -THOMAS_SEED_A * px + Math.sin(py),
-      -THOMAS_SEED_A * py + Math.sin(pz),
-      -THOMAS_SEED_A * pz + Math.sin(px),
-    ];
-
-    for (let i = 0; i < totalSteps; i += 1) {
-      const k1 = deriv(x, y, z);
-      const k2 = deriv(x + k1[0] * dt * 0.5, y + k1[1] * dt * 0.5, z + k1[2] * dt * 0.5);
-      const k3 = deriv(x + k2[0] * dt * 0.5, y + k2[1] * dt * 0.5, z + k2[2] * dt * 0.5);
-      const k4 = deriv(x + k3[0] * dt, y + k3[1] * dt, z + k3[2] * dt);
-      x += (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) * dt / 6;
-      y += (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) * dt / 6;
-      z += (k1[2] + 2 * k2[2] + 2 * k3[2] + k4[2]) * dt / 6;
-
-      if (i >= warmup && (i - warmup) % sampleStride === 0) {
-        this.thomasSeedTargets.push(new THREE.Vector3(x, y, z));
+  // Stepped triangular wave on the field volume scale. Cycle = up-then-down
+  // over `volumeAutoCycleS`; `volumeAutoSteps` is total positions visited per
+  // cycle, so the time between jumps is cycleS/steps and the per-step delta
+  // is (max-min)/(steps/2).
+  private tickVolumeAuto(delta: number): void {
+    if (!this.params.volumeAutoEnabled) {
+      if (this.volumeAutoOverride !== null) {
+        this.volumeAutoOverride = null;
+        this.applyFieldVolumeParams();
       }
+      this.volumeAutoElapsed = 0;
+      return;
     }
-  }
-
-  private nextThomasTargetWorld(out: THREE.Vector3): THREE.Vector3 {
-    if (this.thomasSeedTargets.length === 0) return out.set(0, this.fieldSphereCenterYUniform.value, 0);
-    // Prime stride walks the precomputed orbit without visibly marching along
-    // the array while still giving streams coherent Thomas-attractor targets.
-    this.thomasTargetCursor = (this.thomasTargetCursor + 127) % this.thomasSeedTargets.length;
-    const source = this.thomasSeedTargets[this.thomasTargetCursor];
-    out.copy(source);
-    out.applyMatrix3(this.sampleRotUniform.value);
-    out.multiplyScalar(this.worldScaleUniform.value || 1);
-    const spread = this.fieldSphereRadiusUniform.value * 0.18;
-    const theta = Math.random() * TAU;
-    const cos = Math.random() * 2 - 1;
-    const sin = Math.sqrt(Math.max(0, 1 - cos * cos));
-    const radius = spread * Math.cbrt(Math.random());
-    out.x += Math.cos(theta) * sin * radius;
-    out.y += cos * radius;
-    out.z += Math.sin(theta) * sin * radius;
-    const targetLimit = this.fieldSphereRadiusUniform.value * 0.96;
-    const len = out.length();
-    if (len > targetLimit && len > 1e-5) out.multiplyScalar(targetLimit / len);
-    out.y += this.fieldSphereCenterYUniform.value;
-    return out;
+    const cycle = Math.max(0.5, this.params.volumeAutoCycleS);
+    const steps = Math.max(2, Math.round(this.params.volumeAutoSteps));
+    this.volumeAutoElapsed = (this.volumeAutoElapsed + delta) % cycle;
+    const idx = Math.min(steps - 1, Math.floor((this.volumeAutoElapsed / cycle) * steps));
+    const half = Math.floor(steps / 2);
+    const min = Math.min(this.params.volumeAutoMin, this.params.volumeAutoMax);
+    const max = Math.max(this.params.volumeAutoMin, this.params.volumeAutoMax);
+    const inc = (max - min) / Math.max(1, half);
+    const value = idx <= half ? min + idx * inc : max - (idx - half) * inc;
+    const next = Math.min(max, Math.max(min, value));
+    if (next !== this.volumeAutoOverride) {
+      this.volumeAutoOverride = next;
+      this.applyFieldVolumeParams();
+    }
   }
 
   private applyParticleLifetime(value = this.params.particleLifetime): void {
@@ -1372,9 +1341,14 @@ export class EnergySculptor implements EnergySink {
       dirX /= dirLen;
       dirY /= dirLen;
       dirZ /= dirLen;
-      const launchRadius = req.kind === 'starlace' ? 0.10 : 0.14;
-      const coneSpread = req.kind === 'starlace' ? 0.48 : 0.42;
-      const targetBias = req.kind === 'starlace' ? 0.62 : 0.58;
+      // Narrow spawn radius: the burst leaves the instrument as a tight stream
+      // matching the orb / starlace node it came from. Divergence is then
+      // produced by uniformly-sampled per-particle targets across the bounding
+      // sphere so trails fan out into the full volume before the field pulls
+      // them into orbits.
+      const launchRadius = req.kind === 'starlace' ? 0.035 : 0.045;
+      const coneSpread = req.kind === 'starlace' ? 0.78 : 0.72;
+      const targetBias = req.kind === 'starlace' ? 0.78 : 0.74;
       const speedScale = req.kind === 'starlace' ? 0.9 : 1.0;
 
       // Build a stable basis around the instrument->sculpture direction. The
@@ -1412,27 +1386,17 @@ export class EnergySculptor implements EnergySink {
           spawnZ - this.center.z,
         );
 
-        // Initial velocity aims at the active attractor, not at a random point
-        // in the bounding sphere. For Thomas, precomputed orbit targets let
-        // instrument streams enter the lobes quickly while the sphere remains
-        // only an escape guardrail.
-        let targetX: number;
-        let targetY: number;
-        let targetZ: number;
-        if (this.currentAttractor === 'thomas') {
-          const target = this.nextThomasTargetWorld(this.thomasTargetScratch);
-          targetX = this.center.x + target.x;
-          targetY = this.center.y + target.y;
-          targetZ = this.center.z + target.z;
-        } else {
-          const targetTheta = Math.random() * TAU;
-          const targetCos = Math.random() * 2 - 1;
-          const targetSin = Math.sqrt(Math.max(0, 1 - targetCos * targetCos));
-          const targetRadius = sphereRadius * (0.22 + Math.random() * 0.68);
-          targetX = this.center.x + Math.cos(targetTheta) * targetSin * targetRadius;
-          targetY = sphereCenterWorldY + targetCos * targetRadius;
-          targetZ = this.center.z + Math.sin(targetTheta) * targetSin * targetRadius;
-        }
+        // Each particle aims at a unique point sampled uniformly across the
+        // active bounding sphere so the burst spreads out instead of bunching
+        // toward a single attractor lobe. The flow field still pulls each
+        // trajectory into orbit shape after the initial fan-out.
+        const targetTheta = Math.random() * TAU;
+        const targetCos = Math.random() * 2 - 1;
+        const targetSin = Math.sqrt(Math.max(0, 1 - targetCos * targetCos));
+        const targetRadius = sphereRadius * (0.35 + Math.random() * 0.6);
+        const targetX = this.center.x + Math.cos(targetTheta) * targetSin * targetRadius;
+        const targetY = sphereCenterWorldY + targetCos * targetRadius;
+        const targetZ = this.center.z + Math.sin(targetTheta) * targetSin * targetRadius;
         let aimX = targetX - spawnX;
         let aimY = targetY - spawnY;
         let aimZ = targetZ - spawnZ;
