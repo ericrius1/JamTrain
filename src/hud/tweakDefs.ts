@@ -1,20 +1,12 @@
-import { FolderApi, Pane } from 'tweakpane';
-
 /* ================================================================
-   Declarative tweakpane params
+   Declarative runtime params
    ----------------------------------------------------------------
    Each module exports a frozen DEFS object keeping value + metadata
    (default, min/max/step, folder, hidden, etc.) co-located. The
-   helper below builds the params object, wires it to a Pane, and
-   transparently persists changes to localStorage. Pressing R while
-   the DevOverlay is visible restores every registered module to
-   its in-code defaults.
+   helper below keeps the params object and reset registry in one
+   place without mounting any dev controls.
    ================================================================ */
 
-// Setting `persisted: false` keeps the param in the tweakpane UI but skips
-// localStorage round-tripping. Useful for params that are derived from a
-// separate source-of-truth (e.g. volumeDb is driven by the mixer slider's
-// stored avPrefs.musicVolume, so persisting both diverges across sessions).
 export type NumberDef = {
   type?: 'number';
   default: number;
@@ -83,59 +75,24 @@ export function makeParams<T extends Record<string, Def>>(defs: T): ParamsOf<T> 
   return params;
 }
 
-/* ----------- localStorage ----------- */
-
-const KEY_PREFIX = 'jam-train-tweaks:';
-
-function storageKey(key: string): string {
-  return `${KEY_PREFIX}${key}`;
-}
-
-function readOverrides(key: string): Record<string, unknown> | null {
-  try {
-    const raw = localStorage.getItem(storageKey(key));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
-  } catch {
-    return null;
-  }
-}
-
-function writeOverrides(key: string, params: Record<string, unknown>): void {
-  try {
-    localStorage.setItem(storageKey(key), JSON.stringify(params));
-  } catch {
-    // Quota or private mode — silently ignore; the in-memory params still work.
-  }
-}
-
-function clearOverrides(key: string): void {
-  try { localStorage.removeItem(storageKey(key)); } catch { /* noop */ }
-}
-
-/* ----------- Global registry for R-reset ----------- */
-
 type ResetEntry = { key: string; reset: () => void };
 const resetRegistry = new Set<ResetEntry>();
 
 export function resetAllTweaks(): void {
   for (const e of resetRegistry) {
     try { e.reset(); } catch (err) {
-      console.warn(`[tweakDefs] reset failed for ${e.key}`, err);
+      console.warn(`[runtimeParams] reset failed for ${e.key}`, err);
     }
   }
 }
 
-/** Register a non-tweakpane reset hook (e.g. mixer panel sliders) so it fires
- *  alongside the tweakpane-bound resets when the user presses R. */
+/** Register a reset hook (e.g. mixer panel sliders) so it fires alongside the
+ *  runtime param resets when the user presses R. */
 export function registerResetHook(key: string, reset: () => void): () => void {
   const entry: ResetEntry = { key, reset };
   resetRegistry.add(entry);
   return () => { resetRegistry.delete(entry); };
 }
-
-/* ----------- Bind ----------- */
 
 export type RegisterOptions<T extends Record<string, Def>> = {
   title: string;
@@ -143,124 +100,40 @@ export type RegisterOptions<T extends Record<string, Def>> = {
   /** Reuse an existing params object instead of creating a new one. Useful for
    *  modules whose params reference is exported and consumed elsewhere. */
   params?: ParamsOf<T>;
-  /** Per-key callback fired on every change (and once at startup so persisted
-   *  values propagate downstream into uniforms / dependent objects). */
+  /** Per-key callback fired once at startup and again whenever reset() runs. */
   onChange?: { [K in keyof T]?: (value: ParamsOf<T>[K]) => void };
-  /** Extra buttons grouped by folder. `folder: undefined` puts the button at the top level. */
+  /** Kept for legacy call sites; no UI is mounted for these buttons. */
   buttons?: Array<{ folder?: string; title: string; onClick: () => void }>;
 };
 
 export type RegisterResult<T extends Record<string, Def>> = {
   params: ParamsOf<T>;
-  pane?: Pane;
   /** Restore params to their code defaults (without going through the global R reset). */
   reset: () => void;
   dispose: () => void;
 };
 
 export function registerTweaks<T extends Record<string, Def>>(
-  paneDock: HTMLElement | undefined,
+  _paneDock: HTMLElement | undefined,
   key: string,
   defs: T,
   opts: RegisterOptions<T>,
 ): RegisterResult<T> {
   const params = opts.params ?? makeParams(defs);
-  if (opts.params) {
-    // Caller supplied a reference (e.g. handDepthConfig). Make sure it starts
-    // from defaults before we layer persisted overrides on top.
-    for (const k in defs) (params as Record<string, unknown>)[k] = defs[k].default;
-  }
-
-  // Apply persisted overrides (only known keys, only values of compatible
-  // primitive type). Skip params marked `persisted: false` — they are driven
-  // by some other source-of-truth and persisting them here can cause divergence.
-  const overrides = readOverrides(key);
-  if (overrides) {
-    for (const k in defs) {
-      if (!(k in overrides)) continue;
-      const def = defs[k];
-      if (def.persisted === false) continue;
-      const v = overrides[k];
-      if (typeOfDef(def) !== typeof v) continue;
-      (params as Record<string, unknown>)[k] = v;
-    }
-  }
 
   const fireChange = <K extends keyof T>(name: K, value: ParamsOf<T>[K]) => {
     const cb = opts.onChange?.[name];
     if (cb) cb(value);
   };
 
-  // Push initial (possibly persisted) values downstream so consumers see the
-  // restored state without us having to invoke the callbacks at the call site.
   for (const k in defs) {
     if (opts.onChange?.[k]) fireChange(k, params[k] as ParamsOf<T>[typeof k]);
-  }
-
-  let pane: Pane | undefined;
-  let saveTimer: number | undefined;
-  const buildPersistedSnapshot = (): Record<string, unknown> => {
-    const out: Record<string, unknown> = {};
-    for (const k in defs) {
-      if (defs[k].persisted === false) continue;
-      out[k] = (params as Record<string, unknown>)[k];
-    }
-    return out;
-  };
-  const scheduleSave = () => {
-    if (saveTimer !== undefined) return;
-    saveTimer = window.setTimeout(() => {
-      saveTimer = undefined;
-      writeOverrides(key, buildPersistedSnapshot());
-    }, 120);
-  };
-
-  if (paneDock) {
-    const container = document.createElement('div');
-    paneDock.appendChild(container);
-    pane = new Pane({ title: opts.title, container });
-    pane.expanded = opts.expanded ?? false;
-
-    const folders = new Map<string, FolderApi>();
-    const targetFor = (folderName?: string) => {
-      if (!folderName) return pane!;
-      let f = folders.get(folderName);
-      if (!f) {
-        f = pane!.addFolder({ title: folderName });
-        folders.set(folderName, f);
-      }
-      return f;
-    };
-
-    for (const k in defs) {
-      const def = defs[k];
-      if (def.hidden) continue;
-
-      const target = targetFor(def.folder);
-      const bindOpts = bindingOptions(def);
-      const binding = target.addBinding(params as Record<string, unknown>, k, bindOpts as never);
-
-      // Tweakpane mutates params[k] in place before `change` fires, so we just
-      // dispatch the latest value.
-      binding.on('change', () => {
-        scheduleSave();
-        fireChange(k, params[k] as ParamsOf<T>[typeof k]);
-      });
-    }
-
-    if (opts.buttons) {
-      for (const btn of opts.buttons) {
-        targetFor(btn.folder).addButton({ title: btn.title }).on('click', btn.onClick);
-      }
-    }
   }
 
   const reset = () => {
     for (const k in defs) {
       (params as Record<string, unknown>)[k] = defs[k].default;
     }
-    clearOverrides(key);
-    pane?.refresh();
     for (const k in defs) {
       if (opts.onChange?.[k]) fireChange(k, params[k] as ParamsOf<T>[typeof k]);
     }
@@ -271,47 +144,9 @@ export function registerTweaks<T extends Record<string, Def>>(
 
   return {
     params,
-    pane,
     reset,
     dispose: () => {
       resetRegistry.delete(entry);
-      if (saveTimer !== undefined) {
-        window.clearTimeout(saveTimer);
-        writeOverrides(key, buildPersistedSnapshot());
-      }
-      pane?.dispose();
     },
   };
-}
-
-function typeOfDef(def: Def): 'number' | 'boolean' | 'string' {
-  if (def.type === 'boolean') return 'boolean';
-  if (def.type === 'color' || def.type === 'select' || def.type === 'string') return 'string';
-  return 'number';
-}
-
-function bindingOptions(def: Def): Record<string, unknown> {
-  const base: Record<string, unknown> = {};
-  if (def.label !== undefined) base.label = def.label;
-  switch (def.type) {
-    case 'boolean':
-      return base;
-    case 'color':
-      // Tweakpane v4 auto-detects '#rrggbb' strings as color inputs.
-      return base;
-    case 'select':
-      base.options = def.options;
-      return base;
-    case 'string':
-      if (def.readonly) base.readonly = true;
-      return base;
-    default: {
-      const n = def as NumberDef;
-      if (n.options) base.options = n.options;
-      if (n.min !== undefined) base.min = n.min;
-      if (n.max !== undefined) base.max = n.max;
-      if (n.step !== undefined) base.step = n.step;
-      return base;
-    }
-  }
 }

@@ -91,7 +91,7 @@
   text-align: center;
   font-family: 'IM Fell English', serif;
   font-style: italic;
-  font-size: 19px;
+  font-size: 30px;
   line-height: 1.45;
   color: var(--patina);
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
@@ -101,7 +101,7 @@
 }
 .begin-tagline p + p {
   margin-top: 4px;
-  color: var(--text-dim);
+  /* color: var(--text-dim); */
 }
 
 /* Title block — anchored at top center of the stage. Eyebrow + "Jam Train"

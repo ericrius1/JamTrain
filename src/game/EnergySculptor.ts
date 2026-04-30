@@ -377,7 +377,6 @@ export class EnergySculptor implements EnergySink {
   }
 
   // Select cycle, archetype auto, or a manually pinned attractor.
-  // Called from the tweakpane dropdown's onChange.
   private setAttractorOverride(override: AttractorMode): void {
     this.attractorOverride = override;
     if (override === 'cycle') {
@@ -481,9 +480,7 @@ export class EnergySculptor implements EnergySink {
     const message = document.createElement('div');
     message.className = 'attractor-debug-message';
     message.setAttribute('aria-live', 'polite');
-    const summary = paneDock.querySelector('.tweak-pane-dock-summary');
-    const anchor = summary?.nextSibling ?? null;
-    paneDock.insertBefore(message, anchor);
+    paneDock.appendChild(message);
     this.attractorDebugMessage = message;
     this.updateAttractorDebugMessage();
   }
@@ -1491,4 +1488,3 @@ function clampRange(value: number, min: number, max: number, fallback: number): 
   if (!Number.isFinite(value)) return fallback;
   return Math.max(min, Math.min(max, value));
 }
-

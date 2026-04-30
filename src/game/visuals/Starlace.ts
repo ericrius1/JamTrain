@@ -21,21 +21,17 @@ export const STARLACE_DEFS = {
   contactRadius:   { default: 0.085, min: 0.025, max: 0.18, step: 0.001, label: 'hand contact' },
   hitCooldown:     { default: 0.065, min: 0.02,  max: 0.35, step: 0.005, label: 'cooldown s' },
   pulseDecay:      { default: 4.8,   min: 1,     max: 14,   step: 0.1,   label: 'star fade' },
-  driftSpeed:      { default: 0.20,  min: 0,     max: 2.4,  step: 0.01,  label: 'drift speed' },
-  waveAmp:         { default: 0.024, min: 0,     max: 0.16, step: 0.001, label: 'web wave' },
   linkOpacity:     { default: 0.42,  min: 0,     max: 0.9,  step: 0.01,  label: 'link opacity' },
-  sparkSize:       { default: 0.030, min: 0.006, max: 0.08, step: 0.001, label: 'spark size' },
+  sparkSize:       { default: 0.044, min: 0.006, max: 0.08, step: 0.001, label: 'spark size' },
   anchorSmoothing: { default: 5.5,   min: 0.2,   max: 16,   step: 0.1,   label: 'anchor s' },
   handSmoothing:   { default: 3.2,   min: 0.4,   max: 18,   step: 0.1,   label: 'hand smoothing' },
   axisSmoothing:   { default: 2.0,   min: 0.2,   max: 12,   step: 0.1,   label: 'turn smoothing' },
   maxTurnRate:     { default: 0.72,  min: 0.05,  max: 6,    step: 0.01,  label: 'turn rad/s' },
-  danceAmount:     { default: 0.030, min: 0,     max: 0.16, step: 0.001, label: 'dance amount' },
-  danceSpeed:      { default: 0.14,  min: 0,     max: 1.2,  step: 0.01,  label: 'dance speed' },
-  keyWalkInterval: { default: 0.27,  min: 0.08,  max: 0.75, step: 0.005, label: 'tempo s' },
-  keyPhraseJumps:  { default: 8,     min: 2,     max: 24,   step: 1,     label: 'phrase turns' },
+  keyWalkInterval: { default: 0.20,  min: 0.08,  max: 0.75, step: 0.005, label: 'tempo s' },
+  keyPhraseJumps:  { default: 9,     min: 2,     max: 24,   step: 1,     label: 'phrase turns' },
   keyChordMaxNotes:{ default: 3,     min: 1,     max: 3,    step: 1,     label: 'arp width' },
-  keyRhythmSwing:  { default: 0.64,  min: 0,     max: 1,    step: 0.01,  label: 'rhythm swing' },
-  keyTempoDrift:   { default: 0.58,  min: 0,     max: 1,    step: 0.01,  label: 'tempo drift' },
+  keyRhythmSwing:  { default: 0.34,  min: 0,     max: 1,    step: 0.01,  label: 'rhythm swing' },
+  keyTempoDrift:   { default: 0.20,  min: 0,     max: 1,    step: 0.01,  label: 'tempo drift' },
   keyPathWander:   { default: 0.72,  min: 0,     max: 1,    step: 0.01,  label: 'path wander' },
   keyEdgeFollow:   { default: 0.66,  min: 0,     max: 1,    step: 0.01,  label: 'edge follow' },
   coolColor:       { type: 'color', default: '#5fb6c4', label: 'cool stars' },
@@ -86,6 +82,7 @@ type StarNode = {
 type TravelingSpark = {
   from: number;
   to: number;
+  edgeIndex: number;
   start: number;
   duration: number;
   intensity: number;
@@ -171,6 +168,8 @@ export class Starlace implements PlayerVisual {
   private edges: [number, number][] = [];
   private edgeDistances: number[] = [];
   private adjacency: number[][] = [];
+  private edgeIndexByPair = new Map<number, number>();
+  private edgeSparkBoost: Float32Array = new Float32Array(0);
   private linePositions: Float32Array;
   private lineColors: Float32Array;
   private pulseLinePositions: Float32Array;
@@ -209,8 +208,12 @@ export class Starlace implements PlayerVisual {
   private static readonly REVEAL_DURATION_IN = 1.55;
   private static readonly REVEAL_DURATION_OUT = 0.85;
   private static readonly REVEAL_FRONT_SOFTNESS = 0.85;
-  private static readonly KEYBOARD_ECHO_DELAY_FACTORS = [1.20, 0.48, 1.06, 0.50, 0.42] as const;
-  private static readonly KEYBOARD_ECHO_VELOCITY_OFFSETS = [0.10, -0.03, 0.07, -0.02, -0.06] as const;
+  // Steady lo-fi 8th/16th arpeggio grid. Mostly 16ths (1.0), with occasional
+  // 8th breaths (2.0) and rare double-time runs (0.5). No stop-and-start; reads
+  // as a flowing arpeggio. Length 8 = one bar of 16ths at base interval.
+  private static readonly KEYBOARD_ECHO_DELAY_FACTORS = [1.0, 1.0, 1.0, 0.5, 1.0, 1.0, 0.5, 2.0] as const;
+  // Velocity ripples down across the arpeggio, swelling back at the start.
+  private static readonly KEYBOARD_ECHO_VELOCITY_OFFSETS = [0.14, 0.04, -0.02, -0.05, 0.06, -0.02, -0.06, -0.10] as const;
   private anchor = new THREE.Vector3();
   private left = new THREE.Vector3();
   private right = new THREE.Vector3();
@@ -232,6 +235,7 @@ export class Starlace implements PlayerVisual {
   private sparks: TravelingSpark[] = Array.from({ length: MAX_SPARKS }, () => ({
     from: 0,
     to: 0,
+    edgeIndex: -1,
     start: -100,
     duration: 0.5,
     intensity: 0,
@@ -793,17 +797,15 @@ export class Starlace implements PlayerVisual {
   }
 
   private resolveAxes(delta: number): void {
-    this.targetAxis.subVectors(this.right, this.left);
-    if (this.targetAxis.lengthSq() < 0.0001) {
+    if (this.fixedAnchor) {
       this.targetAxis.set(1, 0, 0);
     } else {
-      this.targetAxis.normalize();
-    }
-
-    if (this.params.danceAmount > 0 && this.params.danceSpeed > 0) {
-      const phase = this.motionElapsed * this.params.danceSpeed * TAU + (this.palette === 'remote' ? 0.72 : 0);
-      const yaw = Math.sin(phase) * this.params.danceAmount;
-      this.targetAxis.applyAxisAngle(_worldUp, yaw);
+      this.targetAxis.subVectors(this.right, this.left);
+      if (this.targetAxis.lengthSq() < 0.0001) {
+        this.targetAxis.set(1, 0, 0);
+      } else {
+        this.targetAxis.normalize();
+      }
     }
 
     const turnAlpha = 1 - Math.exp(-delta * this.params.axisSmoothing);
@@ -817,19 +819,22 @@ export class Starlace implements PlayerVisual {
 
   private writeNodePositions(): void {
     const handSpan = this.left.distanceTo(this.right);
-    const width = this.params.width * (0.88 + this.smoothedTension * 0.24) + clamp(handSpan - 0.42, -0.18, 0.36) * 0.26;
-    const height = this.params.height * (0.90 + this.smoothedEnergy * 0.14);
-    const depth = this.params.depth * (0.72 + this.smoothedExpression * 0.38);
-    const time = this.motionElapsed * this.params.driftSpeed;
+    const width = this.fixedAnchor
+      ? this.params.width
+      : this.params.width * (0.88 + this.smoothedTension * 0.24) + clamp(handSpan - 0.42, -0.18, 0.36) * 0.26;
+    const height = this.fixedAnchor
+      ? this.params.height
+      : this.params.height * (0.90 + this.smoothedEnergy * 0.14);
+    const depth = this.fixedAnchor
+      ? this.params.depth
+      : this.params.depth * (0.72 + this.smoothedExpression * 0.38);
 
     for (let i = 0; i < this.nodes.length; i += 1) {
       const n = this.nodes[i];
-      const wave = Math.sin(time * TAU + n.seed * TAU + n.u * 4.1) * this.params.waveAmp;
-      const shimmer = Math.cos(time * 3.3 + n.v * 6.4 + n.seed * 5.7) * this.params.waveAmp * 0.38;
       n.world.copy(this.center)
         .addScaledVector(this.axis, n.u * width)
-        .addScaledVector(this.fieldUp, n.v * height + wave)
-        .addScaledVector(this.fieldSide, n.z * depth + shimmer);
+        .addScaledVector(this.fieldUp, n.v * height)
+        .addScaledVector(this.fieldSide, n.z * depth);
     }
   }
 

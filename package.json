@@ -12,14 +12,12 @@
   },
   "dependencies": {
     "@svenflow/micro-handpose": "0.3.0",
-    "@tweakpane/core": "^2.0.5",
     "@types/stats.js": "^0.17.4",
     "spacetimedb": "2.1.0",
     "stats.js": "^0.17.0",
     "three": "0.184.0",
     "three-mesh-bvh": "^0.9.9",
     "tone": "15.1.22",
-    "tweakpane": "^4.0.5",
     "webmidi": "^3.1.16"
   },
   "devDependencies": {

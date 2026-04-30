@@ -2,7 +2,6 @@ import Stats from 'stats.js';
 import { resetAllTweaks } from './tweakDefs';
 
 export class DevOverlay {
-  private paneDock: HTMLElement;
   private stats: Stats;
   private statsContainer: HTMLElement;
   private visible = false;
@@ -12,14 +11,11 @@ export class DevOverlay {
   private onCameraCycle?: () => void;
 
   constructor(
-    paneDock: HTMLElement,
     onToggle?: (visible: boolean) => void,
     onCameraCycle?: () => void,
   ) {
-    this.paneDock = paneDock;
     this.onToggle = onToggle;
     this.onCameraCycle = onCameraCycle;
-    this.paneDock.classList.add('hidden');
 
     this.stats = new Stats();
     this.stats.showPanel(0); // 0: fps, 1: ms, 2: mb (if available)
@@ -59,7 +55,6 @@ export class DevOverlay {
 
   toggle(): void {
     this.visible = !this.visible;
-    this.paneDock.classList.toggle('hidden', !this.visible);
     this.statsContainer.classList.toggle('hidden', !this.visible);
     if (this.visible) {
       this.tick();
