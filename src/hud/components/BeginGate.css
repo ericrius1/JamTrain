@@ -282,6 +282,21 @@
   animation-iteration-count: infinite;
 }
 
+/* Tiny compatibility hint — sits in the bottom-right corner, well below
+   the conductor field, low-contrast so it never competes with the CTA. */
+.begin-compat-note {
+  position: absolute;
+  right: 24px;
+  bottom: 14px;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
 .begin-gate.fade-out { opacity: 0; }
 
 /* Re-arm pointer events on actual UI controls. The gate root is inert so the

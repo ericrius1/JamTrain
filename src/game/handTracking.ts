@@ -3,7 +3,7 @@ import { waitForHandposeCacheWorker } from './handposeCache';
 import { HandFilter } from './handFilter';
 import { clamp, lerpVec, vec } from './math';
 import { makeMouseHands } from './pose';
-import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type Vec3Data } from './types';
+import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PoseInputSource, type Vec3Data } from './types';
 
 // Self-hosted weights live under /public/handpose/. Avoids the cross-origin
 // jsdelivr hop and lets us cache them with `immutable` headers (vercel.json).
@@ -94,21 +94,28 @@ const POINTER_LAG_SECONDS = 0.075;
 const POINTER_ACTIVE_SECONDS = 1.4;
 const POINTER_IDLE_CONFIDENCE = 0.35;
 // Keep AEC on (mic must not echo speaker output back to the partner) but
-// disable NS + AGC: they're tuned for speech and chew up sustained
-// instrument tones bleeding into the mic, producing audible crackle. AEC
-// itself only works once the loopback path in audioGraph routes Tone audio
-// somewhere Chrome's AEC reference signal can see — without that, AEC fights
-// uncancellable bleed and produces the same artifacts NS/AGC do.
-const MIC_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+// disable NS + AGC — they're tuned for speech and chew up sustained
+// instrument tones bleeding into the mic, producing audible crackle.
+//
+// echoCancellationType: 'system' asks for the OS-native AEC on macOS/Windows
+// Chromium; unlike browser AEC, the system path monitors the OS playback
+// mixer and therefore *does* see Tone.js output, so it can subtract
+// instrument bleed from the mic without any same-page loopback. 'ideal'
+// means: prefer system AEC when available, fall back to browser AEC
+// elsewhere (Linux, Firefox, Safari) — push-to-talk carries those users
+// through the gap.
+const MIC_AUDIO_CONSTRAINTS = {
   echoCancellation: true,
+  echoCancellationType: { ideal: 'system' },
   noiseSuppression: false,
   autoGainControl: false,
   channelCount: { ideal: 1 },
-};
+} as MediaTrackConstraints;
 
 export class HandTracker {
   private video?: HTMLVideoElement;
   private micStream?: MediaStream;
+  private micArmed = false;
   private detector?: MicroHandpose;
   private detectInputCanvas?: HTMLCanvasElement;
   private detectInputCtx?: CanvasRenderingContext2D;
@@ -128,6 +135,7 @@ export class HandTracker {
   private partialDetectionRun = 0;
   private lastResetAt = -Infinity;
   private prevDetectedHandedness = new Set<Handedness>();
+  private trackedHandedness = new Set<Handedness>();
   readonly filter = new HandFilter();
   private readonly pointerMoveListener = (event: PointerEvent): void => {
     if (!this.pointerInputEnabled) return;
@@ -246,6 +254,7 @@ export class HandTracker {
       if (document.hidden || !document.hasFocus()) {
         this.cameraHands = undefined;
         this.rawDetections = [];
+        this.trackedHandedness.clear();
         this.detectRafHandle = requestAnimationFrame(tick);
         return;
       }
@@ -273,6 +282,9 @@ export class HandTracker {
         })
         .catch(error => {
           console.warn('Hand detection failed', error);
+          this.cameraHands = undefined;
+          this.rawDetections = [];
+          this.trackedHandedness.clear();
           this.status = 'hands: simulated';
           this.publishStatus();
         })
@@ -305,18 +317,39 @@ export class HandTracker {
       // pose the moment the camera goes dark.
       this.cameraHands = undefined;
       this.rawDetections = [];
+      this.trackedHandedness.clear();
     }
   }
 
-  async setAudioEnabled(enabled: boolean): Promise<void> {
-    if (enabled && !this.micStream) {
+  // "Armed" = mic permission acquired and the user has opted in to talking;
+  // the track itself stays disabled until setMicTransmitting flips it. This
+  // is the push-to-talk model: mic is silent unless the user holds the talk
+  // key, which keeps instrument bleed and AEC out of the partner's audio
+  // entirely except during the brief windows of actual speech.
+  async setMicArmed(armed: boolean): Promise<void> {
+    if (armed && !this.micStream) {
       const ok = await this.startMic();
       if (!ok) return;
     }
+    this.micArmed = armed;
     if (!this.micStream) return;
-    for (const track of this.micStream.getAudioTracks()) {
-      track.enabled = enabled;
+    if (!armed) {
+      for (const track of this.micStream.getAudioTracks()) {
+        track.enabled = false;
+      }
     }
+  }
+
+  setMicTransmitting(transmitting: boolean): void {
+    if (!this.micStream || !this.micArmed) return;
+    for (const track of this.micStream.getAudioTracks()) {
+      track.enabled = transmitting;
+    }
+  }
+
+  getMicTransmitting(): boolean {
+    if (!this.micStream) return false;
+    return this.micStream.getAudioTracks().some(t => t.enabled);
   }
 
   getVideoEnabled(): boolean {
@@ -332,9 +365,19 @@ export class HandTracker {
     return this.cameraHands !== undefined;
   }
 
-  getAudioEnabled(): boolean {
-    if (!this.micStream) return false;
-    return this.micStream.getAudioTracks().some(t => t.enabled);
+  getPoseInputSource(): PoseInputSource {
+    return this.hasTrackedHands() ? 'camera' : 'mouse';
+  }
+
+  getTrackedHands(): Record<Handedness, boolean> {
+    return {
+      left: this.trackedHandedness.has('left'),
+      right: this.trackedHandedness.has('right'),
+    };
+  }
+
+  getMicArmed(): boolean {
+    return this.micArmed;
   }
 
   getMicStream(): MediaStream | undefined {
@@ -389,6 +432,7 @@ export class HandTracker {
 
   private mapDetections(results: unknown[], time: number): Record<Handedness, HandPose> | undefined {
     this.rawDetections = [];
+    this.trackedHandedness.clear();
     if (results.length === 0) return undefined;
 
     type RawHand = {
@@ -423,6 +467,7 @@ export class HandTracker {
     }
 
     const presentNow = new Set<Handedness>(assignments.map(a => a.handedness));
+    this.trackedHandedness = presentNow;
     for (const handedness of handednesses) {
       if (presentNow.has(handedness) && !this.prevDetectedHandedness.has(handedness)) {
         this.filter.resetHand(handedness);

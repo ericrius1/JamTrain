@@ -126,7 +126,7 @@ export class VideoPanel {
     });
     this.micButton = makeToolbarButton({
       label: 'Mic',
-      title: 'Optional — let your partner hear you.',
+      title: 'Push-to-talk — arm the mic, then hold Space to talk.',
       icon: MIC_SVG,
       onClick: () => { for (const l of this.micListeners) l(); },
     });

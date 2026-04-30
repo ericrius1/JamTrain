@@ -680,6 +680,7 @@ export class Drum implements PlayerVisual {
     this.tickReveal();
     if (this.revealedFully && !this.revealActive) {
       if (contacts) this.processContactHits(contacts, delta);
+      else this.clearContactState();
       this.updatePointerGesture(delta);
       this.tickHeldParticleStreams(delta);
     } else {
@@ -1081,12 +1082,15 @@ export class Drum implements PlayerVisual {
     const hasActiveHit = this.raycastPointer(this.pointerNdc, camera, this.pointerCurrentHit);
     const activeOrb = hasActiveHit ? this.pointerCurrentHit.orbIndex : -1;
     const velocity = this.pointerVelocity(ndcSpeed, clickQueued);
+    const activelyStriking = clickQueued || ndcSpeed > POINTER_GESTURE_MOTION_NDC_PER_SEC;
 
     // A swipe can skip over a small orb between animation frames. Sample the
     // pointer path in NDC and fire for every orb the swept ray crossed.
-    for (let i = 0; i < this.orbs.length; i += 1) {
-      if (!this.pointerSweepSeen[i] || this.pointerOrbInside[i]) continue;
-      this.pointerFrameFired[i] = this.firePointerHit(i, velocity, this.pointerSweepWorldPoints[i]);
+    if (activelyStriking) {
+      for (let i = 0; i < this.orbs.length; i += 1) {
+        if (!this.pointerSweepSeen[i] || this.pointerOrbInside[i]) continue;
+        this.pointerFrameFired[i] = this.firePointerHit(i, velocity, this.pointerSweepWorldPoints[i]);
+      }
     }
 
     // Clicking while already hovering should still behave like a real strike.
@@ -1321,8 +1325,10 @@ export class Drum implements PlayerVisual {
   private processContactHits(contacts: readonly HandContactPoint[], delta: number): void {
     this.hitCandidates.fill(null);
     this.currentContactKeys.clear();
+    const activeContactIds = new Set<string>();
 
     for (const contact of contacts) {
+      activeContactIds.add(contact.id);
       let previous = this.previousContacts.get(contact.id);
       if (!previous) {
         previous = contact.position.clone();
@@ -1360,6 +1366,10 @@ export class Drum implements PlayerVisual {
       previous.copy(contact.position);
     }
 
+    for (const id of this.previousContacts.keys()) {
+      if (!activeContactIds.has(id)) this.previousContacts.delete(id);
+    }
+
     for (let i = 0; i < this.orbs.length; i += 1) {
       const candidate = this.hitCandidates[i];
       if (!candidate) continue;
@@ -1370,6 +1380,15 @@ export class Drum implements PlayerVisual {
 
     this.activeContactKeys.clear();
     for (const key of this.currentContactKeys) this.activeContactKeys.add(key);
+  }
+
+  private clearContactState(): void {
+    this.previousContacts.clear();
+    this.activeContactKeys.clear();
+    this.currentContactKeys.clear();
+    this.contactHits.length = 0;
+    this.currentContactHits.length = 0;
+    this.hitCandidates.fill(null);
   }
 
   private registerHitCandidate(orbIndex: number, contact: HandContactPoint, speed: number, point: THREE.Vector3): void {

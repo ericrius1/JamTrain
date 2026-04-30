@@ -429,6 +429,36 @@ async function createRuntime(): Promise<RuntimeApi> {
   };
   window.addEventListener('keydown', handleRobotMuteKey);
 
+  // Push-to-talk. The Mic button arms the mic (acquires permission, leaves
+  // tracks disabled); holding Space transmits. Pressing Space without arming
+  // does nothing — setMicTransmitting is a no-op when not armed.
+  const isTextTarget = (target: EventTarget | null): boolean =>
+    !!(target as HTMLElement | null)?.matches('input, textarea, [contenteditable=true]');
+  const handlePushToTalkDown = (e: KeyboardEvent): void => {
+    if (e.code !== 'Space' || e.repeat) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (isTextTarget(e.target)) return;
+    if (!started || !game.getMicEnabled()) return;
+    e.preventDefault();
+    game.setMicTransmitting(true);
+  };
+  const handlePushToTalkUp = (e: KeyboardEvent): void => {
+    if (e.code !== 'Space') return;
+    if (isTextTarget(e.target)) return;
+    game.setMicTransmitting(false);
+  };
+  // Releasing focus while the key is held would otherwise leave the mic stuck
+  // open; clear the transmit state on blur and visibility loss too.
+  const stopPushToTalk = (): void => {
+    if (started) game.setMicTransmitting(false);
+  };
+  window.addEventListener('keydown', handlePushToTalkDown);
+  window.addEventListener('keyup', handlePushToTalkUp);
+  window.addEventListener('blur', stopPushToTalk);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopPushToTalk();
+  });
+
   hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
   hud.setRemoteVolume(avPrefs.voiceVolume);
 
@@ -476,6 +506,9 @@ async function createRuntime(): Promise<RuntimeApi> {
   function dispose(): void {
     stopUrlRoomChange();
     window.removeEventListener('keydown', handleRobotMuteKey);
+    window.removeEventListener('keydown', handlePushToTalkDown);
+    window.removeEventListener('keyup', handlePushToTalkUp);
+    window.removeEventListener('blur', stopPushToTalk);
     for (const obs of observers) obs.disconnect();
     connectionSink.remove();
     inputSink.remove();

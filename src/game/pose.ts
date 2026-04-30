@@ -1,6 +1,14 @@
 import { makeParams, registerTweaks, type ParamsOf } from '../hud/tweakDefs';
 import { clamp, vec } from './math';
-import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PlayerPose } from './types';
+import {
+  fingerNames,
+  handednesses,
+  type FingerName,
+  type HandPose,
+  type Handedness,
+  type PlayerPose,
+  type PoseInputSource,
+} from './types';
 
 // Live-tunable mapping from mouse-pointer NDC Y to palm vertical reach. Increase
 // `centerYRange` (and widen the clamp) so the arm reaches further up at the top
@@ -143,8 +151,18 @@ export function makePlayerPose(
   roomId: string,
   seatIndex: number,
   hands: Record<Handedness, HandPose>,
-  isRobot = false
+  options: {
+    isRobot?: boolean;
+    inputSource?: PoseInputSource;
+    trackedHands?: Partial<Record<Handedness, boolean>>;
+  } = {},
 ): PlayerPose {
+  const isRobot = options.isRobot ?? false;
+  const inputSource = options.inputSource ?? (isRobot ? 'robot' : 'mouse');
+  const trackedHands = {
+    left: !!options.trackedHands?.left,
+    right: !!options.trackedHands?.right,
+  };
   let energy = 0;
   let samples = 0;
 
@@ -162,6 +180,8 @@ export function makePlayerPose(
     roomId,
     seatIndex,
     hands,
+    inputSource,
+    trackedHands,
     energy: clamp(energy / Math.max(samples, 1), 0, 1.8),
     isRobot,
     updatedAt: Date.now(),
@@ -175,22 +195,33 @@ export function serializePose(pose: PlayerPose): string {
     roomId: pose.roomId,
     seatIndex: pose.seatIndex,
     hands: pose.hands,
+    inputSource: pose.inputSource,
+    trackedHands: pose.trackedHands,
     energy: pose.energy,
     updatedAt: pose.updatedAt,
   });
+}
+
+function parseInputSource(value: unknown): PoseInputSource {
+  return value === 'camera' || value === 'robot' ? value : 'mouse';
 }
 
 export function parsePose(value: string): PlayerPose | null {
   try {
     const parsed = JSON.parse(value) as PlayerPose;
     if (!parsed || !parsed.hands?.left || !parsed.hands?.right) return null;
+    const inputSource = parseInputSource(parsed.inputSource);
     return {
       ...parsed,
-      isRobot: false,
+      inputSource,
+      trackedHands: {
+        left: inputSource === 'camera' && parsed.trackedHands?.left === true,
+        right: inputSource === 'camera' && parsed.trackedHands?.right === true,
+      },
+      isRobot: inputSource === 'robot',
       updatedAt: Number(parsed.updatedAt) || Date.now(),
     };
   } catch {
     return null;
   }
 }
-

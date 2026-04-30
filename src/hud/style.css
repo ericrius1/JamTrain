@@ -1428,25 +1428,33 @@
   .player-plaque.left  .medallion { right: -12px; }
   .player-plaque.right .medallion { left:  -12px; }
   .player-plaque .role-badge { font-size: 8px; padding: 1px 6px; top: -7px; }
-  /* In-plaque pickers were optimized for the wide desktop plaque; on mobile
-     they bloat the column. The picker children escape via position:fixed
-     (rules further down), so collapse the slot wrappers to nothing rather
-     than display:none — display:none would also hide the children. */
-  .player-plaque .picker-slot,
-  .player-plaque .creature-picker-slot {
-    margin: 0;
-    min-height: 0;
+  /* In-plaque pickers stay inside the plaque on mobile so the user keeps
+     direct access to instrument + creature without an extra viewport-pinned
+     rail. We just shrink the buttons and tighten the spacing. */
+  .player-plaque .picker-slot { margin-top: 6px; }
+  .player-plaque .creature-picker-slot { margin-top: 4px; }
+  .player-plaque .instrument-picker,
+  .player-plaque .creature-picker {
+    padding: 3px 5px;
+    gap: 3px;
   }
+  .player-plaque .instrument-picker-btn,
+  .player-plaque .creature-picker-btn {
+    width: 24px;
+    height: 24px;
+    border-width: 1px;
+  }
+  .player-plaque .instrument-picker-btn svg,
+  .player-plaque .creature-picker-btn svg { width: 14px; height: 14px; }
 
-  /* Controls panel: bottom-center between the instrument and creature pickers.
-     Pinned to the viewport (position: fixed) so it doesn't fight the scaled
-     stage. Default-closed on touch (see ControlsPanel.ts), so usually it shows
-     just a small "Controls — Piano Pads" pill; expanding reveals the simplified
-     "Swipe — across the pads" row. */
+  /* Controls panel: bottom-center, pinned to the viewport so it doesn't fight
+     the scaled stage. Default-closed on touch (see ControlsPanel.ts), so usually
+     it shows just a small "Controls — Piano Pads" pill; expanding reveals the
+     simplified "Swipe — across the pads" row. */
   .controls-panel {
     position: fixed;
     top: auto;
-    bottom: 68px;
+    bottom: 12px;
     left: 50%;
     right: auto;
     transform: translateX(-50%);
@@ -1462,30 +1470,6 @@
   /* Mixer panel: hide on phones. Voice/backing balance is a desktop nicety;
      the partner-audio default is already sensible. */
   .mixer-panel { display: none; }
-
-  /* Bottom rail for local pickers — instrument + creature side by side.
-     The InstrumentPicker / CreaturePicker live inside the local PlayerPlaque
-     by default, so we re-pin them to the viewport bottom on mobile via the
-     in-plaque pickers' parent rules (above hide them) and these absolute
-     overrides on the picker elements themselves. */
-  .player-plaque .instrument-picker,
-  .player-plaque .creature-picker {
-    position: fixed;
-    bottom: 12px;
-    background: rgba(8, 16, 28, 0.7);
-    backdrop-filter: blur(6px);
-    padding: 6px 8px;
-    gap: 6px;
-  }
-  .player-plaque .instrument-picker { left: 12px; right: auto; }
-  .player-plaque .creature-picker   { right: 12px; left: auto; }
-  .player-plaque .instrument-picker-btn,
-  .player-plaque .creature-picker-btn {
-    width: 36px;
-    height: 36px;
-  }
-  .player-plaque .instrument-picker-btn svg,
-  .player-plaque .creature-picker-btn svg { width: 20px; height: 20px; }
 
   /* Corner filigree — tasteful at full size; visual noise on phones. */
   .corner-filigree { display: none; }

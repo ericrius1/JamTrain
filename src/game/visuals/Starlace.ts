@@ -107,6 +107,7 @@ const STARLACE_LINKS_PER_NODE = 2;
 const STARLACE_MAX_NODE_DEGREE = 4;
 const STARLACE_MAX_LINK_SPAN = 0.33;
 const STARLACE_LINK_FADE_START = 0.18;
+const POINTER_PLUCK_MOTION_NDC_PER_SEC = 0.05;
 
 // Hz table for the current key. Refreshed per Starlace instance via the
 // KeyDirector subscription so each starlace harp picks up new tunings as the
@@ -591,6 +592,7 @@ export class Starlace implements PlayerVisual {
     if (this.revealedFully && !this.revealActive) {
       this.processKeyboardPaths();
       if (contacts) this.processContacts(contacts, delta);
+      else this.clearContactState();
       this.processPointer(delta);
     } else {
       this.keyboardPaths.clear();
@@ -1070,10 +1072,13 @@ export class Starlace implements PlayerVisual {
 
     const activeNode = this.pickPointerNode(this.pointerNdc, camera);
     const velocity = this.pointerVelocity(ndcSpeed, clickQueued);
+    const activelyStriking = clickQueued || ndcSpeed > POINTER_PLUCK_MOTION_NDC_PER_SEC;
 
-    for (let i = 0; i < this.nodes.length; i += 1) {
-      if (!this.pointerSweepSeen[i] || this.pointerNodeInside[i]) continue;
-      this.pointerFrameFired[i] = this.firePointerNode(i, velocity);
+    if (activelyStriking) {
+      for (let i = 0; i < this.nodes.length; i += 1) {
+        if (!this.pointerSweepSeen[i] || this.pointerNodeInside[i]) continue;
+        this.pointerFrameFired[i] = this.firePointerNode(i, velocity);
+      }
     }
 
     if (clickQueued && activeNode >= 0 && !this.pointerFrameFired[activeNode]) {
@@ -1130,9 +1135,11 @@ export class Starlace implements PlayerVisual {
   private processContacts(contacts: readonly HandContactPoint[], delta: number): void {
     const safeDelta = Math.max(delta, 1e-4);
     this.currentContactKeys.clear();
+    const activeContactIds = new Set<string>();
     let hitsThisFrame = 0;
 
     for (const contact of contacts) {
+      activeContactIds.add(contact.id);
       let previous = this.previousContacts.get(contact.id);
       if (!previous) {
         previous = contact.position.clone();
@@ -1167,8 +1174,18 @@ export class Starlace implements PlayerVisual {
       if (hitsThisFrame >= MAX_HITS_PER_FRAME) break;
     }
 
+    for (const id of this.previousContacts.keys()) {
+      if (!activeContactIds.has(id)) this.previousContacts.delete(id);
+    }
+
     this.activeContactKeys.clear();
     for (const key of this.currentContactKeys) this.activeContactKeys.add(key);
+  }
+
+  private clearContactState(): void {
+    this.previousContacts.clear();
+    this.activeContactKeys.clear();
+    this.currentContactKeys.clear();
   }
 
   private fireNode(

@@ -29,12 +29,16 @@ export type HandPose = {
   confidence: number;
 };
 
+export type PoseInputSource = 'mouse' | 'camera' | 'robot';
+
 export type PlayerPose = {
   id: string;
   displayName: string;
   roomId: string;
   seatIndex: number;
   hands: Record<Handedness, HandPose>;
+  inputSource: PoseInputSource;
+  trackedHands: Record<Handedness, boolean>;
   energy: number;
   isRobot: boolean;
   updatedAt: number;

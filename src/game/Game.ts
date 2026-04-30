@@ -190,6 +190,10 @@ export class Game {
     local: makeHandContactPoints(),
     remote: makeHandContactPoints(),
   };
+  private activeVisualContacts: Record<PlayerSlot, HandContactPoint[]> = {
+    local: [],
+    remote: [],
+  };
   // While `introActive` is true the instruments stay hidden and the scenery
   // bird system is held off — the world reads as a still tableau the user is
   // about to step into. exitIntroMode() flips this and runs the per-player
@@ -444,15 +448,20 @@ export class Game {
     if (this.localDrumOrbCount > 0) listener(this.localDrumOrbCount);
   }
 
+  // Arms / disarms the push-to-talk mic. Acquiring the stream the first time
+  // is what triggers the peer-connection renegotiation so the partner can
+  // hear us; whether tracks are actively transmitting is then governed by
+  // setMicTransmitting (typically wired to a held key).
   async setMicEnabled(enabled: boolean): Promise<void> {
     const hadMic = !!this.handTracker.getMicStream();
-    await this.handTracker.setAudioEnabled(enabled);
-    // First time the mic is brought online, the peer connection (if any) was
-    // negotiated without an audio m-line — renegotiate so the partner can
-    // hear us.
+    await this.handTracker.setMicArmed(enabled);
     if (enabled && !hadMic && this.handTracker.getMicStream()) {
       this.webrtc.notifyMicReady();
     }
+  }
+
+  setMicTransmitting(transmitting: boolean): void {
+    this.handTracker.setMicTransmitting(transmitting);
   }
 
   setCameraEnabled(enabled: boolean): void {
@@ -464,7 +473,7 @@ export class Game {
   }
 
   getMicEnabled(): boolean {
-    return this.handTracker.getAudioEnabled();
+    return this.handTracker.getMicArmed();
   }
 
   getCameraEnabled(): boolean {
@@ -1187,11 +1196,17 @@ export class Game {
     const localSeat = this.multiplayer.localSeatIndex;
     const partnerSeat = this.multiplayer.partnerSeatIndex;
     const hands = this.handTracker.update(elapsed, localSeat);
-    const localPose = makePlayerPose(this.multiplayer.localId, 'Player', this.roomId, localSeat, hands, false);
+    const localPose = makePlayerPose(this.multiplayer.localId, 'Player', this.roomId, localSeat, hands, {
+      inputSource: this.handTracker.getPoseInputSource(),
+      trackedHands: this.handTracker.getTrackedHands(),
+    });
     const remoteFromNetwork = this.poseSession.getRemotePose();
     const robotPerformance = this.partnerPresent ? undefined : this.updateRobotInstrumentTargets();
     const robotHands = this.robotMotion.update(elapsed, delta, localPose, robotPerformance);
-    const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, true);
+    const robotPose = makePlayerPose('robot', 'Robot', this.roomId, partnerSeat, robotHands, {
+      isRobot: true,
+      inputSource: 'robot',
+    });
     // Presence (player row in our cabin) drives form. Pose freshness only
     // drives hand articulation. If partner is here but no pose has arrived
     // yet (or it paused — hands out of frame), hold the last-known pose.
@@ -1222,18 +1237,14 @@ export class Game {
     const localRight = this.localRig.getPalmWorld('right', this.localRightPalm);
     const remoteLeft = this.remoteRig.getPalmWorld('left', this.remoteLeftPalm);
     const remoteRight = this.remoteRig.getPalmWorld('right', this.remoteRightPalm);
-    // Local contact-based hits are gated on active webcam hand tracking. Without
-    // this, the rig's mouse-driven pose sits inside the instrument and triggers
-    // continuous hits when the user isn't moving anything. Mouse-on-orb play
-    // still works through Drum's pointer gesture path.
-    const localContacts = this.handTracker.hasTrackedHands()
-      ? this.updateVisualContacts('local', this.localRig)
+    // Contact-based hits are only instrument input for live webcam-tracked
+    // hands. Mouse- and robot-driven puppet hands are visual followers; they
+    // should not collide notes out of the instruments.
+    const localContacts = this.localPose?.inputSource === 'camera'
+      ? this.updateVisualContacts('local', this.localRig, this.localPose.trackedHands)
       : undefined;
-    // A real partner plays through hand contacts. The procedural robot keeps
-    // moving its hands, but note events come from tickRobotJam() so the robot
-    // stays sparse and cannot flood the instrument collision system.
-    const remoteContacts = this.partnerPresent
-      ? this.updateVisualContacts('remote', this.remoteRig)
+    const remoteContacts = this.partnerPresent && this.remotePose?.inputSource === 'camera'
+      ? this.updateVisualContacts('remote', this.remoteRig, this.remotePose.trackedHands)
       : undefined;
     const localVoice = this.handSynth.getVoiceState('local');
     const remoteVoice = this.handSynth.getVoiceState('remote');
@@ -1393,20 +1404,28 @@ export class Game {
   private updateVisualContacts(
     player: PlayerSlot,
     rig: HumanoidRig,
+    trackedHands: Readonly<Record<Handedness, boolean>>,
   ): readonly HandContactPoint[] {
     const contacts = this.visualContacts[player];
+    const activeContacts = this.activeVisualContacts[player];
+    activeContacts.length = 0;
     let cursor = 0;
 
     for (const hand of handednesses) {
-      rig.getPalmCenterWorld(hand, contacts[cursor++].position);
+      const includeHand = trackedHands[hand] === true;
+      const palmContact = contacts[cursor++];
+      rig.getPalmCenterWorld(hand, palmContact.position);
+      if (includeHand) activeContacts.push(palmContact);
       for (const finger of fingerNames) {
         for (const joint of fingerJointNames) {
-          rig.getFingerJointWorld(hand, finger, joint, contacts[cursor++].position);
+          const contact = contacts[cursor++];
+          rig.getFingerJointWorld(hand, finger, joint, contact.position);
+          if (includeHand) activeContacts.push(contact);
         }
       }
     }
 
-    return contacts;
+    return activeContacts;
   }
 
   // Intro/active state. While intro is enabled the scenery's bird system is

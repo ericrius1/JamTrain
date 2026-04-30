@@ -52,6 +52,7 @@ export class BeginGate {
     this.stage.appendChild(this.buildEmbers());
 
     this.stage.appendChild(this.buildTopRail());
+    this.stage.appendChild(this.buildCompatNote());
 
     const titleBlock = this.buildTitleBlock();
     this.stage.appendChild(titleBlock);
@@ -140,6 +141,12 @@ export class BeginGate {
     rail.appendChild(date);
 
     return rail;
+  }
+
+  private buildCompatNote(): HTMLElement {
+    const note = this.div('begin-compat-note');
+    note.textContent = 'best on chrome · desktop';
+    return note;
   }
 
   private buildTitleBlock(): HTMLElement {
