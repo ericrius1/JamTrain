@@ -93,10 +93,16 @@ const RESET_COOLDOWN_S = 1;
 const POINTER_LAG_SECONDS = 0.075;
 const POINTER_ACTIVE_SECONDS = 1.4;
 const POINTER_IDLE_CONFIDENCE = 0.35;
+// Keep AEC on (mic must not echo speaker output back to the partner) but
+// disable NS + AGC: they're tuned for speech and chew up sustained
+// instrument tones bleeding into the mic, producing audible crackle. AEC
+// itself only works once the loopback path in audioGraph routes Tone audio
+// somewhere Chrome's AEC reference signal can see — without that, AEC fights
+// uncancellable bleed and produces the same artifacts NS/AGC do.
 const MIC_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   echoCancellation: true,
-  noiseSuppression: true,
-  autoGainControl: true,
+  noiseSuppression: false,
+  autoGainControl: false,
   channelCount: { ideal: 1 },
 };
 
@@ -345,7 +351,10 @@ export class HandTracker {
         audio: MIC_AUDIO_CONSTRAINTS,
       });
       for (const track of this.micStream.getAudioTracks()) {
-        track.contentHint = 'speech';
+        // 'music' steers Opus into CELT/higher-bitrate mode; less aggressive
+        // than 'speech' which clamps to narrowband SILK and crushes any
+        // instrument bleed. AEC stays on via the explicit constraint above.
+        track.contentHint = 'music';
       }
       return true;
     } catch (err) {
