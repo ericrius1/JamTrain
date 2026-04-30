@@ -43,16 +43,18 @@ input {
 }
 
 /* Scene reveal sequence:
-   - default/.scene-dim: canvas is already deeply dimmed, so the intro cannot
-     flash bright before runtime preload finishes.
-   - .scene-active: canvas is fully visible with normal color. The transition
-     is the moment the world wakes up after All Aboard.
+   - default/.scene-pending: fully black while the runtime warms and settles.
+   - .scene-dim: the pre-start tableau fades in, dark/desaturated.
+   - .scene-active: the world wakes up after All Aboard.
    The filter is what makes characters and instruments feel "in the
    background" without needing per-system dim hooks. */
 #scene {
-  opacity: var(--intro-scene-opacity);
+  opacity: 0;
   filter: brightness(var(--intro-scene-brightness)) saturate(var(--intro-scene-saturation));
   transition: opacity 1.4s ease, filter 1.4s ease;
+}
+#scene.scene-pending {
+  opacity: 0;
 }
 #scene.scene-dim {
   opacity: var(--intro-scene-opacity);
@@ -77,17 +79,22 @@ input {
   pointer-events: none;
 }
 
+#stage-wrap.intro-active #ui,
 #stage-wrap.intro-active #stage,
 #stage-wrap.intro-active #vignette,
+#stage-wrap.intro-active .tweak-pane-dock,
 #stage-wrap.intro-active .video-panel {
   visibility: hidden;
 }
 
 #stage-wrap.intro-active #scene {
-  opacity: var(--intro-scene-opacity);
+  opacity: 0;
   filter: brightness(var(--intro-scene-brightness)) saturate(var(--intro-scene-saturation));
   pointer-events: none;
-  transition: none;
+}
+
+#stage-wrap.intro-active #scene.scene-dim {
+  opacity: var(--intro-scene-opacity);
 }
 
 @media (prefers-reduced-motion: reduce) {

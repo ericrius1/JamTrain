@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { handDepthConfig } from '../handDepth';
+import { HAND_POSE_RIG_Y_OFFSET, HAND_POSE_RIG_Y_SCALE, rigYToPoseY } from '../pose';
 import { fingerNames, handednesses, type FingerJointName, type FingerName, type HandPose, type Handedness, type PlayerPose, type Vec3Data } from '../types';
 
 type Segment = { mesh: THREE.Mesh; radius: number };
@@ -145,7 +146,7 @@ export class Skeleton {
     tempA.copy(point);
     this.root.worldToLocal(tempA);
     target.x = (tempA.x - side * 0.04) / 0.54;
-    target.y = (tempA.y - 0.54) / 0.68;
+    target.y = rigYToPoseY(tempA.y);
     target.z = (-0.42 - handDepthConfig.worldDepthOffset - tempA.z) / (0.85 * Math.max(0.0001, handDepthConfig.worldDepthScale));
     return target;
   }
@@ -279,7 +280,7 @@ export class Skeleton {
   private posePointToRig(point: Vec3Data, side: number, target: THREE.Vector3): THREE.Vector3 {
     return target.set(
       point.x * 0.54 + side * 0.04,
-      0.54 + point.y * 0.68,
+      HAND_POSE_RIG_Y_OFFSET + point.y * HAND_POSE_RIG_Y_SCALE,
       -0.42 - point.z * 0.85 * handDepthConfig.worldDepthScale - handDepthConfig.worldDepthOffset
     );
   }

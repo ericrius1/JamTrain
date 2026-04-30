@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { mousePoseConfig } from '../pose';
+import { getHandVerticalRange, HAND_POSE_CENTER_Y, HAND_POSE_RIG_Y_SCALE, poseYToRigY } from '../pose';
 import type { Handedness, PlayerPose } from '../types';
 import type { Skeleton } from './skeleton';
 
@@ -57,7 +57,6 @@ export type IllustratedPuppetSpec = {
     target: {
       yScale: number;
       yOffset: number;
-      yRange: RangeTuple;
       zScale: number;
       zOffset: number;
       zRange: RangeTuple;
@@ -301,12 +300,14 @@ export class IllustratedPuppetAvatar {
     const target = cfg.target;
     toVector3(lane.shoulder, this.shoulder);
     const targetOffset = lane.targetOffset ?? [0, 0, 0];
+    const neutralY = poseYToRigY(HAND_POSE_CENTER_Y) * target.yScale + target.yOffset + targetOffset[1];
+    const yHalfRange = getHandVerticalRange() * HAND_POSE_RIG_Y_SCALE * target.yScale;
     this.palm.set(
       cfg.cameraDepth + targetOffset[0],
       THREE.MathUtils.clamp(
         this.targetLocal.y * target.yScale + target.yOffset + targetOffset[1],
-        target.yRange[0] - mousePoseConfig.puppetYExtendDown,
-        target.yRange[1] + mousePoseConfig.puppetYExtendUp,
+        neutralY - yHalfRange,
+        neutralY + yHalfRange,
       ),
       THREE.MathUtils.clamp(
         this.targetLocal.z * target.zScale + target.zOffset + targetOffset[2],

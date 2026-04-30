@@ -61,6 +61,9 @@ export class MultiplayerClient {
   private localCreatureListeners = new Set<CreatureListener>();
   private partnerCreatureListeners = new Set<CreatureListener>();
   private subscriptionApplied = false;
+  private ownPlayerAccepted = false;
+  private initialSyncResolved = false;
+  private initialSyncWaiters = new Set<() => void>();
   // Wall-clock ms set on each successful connect. Signals with createdAt
   // older than this are stale (left over from a previous session that didn't
   // get a clean disconnect-cleanup) and we drop them rather than feed them
@@ -128,6 +131,13 @@ export class MultiplayerClient {
   onPartnerIdentity(listener: PartnerIdentityListener): void {
     this.partnerIdentityListeners.add(listener);
     listener(this.partnerIdentityHex);
+  }
+
+  waitForInitialSync(): Promise<void> {
+    if (this.initialSyncResolved) return Promise.resolve();
+    return new Promise(resolve => {
+      this.initialSyncWaiters.add(resolve);
+    });
   }
 
   getPartnerIdentity(): string | null {
@@ -315,6 +325,7 @@ export class MultiplayerClient {
         .onConnectError((_ctx: ErrorContext, error: Error) => {
           console.warn('[jam-train] connect error', error);
           this.setState('local');
+          this.resolveInitialSync();
           this.scheduleReconnect();
         })
         .onDisconnect((_ctx: ErrorContext, error?: Error) => {
@@ -342,12 +353,14 @@ export class MultiplayerClient {
             for (const listener of this.partnerCreatureListeners) listener(ROBOT_PARTNER_CREATURE);
           }
           this.setState('local');
+          this.resolveInitialSync();
           this.scheduleReconnect();
         })
         .build();
     } catch (error) {
       console.warn('SpacetimeDB client failed to start; using local fallback', error);
       this.setState('local');
+      this.resolveInitialSync();
     }
   }
 
@@ -434,7 +447,7 @@ export class MultiplayerClient {
         // Pass 1: figure out which room the server actually placed us in.
         for (const row of conn.db.player.iter()) {
           if (row.identity.toHexString() === this.localId) {
-            this.setRoomId(row.roomId, { emitIfSame: true });
+            this.acceptOwnPlayer(row);
           }
         }
         // Pass 2: track who's already in the cabin (silent — no toasts;
@@ -458,6 +471,7 @@ export class MultiplayerClient {
         if (this.localCreatureDirty && this.localCreatureExplicit) {
           void this.pushLocalCreature();
         }
+        this.maybeResolveInitialSync();
         console.info('[jam-train] subscription applied; room', this.roomId, 'partners', this.knownPlayers.size);
       })
       .onError(ctx => {
@@ -647,6 +661,8 @@ export class MultiplayerClient {
     this.setLocalSeat(row.seatIndex);
     this.acceptServerLocalInstrument(row.instrument || '');
     this.acceptServerLocalCreature(row.creature || '');
+    this.ownPlayerAccepted = true;
+    this.maybeResolveInitialSync();
   }
 
   private setLocalSeat(seatIndex: number): void {
@@ -677,5 +693,19 @@ export class MultiplayerClient {
   private setState(state: ConnectionState): void {
     this.connectionState = state;
     for (const listener of this.stateListeners) listener(state);
+  }
+
+  private maybeResolveInitialSync(): void {
+    if (this.subscriptionApplied && this.ownPlayerAccepted) {
+      this.resolveInitialSync();
+    }
+  }
+
+  private resolveInitialSync(): void {
+    if (this.initialSyncResolved) return;
+    this.initialSyncResolved = true;
+    const waiters = [...this.initialSyncWaiters];
+    this.initialSyncWaiters.clear();
+    for (const resolve of waiters) resolve();
   }
 }

@@ -230,6 +230,7 @@ export class Game {
   private readonly robotInstrumentTargets: Record<Handedness, Vec3Data[]> = { left: [], right: [] };
   private readonly robotJamStrikeTarget: Vec3Data = { x: 0, y: 0, z: 0 };
   private hiddenStartedAt: number | null = null;
+  private frameRenderListeners = new Set<() => void>();
   constructor(
     private canvas: HTMLCanvasElement,
     urlRoom: string,
@@ -301,8 +302,8 @@ export class Game {
     });
     this.multiplayer.onPartnerIdentity(() => this.poseSession.clearRemotePose());
 
-    this.localRig = new HumanoidRig(this.scene, { seatIndex: 0, creature: 'lion' });
-    this.remoteRig = new HumanoidRig(this.scene, { seatIndex: 1, creature: 'robot' });
+    this.localRig = new HumanoidRig(this.scene, { seatIndex: 0, creature: this.playerCreatures.local });
+    this.remoteRig = new HumanoidRig(this.scene, { seatIndex: 1, creature: this.playerCreatures.remote });
     this.localRig.setFingertipNodesVisible(false);
     this.remoteRig.setFingertipNodesVisible(false);
     this.applyPlayerBackOffset();
@@ -377,6 +378,16 @@ export class Game {
 
   connectMultiplayer(): void {
     this.multiplayer.connect();
+  }
+
+  waitForInitialMultiplayerSync(): Promise<void> {
+    return this.multiplayer.waitForInitialSync();
+  }
+
+  whenNextFrameRendered(): Promise<void> {
+    return new Promise(resolve => {
+      this.frameRenderListeners.add(resolve);
+    });
   }
 
   setRoom(roomId: string): void {
@@ -1199,6 +1210,14 @@ export class Game {
     this.poseSession.sendLocalPose(localPose, elapsed);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
     this.renderer.render(this.scene, this.camera);
+    this.resolveFrameRenderListeners();
+  }
+
+  private resolveFrameRenderListeners(): void {
+    if (this.frameRenderListeners.size === 0) return;
+    const listeners = [...this.frameRenderListeners];
+    this.frameRenderListeners.clear();
+    for (const listener of listeners) listener();
   }
 
   private updatePlayerVisuals(delta: number, elapsed: number): void {

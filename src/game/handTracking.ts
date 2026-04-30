@@ -2,7 +2,7 @@ import { handDepthConfig } from './handDepth';
 import { waitForHandposeCacheWorker } from './handposeCache';
 import { HandFilter } from './handFilter';
 import { clamp, lerpVec, vec } from './math';
-import { makeMouseHands } from './pose';
+import { CAMERA_HAND_LOCAL_Y_SCALE, makeMouseHands, mapHandInputYToPoseY } from './pose';
 import { fingerNames, handednesses, type FingerName, type HandPose, type Handedness, type PoseInputSource, type Vec3Data } from './types';
 
 // Self-hosted weights live under /public/handpose/. Avoids the cross-origin
@@ -534,14 +534,16 @@ export class HandTracker {
       0.45
     );
 
+    const anchorY = (wristImg.y + middleImg.y) * 0.5;
+    const anchorPoseY = mapHandInputYToPoseY((0.5 - anchorY) * 2);
     const wristZ = wristImg.z ?? 0;
     const transform = (img: LandmarkLike): Vec3Data => {
       const offX = (img.x - wristImg.x) * sizeScale;
-      const offY = (img.y - wristImg.y) * sizeScale;
+      const offY = (img.y - anchorY) * sizeScale;
       const offZ = (img.z ?? 0) - wristZ;
       return vec(
         (0.5 - wristImg.x - offX) * 1.8,
-        (1 - wristImg.y - offY) * 1.35,
+        anchorPoseY - offY * CAMERA_HAND_LOCAL_Y_SCALE,
         depth + clamp(-offZ * 4.5, -0.45, 0.45)
       );
     };

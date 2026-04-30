@@ -10,21 +10,16 @@ import {
   type PoseInputSource,
 } from './types';
 
-// Live-tunable mapping from mouse-pointer NDC Y to palm vertical reach. Increase
-// `centerYRange` (and widen the clamp) so the arm reaches further up at the top
-// of the screen and further down at the bottom — handy for matching the orb
-// stack span.
+export const HAND_POSE_CENTER_Y = 0.98;
+export const HAND_POSE_RIG_Y_OFFSET = 0.54;
+export const HAND_POSE_RIG_Y_SCALE = 0.68;
+export const CAMERA_HAND_LOCAL_Y_SCALE = 1.35;
+
+// Live-tunable vertical reach. Pointer Y and webcam hand Y both map around the
+// fixed neutral hand pose; this single half-range controls how far the hands
+// can travel above and below that pose.
 export const POSE_DEFS = {
-  centerYBase:  { default: 0.98, min: 0,    max: 2,   step: 0.01, label: 'Y center' },
-  centerYRange: { default: 1.10, min: 0,    max: 2,   step: 0.01, label: 'Y range' },
-  centerYMin:   { default: 0.0,  min: -1,   max: 2,   step: 0.01, label: 'Y min' },
-  centerYMax:   { default: 2.2,  min: 0,    max: 3,   step: 0.01, label: 'Y max' },
-  // The illustrated puppet (rendered arm) has its own per-creature palm-Y clamp
-  // sitting on top of the skeleton reach. These extend each puppet's spec range
-  // (added to ceiling, subtracted from floor) so the rendered arm can actually
-  // follow the skeleton up/down to the new pose limits.
-  puppetYExtendUp:   { default: 0.6, min: 0, max: 2, step: 0.01, label: 'puppet extend up' },
-  puppetYExtendDown: { default: 0.2, min: 0, max: 2, step: 0.01, label: 'puppet extend down' },
+  verticalRange: { default: 0.2, min: 0, max: 1.4, step: 0.01, label: 'range' },
 } as const;
 
 export type PoseParams = ParamsOf<typeof POSE_DEFS>;
@@ -44,6 +39,22 @@ export function attachMousePosePane(paneDock: HTMLElement): void {
 export function disposeMousePosePane(): void {
   posePaneRegistered?.dispose();
   posePaneRegistered = undefined;
+}
+
+export function getHandVerticalRange(): number {
+  return Math.max(0, mousePoseConfig.verticalRange);
+}
+
+export function mapHandInputYToPoseY(inputY: number): number {
+  return HAND_POSE_CENTER_Y + clamp(inputY, -1, 1) * getHandVerticalRange();
+}
+
+export function poseYToRigY(poseY: number): number {
+  return HAND_POSE_RIG_Y_OFFSET + poseY * HAND_POSE_RIG_Y_SCALE;
+}
+
+export function rigYToPoseY(rigY: number): number {
+  return (rigY - HAND_POSE_RIG_Y_OFFSET) / HAND_POSE_RIG_Y_SCALE;
 }
 
 const fingerSpread: Record<FingerName, number> = {
@@ -81,11 +92,7 @@ export function makeMouseHands(
   // In the game camera, the player's playable instrument arc is seen mostly
   // edge-on. Screen X should therefore travel through depth, not world X.
   const centerX = xN * 0.18;
-  const centerY = clamp(
-    mousePoseConfig.centerYBase + yN * mousePoseConfig.centerYRange,
-    mousePoseConfig.centerYMin,
-    mousePoseConfig.centerYMax,
-  );
+  const centerY = mapHandInputYToPoseY(yN);
   const centerZ = clamp(0.2 + depthX * 0.52 + yN * 0.08, -0.24, 0.72);
   const separation = 0.22 - speedN * 0.08;
   const leadX = clamp(velocityX * 0.01, -0.08, 0.08);

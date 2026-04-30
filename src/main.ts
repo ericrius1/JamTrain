@@ -9,6 +9,7 @@ window.addEventListener('vite:preloadError', () => {
 
 const LOCAL_CREATURE_KEY = 'jam-train.local-creature';
 const midnightTrain = new MidnightTrainStream('/MidnightTrain.mp3');
+const INITIAL_MULTIPLAYER_SETTLE_MS = 5000;
 
 type AvPrefs = {
   musicVolume: number;
@@ -35,7 +36,7 @@ stageWrap.classList.add('intro-active');
 
 let activeRuntime: RuntimeApi | undefined;
 let runtimePromise: Promise<RuntimeApi> | undefined;
-let sceneRevealed = runtimeCanvas?.classList.contains('scene-dim') ?? false;
+let sceneRevealed = false;
 
 // Pre-warm the browser cache for the assets needed to draw the very first
 // frame of the world (train shell + first scenery panel + stored puppets).
@@ -80,8 +81,8 @@ stageWrap.appendChild(beginGate.el);
 void registerHandposeCacheWorker();
 
 // Let the intro hit the screen first, then warm the full Three/WebGPU
-// runtime. The canvas starts in its dimmed class from markup; revealDimmedScene
-// remains as a fallback if that class is ever absent.
+// runtime. The canvas stays black until createRuntime has rendered a settled
+// first frame with the startup loadout applied.
 requestAnimationFrame(() => {
   requestAnimationFrame(() => {
     void loadRuntime()
@@ -96,11 +97,10 @@ requestAnimationFrame(() => {
 });
 
 function preloadCriticalAssets(): Promise<void> {
-  const storedCreature = localStorage.getItem(LOCAL_CREATURE_KEY) ?? 'lion';
-  const partnerCreature = 'robot';
+  const creatureIds = ['lion', 'elk', 'fox', 'robot'];
   const puppetParts = ['body.webp', 'upper-arm.webp', 'forearm.webp'];
-  const localPuppet = `${storedCreature}/${storedCreature === 'robot' ? 'hand-cupped.webp' : storedCreature === 'lion' ? 'paw-cupped.webp' : 'hand-cupped.webp'}`;
-  const partnerHand = `${partnerCreature}/hand-cupped.webp`;
+  const puppetHand = (creature: string): string =>
+    `${creature}/${creature === 'lion' ? 'paw-cupped.webp' : 'hand-cupped.webp'}`;
 
   const urls: string[] = [
     '/cabin/illustrated-cabin-plate-v2-color.webp',
@@ -109,11 +109,9 @@ function preloadCriticalAssets(): Promise<void> {
     '/cabin/illustrated-cabin-plate-v2-alpha.webp',
     '/scenery/far-terrain-chunk-01-alpine-lake.webp',
     '/scenery/far-terrain-chunk-02-fog-forest.webp',
-    `/puppets/${localPuppet}`,
-    `/puppets/${partnerHand}`,
-    ...puppetParts.flatMap(part => [
-      `/puppets/${storedCreature}/${part}`,
-      `/puppets/${partnerCreature}/${part}`,
+    ...creatureIds.flatMap(creature => [
+      `/puppets/${puppetHand(creature)}`,
+      ...puppetParts.map(part => `/puppets/${creature}/${part}`),
     ]),
   ];
 
@@ -129,12 +127,15 @@ function preloadCriticalAssets(): Promise<void> {
 
 function revealDimmedScene(): void {
   if (sceneRevealed) return;
+  if (runtimeCanvas?.classList.contains('scene-active')) return;
   sceneRevealed = true;
   // Two RAFs so the initial opacity:0 is committed before we toggle the
   // class — otherwise the transition can be skipped on first paint.
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
+      if (runtimeCanvas?.classList.contains('scene-active')) return;
       runtimeCanvas?.classList.add('scene-dim');
+      runtimeCanvas?.classList.remove('scene-pending');
     });
   });
 }
@@ -170,6 +171,7 @@ function revealRuntimeSurface(): void {
   stageWrap.classList.remove('intro-active');
   // Promote scene from dim → fully active. CSS handles the 1.5s ease.
   runtimeCanvas?.classList.remove('scene-dim');
+  runtimeCanvas?.classList.remove('scene-pending');
   runtimeCanvas?.classList.add('scene-active');
 }
 
@@ -480,12 +482,15 @@ async function createRuntime(): Promise<RuntimeApi> {
   });
 
   await game.start();
-  schedulePostSceneWarmup();
   // Connect now (not in begin()) so the server's instrument/seat row
   // reconciles while introActive is still true — otherwise the visual
   // swap from random pick to server-stored value happens after the
   // instrument has already animated in.
   game.connectMultiplayer();
+  await waitForInitialMultiplayerSync(game);
+  await criticalAssetsLoaded;
+  await game.whenNextFrameRendered();
+  schedulePostSceneWarmup();
 
   async function begin(conductorName: string): Promise<void> {
     hud.setConductorName(conductorName);
@@ -537,4 +542,22 @@ function schedulePostSceneWarmup(): void {
       console.warn('[jam-train] tone preload failed', err);
     });
   });
+}
+
+async function waitForInitialMultiplayerSync(game: { waitForInitialMultiplayerSync: () => Promise<void> }): Promise<void> {
+  let timeout = 0;
+  let timedOut = false;
+  await Promise.race([
+    game.waitForInitialMultiplayerSync(),
+    new Promise<void>(resolve => {
+      timeout = window.setTimeout(() => {
+        timedOut = true;
+        resolve();
+      }, INITIAL_MULTIPLAYER_SETTLE_MS);
+    }),
+  ]);
+  window.clearTimeout(timeout);
+  if (timedOut) {
+    console.warn('[jam-train] initial multiplayer sync timed out; revealing local intro scene');
+  }
 }

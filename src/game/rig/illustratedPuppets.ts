@@ -33,7 +33,6 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       target: {
         yScale: 0.72,
         yOffset: 0.16,
-        yRange: [0.66, 1.06],
         zScale: 0.72,
         zOffset: -0.02,
         zRange: [-0.58, 0.02],
@@ -111,7 +110,6 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       target: {
         yScale: 0.7,
         yOffset: 0.16,
-        yRange: [0.64, 1.04],
         zScale: 0.72,
         zOffset: -0.02,
         zRange: [-0.56, 0.03],
@@ -190,7 +188,6 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       target: {
         yScale: 0.72,
         yOffset: 0.16,
-        yRange: [0.64, 1.04],
         zScale: 0.72,
         zOffset: -0.02,
         zRange: [-0.56, 0.03],
@@ -269,7 +266,6 @@ export const ILLUSTRATED_PUPPETS: Partial<Record<CreatureId, IllustratedPuppetSp
       target: {
         yScale: 0.7,
         yOffset: 0.16,
-        yRange: [0.66, 1.04],
         zScale: 0.72,
         zOffset: -0.02,
         zRange: [-0.56, 0.03],
