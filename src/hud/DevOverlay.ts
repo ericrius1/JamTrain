@@ -71,7 +71,7 @@ export class DevOverlay {
         this.onCameraCycle?.();
         return;
       }
-      if (e.key === 'r' || e.key === 'R') {
+      if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
         resetAllTweaks();
       }

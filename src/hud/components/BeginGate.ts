@@ -158,7 +158,7 @@ export class BeginGate {
     // "conductor" control.
     const field = this.div('begin-conductor-field begin-fade-up begin-delay-2');
     const label = this.div('begin-conductor-label');
-    label.textContent = 'CONDUCTOR';
+    label.textContent = 'CONDUCTOR NAME';
     field.appendChild(label);
 
     const inputRow = this.div('begin-conductor-input-row');
