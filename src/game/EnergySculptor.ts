@@ -299,8 +299,6 @@ export class EnergySculptor implements EnergySink {
   private fieldDebugScratchSample = new THREE.Vector3();
   private fieldDebugScratchFlow = new THREE.Vector3();
   private attractorDebugMessage?: HTMLDivElement;
-  private affinityDebugParticleAge = 0;
-  private affinityDebugParticleLifeMax = 0;
 
   private registered?: ReturnType<typeof registerTweaks<typeof SCULPTOR_DEFS>>;
 
@@ -471,7 +469,6 @@ export class EnergySculptor implements EnergySink {
     this.tickSampleRotation();
     this.tickAttractorCrossfade(delta);
     this.tickAttractorCycle(delta);
-    this.tickAffinityDebugParticle(delta);
     this.updateAttractorDebugMessage();
     this.tickFieldDebug();
 
@@ -570,8 +567,35 @@ export class EnergySculptor implements EnergySink {
     const message = this.attractorDebugMessage;
     if (!message) return;
 
-    const lines = [this.getAttractorDebugLine(), ...this.getAffinityDebugLines()];
+    const lines = [this.getAttractorDebugLine(), ...this.getVolumeCycleDebugLines()];
     this.setAttractorDebugText(lines.join('\n'));
+  }
+
+  private getVolumeCycleDebugLines(): string[] {
+    if (!this.params.volumeAutoEnabled) {
+      const manual = this.params.fieldVolumeScale.toFixed(2);
+      return [`Volume cycle: off (manual ${manual})`];
+    }
+    const cycle = Math.max(0.5, this.params.volumeAutoCycleS);
+    const steps = Math.max(2, Math.round(this.params.volumeAutoSteps));
+    const stepDur = cycle / steps;
+    const idx = Math.min(steps - 1, Math.floor((this.volumeAutoElapsed / cycle) * steps));
+    const half = Math.floor(steps / 2);
+    const min = Math.min(this.params.volumeAutoMin, this.params.volumeAutoMax);
+    const max = Math.max(this.params.volumeAutoMin, this.params.volumeAutoMax);
+    const inc = (max - min) / Math.max(1, half);
+    const valueAt = (i: number) => {
+      const wrapped = ((i % steps) + steps) % steps;
+      return wrapped <= half ? min + wrapped * inc : max - (wrapped - half) * inc;
+    };
+    const current = this.volumeAutoOverride ?? valueAt(idx);
+    const next = valueAt(idx + 1);
+    const stepEnd = (idx + 1) * stepDur;
+    const remaining = Math.max(0, stepEnd - this.volumeAutoElapsed);
+    return [
+      `Volume cycle: ${current.toFixed(2)} (step ${idx + 1}/${steps}), next ${next.toFixed(2)} in ${this.formatSeconds(remaining)}`,
+      `range ${min.toFixed(2)}-${max.toFixed(2)}, +${inc.toFixed(2)}/step over ${this.formatSeconds(cycle)} cycle`,
+    ];
   }
 
   private getAttractorDebugLine(): string {
@@ -595,65 +619,8 @@ export class EnergySculptor implements EnergySink {
     return `Attractor pinned: ${ATTRACTOR_LABELS[this.currentAttractor]}`;
   }
 
-  private getAffinityDebugLines(): string[] {
-    const hasParticle = this.affinityDebugParticleLifeMax > 0 && this.affinityDebugParticleAge < this.affinityDebugParticleLifeMax;
-    const life = Math.max(
-      MIN_PARTICLE_LIFETIME,
-      hasParticle ? this.affinityDebugParticleLifeMax : this.lifeMaxUniform.value,
-    );
-    const age = hasParticle ? Math.min(this.affinityDebugParticleAge, life) : 0;
-    const lifeT = life > 0 ? age / life : 0;
-    const { start, finalAt } = this.affinityFalloffWindow();
-    const startSec = start * life;
-    const finalAtSec = finalAt * life;
-    const finalAffinity = clamp01(this.finalFieldEffectUniform.value);
-    const currentAffinity = this.affinityAtLifeT(lifeT);
-    const journey = start === finalAt
-      ? `${this.formatPercent(1)} until ${this.formatLifePoint(finalAtSec, finalAt)}, then ${this.formatPercent(finalAffinity)}`
-      : `${this.formatPercent(1)} until ${this.formatLifePoint(startSec, start)}, decays to ${this.formatPercent(finalAffinity)} by ${this.formatLifePoint(finalAtSec, finalAt)}`;
-    const finalBehavior = finalAffinity <= 0.0005
-      ? `field motion stops after ${this.formatLifePoint(finalAtSec, finalAt)}`
-      : `keeps ${this.formatPercent(finalAffinity)} field after ${this.formatLifePoint(finalAtSec, finalAt)}`;
-    const particleLabel = hasParticle ? 'debug particle' : 'next particle';
-
-    return [
-      `Affinity: ${this.formatSeconds(life)} life, ${journey}; ${finalBehavior}`,
-      `${particleLabel}: age ${this.formatSeconds(age)} (${this.formatPercent(lifeT)}), affinity ${this.formatPercent(currentAffinity)}`,
-    ];
-  }
-
-  private tickAffinityDebugParticle(delta: number): void {
-    if (this.affinityDebugParticleLifeMax <= 0) return;
-    this.affinityDebugParticleAge = Math.min(
-      this.affinityDebugParticleLifeMax,
-      this.affinityDebugParticleAge + delta,
-    );
-  }
-
-  private affinityFalloffWindow(): { start: number; finalAt: number } {
-    const start = clamp01(this.fieldFalloffStartUniform.value);
-    const finalAt = Math.max(start, clamp01(this.fieldFalloffEndUniform.value));
-    return { start, finalAt };
-  }
-
-  private affinityAtLifeT(lifeT: number): number {
-    const { start, finalAt } = this.affinityFalloffWindow();
-    const span = Math.max(0.0001, finalAt - start);
-    const raw = clamp01((clamp01(lifeT) - start) / span);
-    const eased = raw * raw * (3 - 2 * raw);
-    return clamp01(1 + (clamp01(this.finalFieldEffectUniform.value) - 1) * eased);
-  }
-
   private formatSeconds(value: number): string {
     return `${value.toFixed(value >= 10 ? 0 : 1)}s`;
-  }
-
-  private formatLifePoint(seconds: number, normalized: number): string {
-    return `${this.formatSeconds(seconds)} (${this.formatPercent(normalized)})`;
-  }
-
-  private formatPercent(value: number): string {
-    return `${Math.round(clamp01(value) * 100)}%`;
   }
 
   private attractorHoldSeconds(): number {
@@ -1437,10 +1404,6 @@ export class EnergySculptor implements EnergySink {
       }
     }
     this.pendingEmits.length = 0;
-    if (cursor > 0 && (this.affinityDebugParticleLifeMax <= 0 || this.affinityDebugParticleAge >= this.affinityDebugParticleLifeMax)) {
-      this.affinityDebugParticleAge = 0;
-      this.affinityDebugParticleLifeMax = lifeBase;
-    }
     this.spawnsThisFrame = cursor;
     this.spawnCountUniform.value = cursor;
     this.spawnCursorUniform.value = this.spawnCursorCpu;

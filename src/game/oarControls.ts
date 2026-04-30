@@ -1,16 +1,21 @@
-export const OAR_DEFAULT_BASE_ROW = 5;
+// Two keyboard rows drive the piano pads: home a-l (9) + top q-p (10) = 19.
+export const OAR_KEY_ROW_HOME = ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l'] as const;
+export const OAR_KEY_ROW_TOP = ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p'] as const;
 
-// Covers the current TweakPaint max of base row 8: 8 + 7 + ... + 1 = 36 orbs.
 export const OAR_KEY_RANGE = [
-  'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';',
-  'q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p',
-  '1', '2', '3', '4', '5', '6', '7', '8', '9', '0',
-  'z', 'x', 'c', 'v', 'b', 'n',
+  ...OAR_KEY_ROW_HOME,
+  ...OAR_KEY_ROW_TOP,
 ] as const;
 
-export function oarOrbCountForBaseRow(baseRow: number): number {
-  const n = Math.max(1, Math.floor(baseRow));
-  return (n * (n + 1)) / 2;
+export const OAR_PAD_COUNT = OAR_KEY_RANGE.length;
+
+// Legacy alias kept so existing callers (Tweakpane defaults, controls panel)
+// continue to compile while the layout transitions away from pyramid math.
+// "Base row" no longer drives orb count — we always render 19 pads.
+export const OAR_DEFAULT_BASE_ROW = OAR_PAD_COUNT;
+
+export function oarOrbCountForBaseRow(_baseRow: number): number {
+  return OAR_PAD_COUNT;
 }
 
 export function oarKeyLabelsForOrbCount(orbCount: number): string[] {
