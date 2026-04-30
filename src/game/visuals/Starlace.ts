@@ -93,6 +93,10 @@ type KeyboardPathState = {
   homeNoteIndex: number;
   currentNode: number;
   previousNode: number;
+  startNode: number;
+  bfsDistance: number[];
+  maxRing: number;
+  cycleLength: number;
   nextAt: number;
   step: number;
   totalStages: number;
@@ -1438,11 +1442,23 @@ export class Starlace implements PlayerVisual {
     const startNode = explicitStartNode ? startNodeIndex! : this.pickKeyboardStartNode(homeNoteIndex);
     if (startNode < 0) return false;
 
+    const bfsDistance = this.computeBfsDistances(startNode);
+    let observedMax = 0;
+    for (const d of bfsDistance) if (d > observedMax && d !== Infinity) observedMax = d;
+    const maxRing = clamp(Math.min(observedMax, 4), 1, 5);
+    // Triangle ripple: out then back. cycleLength = 2*maxRing keeps the wave
+    // periodic so a held key feels like waves rolling in, not a random walk.
+    const cycleLength = Math.max(4, maxRing * 2);
+
     const state: KeyboardPathState = {
       keyIndex,
       homeNoteIndex,
       currentNode: startNode,
       previousNode: -1,
+      startNode,
+      bfsDistance,
+      maxRing,
+      cycleLength,
       nextAt: this.elapsed,
       step: 0,
       totalStages: this.keyboardPhraseJumps() + 1,
@@ -1489,7 +1505,10 @@ export class Starlace implements PlayerVisual {
     const phraseLength = Math.max(1, state.totalStages);
     const stageInPhrase = positiveModulo(state.step, phraseLength);
     const rootIndex = this.keyboardStageRootIndex(state, stageInPhrase);
-    const chordSize = this.keyboardChordSizeForStage(stageInPhrase, phraseLength);
+    // Chord blooms at ring 0 (origin / start of each ripple cycle); outer
+    // rings play single notes -> arpeggio cascading outward from the bloom.
+    const ringTarget = this.ringTargetForStep(state, state.step);
+    const chordSize = this.keyboardChordSizeForRing(ringTarget, state.maxRing);
     const nodes = this.pickKeyboardChordNodes(state, chordSize, rootIndex);
     if (nodes.length === 0) return 0;
     state.previousNode = state.currentNode;
@@ -1497,6 +1516,14 @@ export class Starlace implements PlayerVisual {
     for (const nodeIndex of nodes) this.rememberKeyboardNode(state, nodeIndex);
     this.fireKeyboardChord(state, nodes, chordSize, rootIndex);
     return nodes.length;
+  }
+
+  private keyboardChordSizeForRing(ringTarget: number, maxRing: number): 1 | 2 | 3 {
+    const maxNotes = this.keyboardChordMaxNotes();
+    if (maxNotes <= 1) return 1;
+    if (ringTarget === 0) return clamp(maxNotes, 1, 3) as 1 | 2 | 3;
+    if (ringTarget === 1 && maxRing >= 2) return clamp(Math.min(2, maxNotes), 1, 3) as 1 | 2 | 3;
+    return 1;
   }
 
   private refreshKeyboardPhrase(state: KeyboardPathState): void {
@@ -1591,6 +1618,8 @@ export class Starlace implements PlayerVisual {
     }
     const wander = clamp(this.params.keyPathWander, 0, 1);
     const edgeFollow = clamp(this.params.keyEdgeFollow, 0, 1);
+    const ringTarget = this.ringTargetForStep(state, state.step);
+    const ringWeight = 1.6 + edgeFollow * 1.2;
 
     let best = -1;
     let bestScore = Infinity;
@@ -1603,13 +1632,20 @@ export class Starlace implements PlayerVisual {
         ? 0
         : (0.80 + (recentIndex / Math.max(1, state.recentNodes.length - 1)) * 0.70) * (1 - wander * 0.24);
       const graphScore = direct.has(index)
-        ? -0.22 - edgeFollow * 1.12
+        ? -0.16 - edgeFollow * 0.78
         : secondHop.has(index)
-          ? -0.08 - edgeFollow * 0.46
-          : edgeFollow * 0.28;
-      const returnPenalty = index === state.previousNode ? 0.70 + edgeFollow * 0.25 : 0;
+          ? -0.06 - edgeFollow * 0.34
+          : edgeFollow * 0.22;
+      // Ripple ring penalty: prefer nodes at this step's BFS distance from the
+      // origin so the wave propagates outward, not a random walk.
+      const distFromOrigin = state.bfsDistance[index];
+      const ringDelta = Number.isFinite(distFromOrigin)
+        ? Math.abs(distFromOrigin - ringTarget)
+        : ringTarget + 3;
+      const ringPenalty = ringDelta * ringWeight;
+      const returnPenalty = index === state.previousNode ? 0.50 + edgeFollow * 0.20 : 0;
       const pitchPenalty = Math.abs(node.noteIndex - noteIndex) * 1.7;
-      const distancePenalty = anchor ? anchor.world.distanceTo(node.world) * (2.35 - wander * 1.20) : 0;
+      const distancePenalty = anchor ? anchor.world.distanceTo(node.world) * (1.35 - wander * 0.70) : 0;
       const phase = state.step * 9.17 + picked.length * 4.33 + state.phraseSeed * 27.9;
       const score =
         pickedPenalty +
@@ -1618,8 +1654,9 @@ export class Starlace implements PlayerVisual {
         recentPenalty +
         returnPenalty +
         graphScore +
+        ringPenalty +
         node.pulse * 0.22 +
-        hash(index * 41.11 + phase) * (0.16 + wander * 0.86);
+        hash(index * 41.11 + phase) * (0.10 + wander * 0.46);
 
       if (score >= bestScore) continue;
       best = index;
@@ -1650,6 +1687,35 @@ export class Starlace implements PlayerVisual {
 
   private keyboardPhraseJumps(): number {
     return Math.round(clamp(this.params.keyPhraseJumps, 2, 24));
+  }
+
+  // BFS distance from a start node along the lattice adjacency.
+  // Unreachable nodes report Infinity. Used to drive ripple-style hold play.
+  private computeBfsDistances(startNode: number): number[] {
+    const dist = new Array<number>(this.nodes.length).fill(Infinity);
+    if (startNode < 0 || startNode >= this.nodes.length) return dist;
+    dist[startNode] = 0;
+    const queue: number[] = [startNode];
+    let head = 0;
+    while (head < queue.length) {
+      const current = queue[head++];
+      const currentDist = dist[current];
+      for (const nb of this.adjacency[current] ?? []) {
+        if (dist[nb] === Infinity) {
+          dist[nb] = currentDist + 1;
+          queue.push(nb);
+        }
+      }
+    }
+    return dist;
+  }
+
+  // Triangle wave through BFS rings: 0, 1, ..., maxRing, maxRing-1, ..., 1, 0, 1...
+  // Held key produces concentric ripples expanding then contracting.
+  private ringTargetForStep(state: KeyboardPathState, step: number): number {
+    if (state.maxRing <= 0) return 0;
+    const phase = positiveModulo(step, Math.max(2, state.cycleLength));
+    return phase <= state.maxRing ? phase : state.cycleLength - phase;
   }
 
   private keyboardChordMaxNotes(): 1 | 2 | 3 {
@@ -1686,13 +1752,23 @@ export class Starlace implements PlayerVisual {
       ? -1
       : (state.step - 1) % Starlace.KEYBOARD_ECHO_VELOCITY_OFFSETS.length;
     const accent = state.step <= 0
-      ? 0.12
+      ? 0.18
       : Starlace.KEYBOARD_ECHO_VELOCITY_OFFSETS[patternIndex] ?? 0;
-    const phraseAccent = positiveModulo(state.step, Math.max(1, state.totalStages)) === 0
-      ? clamp(this.params.keyRhythmSwing, 0, 1) * 0.10
+    // Ripple decay: notes near the origin (ring 0) hit hardest, outer rings
+    // soften like the wave dispersing. cycleStart bonus restores energy when
+    // a new ripple begins so held keys feel like rolling waves.
+    const ringTarget = this.ringTargetForStep(state, state.step);
+    const ringFraction = state.maxRing > 0 ? ringTarget / state.maxRing : 0;
+    const rippleDecay = ringFraction * 0.34;
+    const cycleStart = state.step > 0 && positiveModulo(state.step, Math.max(2, state.cycleLength)) === 0
+      ? 0.16
       : 0;
-    const base = 0.38 + state.velocity * 0.38;
-    return clamp(base + accent + phraseAccent + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.14, 0.34, 0.95);
+    const base = 0.46 + state.velocity * 0.36;
+    return clamp(
+      base + accent + cycleStart - rippleDecay + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.10,
+      0.34,
+      0.95,
+    );
   }
 
   private emitStreak(node: StarNode, velocity: number): void {
