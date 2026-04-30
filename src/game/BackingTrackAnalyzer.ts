@@ -25,10 +25,10 @@ export const FFT_PULSE_DEFS = {
   minIntervalMs:  { default: 220,   min: 60,    max: 1500, step: 10,               folder: 'Detection', label: 'min ms' },
   sensitivity:    { default: 1.0,   min: 0.1,   max: 3,    step: 0.05,             folder: 'Detection', label: 'sensitivity' },
 
-  pulseSpeed:     { default: 0.55,  min: 0.05,  max: 3,    step: 0.01,             folder: 'Pulse', label: 'speed m/s' },
-  pulseWidth:     { default: 0.13,  min: 0.02,  max: 0.6,  step: 0.005,            folder: 'Pulse', label: 'shell width' },
-  pulseAmplitude: { default: 0.55,  min: 0,     max: 6,    step: 0.01,             folder: 'Pulse', label: 'strength' },
-  pulseLifetime:  { default: 3.0,   min: 0.3,   max: 8,    step: 0.05,             folder: 'Pulse', label: 'lifetime s' },
+  pulseSpeed:     { default: 1.40,  min: 0.05,  max: 5,    step: 0.01,             folder: 'Pulse', label: 'speed m/s' },
+  pulseWidth:     { default: 0.32,  min: 0.02,  max: 1.0,  step: 0.005,            folder: 'Pulse', label: 'shell width' },
+  pulseAmplitude: { default: 2.20,  min: 0,     max: 10,   step: 0.05,             folder: 'Pulse', label: 'strength' },
+  pulseLifetime:  { default: 2.5,   min: 0.3,   max: 8,    step: 0.05,             folder: 'Pulse', label: 'lifetime s' },
 } as const;
 
 export type FftPulseParams = ParamsOf<typeof FFT_PULSE_DEFS>;

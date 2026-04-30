@@ -237,10 +237,10 @@ export class EnergySculptor implements EnergySink {
   // inert until the next beat resets it.
   private rippleCenterUniform = uniform(new THREE.Vector3());
   private rippleAgeUniform = uniform(1e6);
-  private rippleSpeedUniform = uniform(0.55);
-  private rippleWidthUniform = uniform(0.13);
-  private rippleAmpUniform = uniform(0.55);
-  private rippleLifetimeUniform = uniform(3.0);
+  private rippleSpeedUniform = uniform(1.40);
+  private rippleWidthUniform = uniform(0.32);
+  private rippleAmpUniform = uniform(2.20);
+  private rippleLifetimeUniform = uniform(2.5);
   private rippleIntensityUniform = uniform(0);
 
   // Sample-space rotation — slowly tumbles the attractor through world space

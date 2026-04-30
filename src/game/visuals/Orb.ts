@@ -177,7 +177,10 @@ function makeOrbOffsets(planeSpacing: number, layerSpacing: number, startHeight:
     const halfStep = count > 1 ? (ORB_ARC_SPAN / (count - 1)) * ORB_LAYER_ANGLE_STAGGER : 0;
     const angleOffset = layer % 2 === 1 ? halfStep : 0;
     for (let i = 0; i < count; i += 1) {
-      const t = count <= 1 ? 0.5 : i / (count - 1);
+      // Reverse t so the lowest-index orb in each layer (e.g. A in the home
+      // row) sits on the player side of the arc — closest to the camera —
+      // and the highest-index orb sits on the window side.
+      const t = count <= 1 ? 0.5 : (count - 1 - i) / (count - 1);
       const angle = (t - 0.5) * ORB_ARC_SPAN + angleOffset;
       const x = Math.sin(angle) * radius;
       const z = -Math.cos(angle) * radius * ORB_DEPTH_BOW + layerZBias;
