@@ -222,6 +222,11 @@ export class BackingTrackAnalyzer {
     this.sculptor = sculptor;
   }
 
+  /** Smoothed low-band loudness in [0,1]. PostFX uses this to breathe vignette/grain. */
+  getLoudness(): number {
+    return this.envShort;
+  }
+
   attachPane(dock: HTMLElement, sculptor?: EnergySculptor): void {
     this.sculptor = sculptor;
     if (!this.debugRoot) this.buildDebugPanel(dock);

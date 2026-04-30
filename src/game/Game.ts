@@ -10,6 +10,7 @@ import { MidiInputController, type MidiNoteEvent, type MidiState } from './midiI
 import { clamp, hash, lerp } from './math';
 import { MultiplayerClient } from './multiplayer';
 import { Orb } from './visuals/Orb';
+import { PostFX } from './visuals/PostFX';
 import { Starlace } from './visuals/Starlace';
 import { EnergySculptor } from './EnergySculptor';
 import { pickArchetype } from './sculptor/archetypeShared';
@@ -334,6 +335,7 @@ export class Game {
   private playerInstruments: Record<PlayerSlot, InstrumentId> = { local: 'orb', remote: 'starlace' };
   private playerCreatures: Record<PlayerSlot, CreatureId> = { local: 'lion', remote: 'robot' };
   private sculptor?: EnergySculptor;
+  private postFX?: PostFX;
   private devTweaks?: ReturnType<typeof registerTweaks<typeof DEV_DEFS>>;
   private readonly devParams = makeParams(DEV_DEFS);
   private backingTrackAnalyzer = new BackingTrackAnalyzer();
@@ -506,6 +508,8 @@ export class Game {
     await this.renderer.init();
     this.setupOrbitControls();
     this.setupDevPane();
+    this.postFX = new PostFX(this.renderer, this.scene, this.camera);
+    this.postFX.attachPane(this.paneDock);
     this.installPlayerVisuals();
     await this.prewarmPlayerVisuals();
     this.refreshArchetype();
@@ -789,6 +793,7 @@ export class Game {
     this.robotMotion.dispose();
     this.scenery.dispose();
     this.sculptor?.dispose();
+    this.postFX?.dispose();
     this.devTweaks?.dispose();
     this.backingTrackAnalyzer.dispose();
     this.disposePlayerVisuals();
@@ -1557,7 +1562,12 @@ export class Game {
     this.handSynth.update(localPose, remotePose, delta);
     this.poseSession.sendLocalPose(localPose, elapsed);
     if (this.cameraMode === 'orbit') this.orbitControls?.update();
-    this.renderer.render(this.scene, this.camera);
+    if (this.postFX) {
+      this.postFX.setLoudness(this.backingTrackAnalyzer.getLoudness());
+      this.postFX.render();
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
     this.resolveFrameRenderListeners();
   }
 

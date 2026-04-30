@@ -299,11 +299,11 @@ export class EnergySculptor implements EnergySink {
   private projectorRings: THREE.Line[] = [];
   private projectorRingMaterial?: THREE.LineBasicMaterial;
   private projectorRingGeom?: THREE.BufferGeometry;
-  private polarFftLines?: THREE.LineSegments;
-  private polarFftGeom?: THREE.BufferGeometry;
-  private polarFftMaterial?: THREE.LineBasicMaterial;
-  private polarFftPositions?: Float32Array;
-  private polarFftColors?: Float32Array;
+  private polarFftMesh?: THREE.InstancedMesh;
+  private polarFftGeom?: THREE.CylinderGeometry;
+  private polarFftMaterial?: THREE.MeshBasicNodeMaterial;
+  private polarFftDummy = new THREE.Object3D();
+  private polarFftScratchColor = new THREE.Color();
   private polarFftTargets = new Float32Array(POLAR_FFT_BIN_COUNT);
   private polarFftLevels = new Float32Array(POLAR_FFT_BIN_COUNT);
   private polarFftEnergy = 0;
@@ -604,7 +604,8 @@ export class EnergySculptor implements EnergySink {
     this.projectorRings.length = 0;
     this.projectorRingGeom?.dispose();
     this.projectorRingMaterial?.dispose();
-    this.polarFftLines?.removeFromParent();
+    this.polarFftMesh?.removeFromParent();
+    this.polarFftMesh?.dispose();
     this.polarFftGeom?.dispose();
     this.polarFftMaterial?.dispose();
     this.fieldDebugLines?.removeFromParent();
@@ -1116,33 +1117,56 @@ export class EnergySculptor implements EnergySink {
   }
 
   private buildPolarFftRing(): void {
-    const segmentCount = POLAR_FFT_BIN_COUNT * 2;
-    const vertexCount = segmentCount * 2;
-    this.polarFftPositions = new Float32Array(vertexCount * 3);
-    this.polarFftColors = new Float32Array(vertexCount * 3);
-    this.polarFftGeom = new THREE.BufferGeometry();
-    this.polarFftGeom.setAttribute('position', new THREE.BufferAttribute(this.polarFftPositions, 3));
-    this.polarFftGeom.setAttribute('color', new THREE.BufferAttribute(this.polarFftColors, 3));
-    this.polarFftMaterial = new THREE.LineBasicMaterial({
+    // Hex prism: CylinderGeometry with 6 radial segments. Geometry is unit-sized
+    // (radius 1, height 1) and translated so its base sits at y=0; per-instance
+    // scale stretches it radially and vertically each frame.
+    const geom = new THREE.CylinderGeometry(1, 1, 1, 6, 1, false);
+    geom.translate(0, 0.5, 0);
+
+    // Per-vertex tint: dim at base, bright at tip. Combined with per-instance
+    // color via the standard MeshBasic vertex/instance color path, this gives
+    // each prism a subtle volumetric glow without a custom shader.
+    const pos = geom.attributes.position;
+    const vertColors = new Float32Array(pos.count * 3);
+    for (let i = 0; i < pos.count; i += 1) {
+      const y = pos.getY(i);
+      const t = Math.min(1, Math.max(0, y));
+      const v = 0.32 + t * 0.78;
+      vertColors[i * 3] = v;
+      vertColors[i * 3 + 1] = v;
+      vertColors[i * 3 + 2] = v;
+    }
+    geom.setAttribute('color', new THREE.BufferAttribute(vertColors, 3));
+
+    const material = new THREE.MeshBasicNodeMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.08,
+      opacity: 0.35,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
     });
-    this.polarFftLines = new THREE.LineSegments(this.polarFftGeom, this.polarFftMaterial);
-    this.polarFftLines.frustumCulled = false;
-    this.polarFftLines.renderOrder = 35;
-    this.scene.add(this.polarFftLines);
+
+    const mesh = new THREE.InstancedMesh(geom, material, POLAR_FFT_BIN_COUNT);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(
+      new Float32Array(POLAR_FFT_BIN_COUNT * 3),
+      3,
+    );
+    mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    mesh.renderOrder = 35;
+
+    this.polarFftGeom = geom;
+    this.polarFftMaterial = material;
+    this.polarFftMesh = mesh;
+    this.scene.add(mesh);
     this.updatePolarFftRing(1 / 60);
   }
 
   private updatePolarFftRing(delta: number): void {
-    const positions = this.polarFftPositions;
-    const colors = this.polarFftColors;
-    const geom = this.polarFftGeom;
+    const mesh = this.polarFftMesh;
     const material = this.polarFftMaterial;
-    if (!positions || !colors || !geom || !material) return;
+    if (!mesh || !material) return;
 
     const dt = Math.min(Math.max(delta, 1 / 120), 1 / 20);
     const baseRadius = this.params.timerRingRadius;
@@ -1154,8 +1178,16 @@ export class EnergySculptor implements EnergySink {
     const drift = Math.sin(t * 0.11) * 0.028 + Math.sin(t * 0.047 + 1.7) * 0.018;
     const attack = 1 - Math.exp(-dt * 16);
     const release = 1 - Math.exp(-dt * 3.2);
-    let cursor = 0;
-    let colorCursor = 0;
+
+    // Hex flat-to-flat width = √3 × vertex radius. To pack flush around the
+    // ring, set flat-to-flat to the chord between adjacent instance centers
+    // (with a small gap so faces don't z-fight).
+    const segmentAngle = TAU / POLAR_FFT_BIN_COUNT;
+    const chord = 2 * ringRadius * Math.sin(segmentAngle / 2);
+    const hexRadius = (chord * 0.96) / Math.sqrt(3);
+
+    const dummy = this.polarFftDummy;
+    const colorScratch = this.polarFftScratchColor;
     let energy = 0;
 
     for (let i = 0; i < POLAR_FFT_BIN_COUNT; i += 1) {
@@ -1175,50 +1207,33 @@ export class EnergySculptor implements EnergySink {
       const theta = (i / POLAR_FFT_BIN_COUNT) * TAU - Math.PI / 2 + drift;
       const c = Math.cos(theta);
       const s = Math.sin(theta);
-      const tangentX = -s;
-      const tangentZ = c;
       const radiusWobble = Math.sin(t * 0.31 + seed * 0.37) * 0.004;
-      const rootRadius = ringRadius + radiusWobble;
-      const radialReach = 0.012 + presence * 0.070;
-      const height = 0.012 + presence * 0.255;
-      const rootX = this.center.x + c * rootRadius;
-      const rootZ = this.center.z + s * rootRadius;
-      const tipX = this.center.x + c * (rootRadius + radialReach);
-      const tipY = baseY + height;
-      const tipZ = this.center.z + s * (rootRadius + radialReach);
-      const capHalf = 0.004 + presence * 0.020;
+      const r = ringRadius + radiusWobble;
+      const height = 0.018 + presence * 0.260;
+      const cx = this.center.x + c * r;
+      const cz = this.center.z + s * r;
 
-      positions[cursor++] = rootX;
-      positions[cursor++] = baseY;
-      positions[cursor++] = rootZ;
-      positions[cursor++] = tipX;
-      positions[cursor++] = tipY;
-      positions[cursor++] = tipZ;
-
-      positions[cursor++] = tipX - tangentX * capHalf;
-      positions[cursor++] = tipY;
-      positions[cursor++] = tipZ - tangentZ * capHalf;
-      positions[cursor++] = tipX + tangentX * capHalf;
-      positions[cursor++] = tipY + presence * 0.010;
-      positions[cursor++] = tipZ + tangentZ * capHalf;
+      // Rotate so a hex vertex points radially outward — the two flats
+      // perpendicular to that face neighbors and tile around the ring.
+      dummy.position.set(cx, baseY, cz);
+      dummy.rotation.set(0, -theta, 0);
+      dummy.scale.set(hexRadius, height, hexRadius);
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i, dummy.matrix);
 
       const hot = Math.pow(spectral, 1.25);
       const glint = 0.5 + Math.sin(t * 1.7 + seed) * 0.5;
-      const r = 0.24 + hot * 0.60 + glint * idle * 0.30;
-      const g = 0.72 + hot * 0.16;
-      const b = 0.82 + hot * 0.16 + glint * idle * 0.24;
-      for (let v = 0; v < 4; v += 1) {
-        const rootFade = v === 0 ? 0.42 : 1;
-        colors[colorCursor++] = r * rootFade;
-        colors[colorCursor++] = g * rootFade;
-        colors[colorCursor++] = b * rootFade;
-      }
+      const cr = 0.24 + hot * 0.60 + glint * idle * 0.30;
+      const cg = 0.72 + hot * 0.16;
+      const cb = 0.82 + hot * 0.16 + glint * idle * 0.24;
+      colorScratch.setRGB(cr, cg, cb);
+      mesh.setColorAt(i, colorScratch);
     }
 
     this.polarFftEnergy = energy / POLAR_FFT_BIN_COUNT;
-    material.opacity = clampRange(0.055 + this.polarFftEnergy * 0.55 + this.synchronyBoost * 0.07, 0.055, 0.48, 0.08);
-    (geom.attributes.position as THREE.BufferAttribute).needsUpdate = true;
-    (geom.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+    material.opacity = clampRange(0.18 + this.polarFftEnergy * 0.45 + this.synchronyBoost * 0.05, 0.18, 0.78, 0.30);
+    mesh.instanceMatrix.needsUpdate = true;
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
 
   // Mutually irrational base periods (in seconds) for the three Euler axes.
