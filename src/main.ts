@@ -142,11 +142,13 @@ function revealDimmedScene(): void {
   });
 }
 
-const marquee = '🚂 Jam Train ';
+const marqueeChars = Array.from('🚂 Jam Train ');
 let marqueeOffset = 0;
 const marqueeTimer = window.setInterval(() => {
-  marqueeOffset = (marqueeOffset + 1) % marquee.length;
-  document.title = marquee.slice(marqueeOffset) + marquee.slice(0, marqueeOffset);
+  marqueeOffset = (marqueeOffset + 1) % marqueeChars.length;
+  document.title =
+    marqueeChars.slice(marqueeOffset).join('') +
+    marqueeChars.slice(0, marqueeOffset).join('');
 }, 250);
 
 window.addEventListener('beforeunload', () => {
