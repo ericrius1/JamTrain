@@ -180,6 +180,8 @@ export class HandSynthEngine {
   private running = false;
 
   private master?: any;
+  private orbBus?: any;
+  private starlaceBus?: any;
   private voices: Record<PlayerKey, Voice | null> = { local: null, remote: null };
   private orbVoices: Record<PlayerKey, OrbVoice | null> = { local: null, remote: null };
   private starlaceVoices: Record<PlayerKey, StarlaceVoice | null> = { local: null, remote: null };
@@ -348,12 +350,30 @@ export class HandSynthEngine {
     this.params.volumeDb = linear > 0.0001 ? 20 * Math.log10(linear) : -60;
   }
 
+  setOrbGain(value: number): void {
+    this.applyBusGain(this.orbBus, value);
+  }
+
+  setStarlaceGain(value: number): void {
+    this.applyBusGain(this.starlaceBus, value);
+  }
+
+  private applyBusGain(bus: any, value: number): void {
+    if (!bus) return;
+    const CURVE_EXP = 1.2;
+    const v = value <= 0 ? 0 : Math.min(1, value);
+    const linear = Math.pow(v, CURVE_EXP);
+    bus.gain.rampTo?.(linear, PARAM_RAMP) ?? (bus.gain.value = linear);
+  }
+
   async start(): Promise<void> {
     if (this.running) return;
     const Tone = await this.audioGraph.start();
     this.tone = Tone;
 
     this.master = new Tone.Gain(Tone.dbToGain(this.params.volumeDb)).connect(this.audioGraph.getBus('instruments'));
+    this.orbBus = new Tone.Gain(1).connect(this.master);
+    this.starlaceBus = new Tone.Gain(1).connect(this.master);
 
     for (const key of PLAYER_KEYS) {
       this.ensureInstrumentVoice(key);
@@ -880,6 +900,8 @@ export class HandSynthEngine {
     this.duetSynth?.dispose?.();
     this.duetFilter?.dispose?.();
     this.duetGain?.dispose?.();
+    this.orbBus?.dispose?.();
+    this.starlaceBus?.dispose?.();
     this.master?.dispose?.();
     this.keyUnsubscribe?.();
   }
@@ -978,7 +1000,7 @@ export class HandSynthEngine {
 
   private createOrbVoice(key: PlayerKey): OrbVoice {
     const Tone = this.tone!;
-    const panner = new Tone.Panner(key === 'local' ? -0.15 : 0.15).connect(this.master);
+    const panner = new Tone.Panner(key === 'local' ? -0.15 : 0.15).connect(this.orbBus ?? this.master);
     const limiter = new Tone.Limiter(ORB_OUTPUT_LIMITER_DB).connect(panner);
     const dryGain = new Tone.Gain(0).connect(limiter);
     const reverbReturn = new Tone.Gain(0.58).connect(limiter);
@@ -1318,7 +1340,7 @@ export class HandSynthEngine {
 
   private createStarlaceVoice(key: PlayerKey): StarlaceVoice {
     const Tone = this.tone!;
-    const panner = new Tone.Panner(key === 'local' ? -0.20 : 0.20).connect(this.master);
+    const panner = new Tone.Panner(key === 'local' ? -0.20 : 0.20).connect(this.starlaceBus ?? this.master);
     const dryGain = new Tone.Gain(0).connect(panner);
     const reverbReturn = new Tone.Gain(0.64).connect(panner);
     const reverb = new Tone.Reverb({

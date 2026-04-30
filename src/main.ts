@@ -13,6 +13,8 @@ const INITIAL_MULTIPLAYER_SETTLE_MS = 5000;
 
 type AvPrefs = {
   musicVolume: number;
+  starlaceVolume: number;
+  orbVolume: number;
   backingTrackVolume: number;
   voiceVolume: number;
 };
@@ -182,6 +184,8 @@ async function createRuntime(): Promise<RuntimeApi> {
       Hud,
       DEFAULT_BACKING_TRACK_VOLUME,
       DEFAULT_MUSIC_VOLUME,
+      DEFAULT_STARLACE_VOLUME,
+      DEFAULT_ORB_VOLUME,
       DEFAULT_VOICE_VOLUME,
     },
     { DevOverlay },
@@ -207,6 +211,8 @@ async function createRuntime(): Promise<RuntimeApi> {
 
   const defaultAvPrefs: AvPrefs = {
     musicVolume: DEFAULT_MUSIC_VOLUME,
+    starlaceVolume: DEFAULT_STARLACE_VOLUME,
+    orbVolume: DEFAULT_ORB_VOLUME,
     backingTrackVolume: DEFAULT_BACKING_TRACK_VOLUME,
     voiceVolume: DEFAULT_VOICE_VOLUME,
   };
@@ -354,6 +360,7 @@ async function createRuntime(): Promise<RuntimeApi> {
     () => {
       game.setCameraMode(game.getCameraMode() === 'game' ? 'orbit' : 'game');
     },
+    () => game.getAliveParticleCount(),
   );
 
   hud.setHandTracker(game.handTracker);
@@ -409,6 +416,14 @@ async function createRuntime(): Promise<RuntimeApi> {
   hud.onMusicVolumeChange(value => {
     game.setMusicVolume(value);
     avPrefs.musicVolume = value;
+  });
+  hud.onStarlaceVolumeChange(value => {
+    game.setStarlaceVolume(value);
+    avPrefs.starlaceVolume = value;
+  });
+  hud.onOrbVolumeChange(value => {
+    game.setOrbVolume(value);
+    avPrefs.orbVolume = value;
   });
   hud.onBackingTrackVolumeChange(value => {
     midnightTrain.setVolume(value);
@@ -474,19 +489,23 @@ async function createRuntime(): Promise<RuntimeApi> {
     if (document.hidden) stopPushToTalk();
   });
 
-  hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
+  hud.setMixerValues(avPrefs.musicVolume, avPrefs.starlaceVolume, avPrefs.orbVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
   hud.setRemoteVolume(avPrefs.voiceVolume);
 
   // Pressing R in debug mode resets tweakpane params; piggyback on the same
   // registry to also restore the mixer panel to in-code defaults.
   registerResetHook('av-prefs', () => {
     avPrefs.musicVolume = defaultAvPrefs.musicVolume;
+    avPrefs.starlaceVolume = defaultAvPrefs.starlaceVolume;
+    avPrefs.orbVolume = defaultAvPrefs.orbVolume;
     avPrefs.backingTrackVolume = defaultAvPrefs.backingTrackVolume;
     avPrefs.voiceVolume = defaultAvPrefs.voiceVolume;
     game.setMusicVolume(avPrefs.musicVolume);
+    game.setStarlaceVolume(avPrefs.starlaceVolume);
+    game.setOrbVolume(avPrefs.orbVolume);
     midnightTrain.setVolume(avPrefs.backingTrackVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
-    hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
+    hud.setMixerValues(avPrefs.musicVolume, avPrefs.starlaceVolume, avPrefs.orbVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
   });
 
   await game.start();
@@ -514,9 +533,11 @@ async function createRuntime(): Promise<RuntimeApi> {
     hud.setShareVideoEnabled(false);
 
     game.setMusicVolume(avPrefs.musicVolume);
+    game.setStarlaceVolume(avPrefs.starlaceVolume);
+    game.setOrbVolume(avPrefs.orbVolume);
     midnightTrain.setVolume(avPrefs.backingTrackVolume);
     hud.setRemoteVolume(avPrefs.voiceVolume);
-    hud.setMixerValues(avPrefs.musicVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
+    hud.setMixerValues(avPrefs.musicVolume, avPrefs.starlaceVolume, avPrefs.orbVolume, avPrefs.backingTrackVolume, avPrefs.voiceVolume);
 
     started = true;
   }

@@ -483,6 +483,14 @@ export class Game {
     this.handSynth.setMasterGain(value);
   }
 
+  setStarlaceVolume(value: number): void {
+    this.handSynth.setStarlaceGain(value);
+  }
+
+  setOrbVolume(value: number): void {
+    this.handSynth.setOrbGain(value);
+  }
+
   // Mute the procedural robot fill-in's hand-played voice. Has no effect
   // when a real partner is present — only the robot stand-in is gated.
   setRobotJamMuted(muted: boolean): void {
@@ -510,6 +518,10 @@ export class Game {
 
   setDebugVisible(visible: boolean): void {
     this.sculptor?.setDebugVisible(visible);
+  }
+
+  getAliveParticleCount(): number {
+    return this.sculptor?.getAliveParticleCount() ?? 0;
   }
 
   setCameraMode(mode: CameraMode): void {

@@ -174,18 +174,19 @@ export const request_seat = spacetimedb.reducer(
     const partner = findOnlinePartner(ctx, target);
 
     if (existing) {
-      const enteringNewRoom = existing.roomId !== target;
+      const baseInstrument = (requestedInstrument ?? existing.instrument) || DEFAULT_INSTRUMENT;
+      const baseCreature = (requestedCreature ?? existing.creature) || DEFAULT_CREATURE;
+      // When auto-paired, never let our loadout match the partner's. Applies
+      // both to a fresh cabin entry and to a reconnect into an already-populated
+      // cabin where our previous (now-conflicting) row would otherwise persist.
       const nextInstrument =
-        instrumentAuto && enteringNewRoom && partner
+        instrumentAuto && partner && partner.instrument === baseInstrument
           ? oppositeSeatInstrument(partner.instrument)
-          : (requestedInstrument ?? existing.instrument) || DEFAULT_INSTRUMENT;
+          : baseInstrument;
       const nextCreature =
-        creatureAuto && enteringNewRoom && partner
+        creatureAuto && partner && partner.creature === baseCreature
           ? firstDifferentSeatCreature(partner.creature)
-          : (requestedCreature ?? existing.creature) || DEFAULT_CREATURE;
-      // Loadout choice is client-owned. request_seat accepts the current
-      // client choice so the authoritative row is correct as soon as it is
-      // visible to a partner, instead of briefly exposing server defaults.
+          : baseCreature;
       ctx.db.player.identity.update({
         ...existing,
         roomId: target,
@@ -199,10 +200,16 @@ export const request_seat = spacetimedb.reducer(
       return;
     }
 
+    const baseInsertInstrument = requestedInstrument ?? DEFAULT_INSTRUMENT;
+    const baseInsertCreature = requestedCreature ?? DEFAULT_CREATURE;
     const initialInstrument =
-      instrumentAuto && partner ? oppositeSeatInstrument(partner.instrument) : requestedInstrument ?? DEFAULT_INSTRUMENT;
+      instrumentAuto && partner && partner.instrument === baseInsertInstrument
+        ? oppositeSeatInstrument(partner.instrument)
+        : baseInsertInstrument;
     const initialCreature =
-      creatureAuto && partner ? firstDifferentSeatCreature(partner.creature) : requestedCreature ?? DEFAULT_CREATURE;
+      creatureAuto && partner && partner.creature === baseInsertCreature
+        ? firstDifferentSeatCreature(partner.creature)
+        : baseInsertCreature;
 
     ctx.db.player.insert({
       identity: ctx.sender,

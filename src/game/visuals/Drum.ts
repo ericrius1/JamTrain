@@ -46,7 +46,7 @@ export const DRUM_DEFS = {
   orbRadius:         { default: 0.052, min: 0.04, max: 0.32, step: 0.001, label: 'orb radius' },
   ringRadius:        { default: 0.125, min: 0.06, max: 0.50, step: 0.005, label: 'orb spacing' },
   pyramidRowSpacing: { default: 0.105, min: 0.10, max: 0.50, step: 0.005, label: 'height spacing' },
-  heldStreamAmount:  { default: 10, min: 0, max: 100, step: 0.05, folder: 'Emission', label: 'emission rate' },
+  heldStreamAmount:  { default: 100, min: 0, max: 10000, step: 1, folder: 'Emission', label: 'emission rate' },
   envAttack:         { default: DEFAULT_ORB_ENVELOPE.attack,  min: 0.002, max: 1.5, step: 0.001, folder: 'Envelope', label: 'attack s' },
   envDecay:          { default: DEFAULT_ORB_ENVELOPE.decay,   min: 0.01,  max: 3.0, step: 0.005, folder: 'Envelope', label: 'decay s' },
   envSustain:        { default: DEFAULT_ORB_ENVELOPE.sustain, min: 0,     max: 1,   step: 0.01,  folder: 'Envelope', label: 'sustain' },
@@ -131,7 +131,6 @@ const RIPPLE_MAX_AGE = 5.8;
 const DRUM_LAYOUT_TOP_ROWS = DRUM_DEFAULT_BASE_ROW;
 const HELD_STREAM_BASE_RATE = 38;
 const HELD_STREAM_VELOCITY_RATE = 58;
-const HELD_STREAM_MAX_PER_FRAME = 10;
 // NDC units per second. Pointer must be moving at least this fast over an orb
 // for the held drone synth to be considered active. Roughly "a hair of motion"
 // — high enough to ignore the few stray pixels of cursor jitter while a user
@@ -1280,8 +1279,7 @@ export class Drum implements PlayerVisual {
   private tickHeldParticleStreams(delta: number): void {
     if (!this.sculptor || this.heldSources.size === 0) return;
     const streamDelta = Math.min(delta, 0.05);
-    const amount = clamp(this.params.heldStreamAmount, 0, 4);
-    const streamCap = Math.max(1, Math.ceil(HELD_STREAM_MAX_PER_FRAME * amount));
+    const amount = Math.max(0, this.params.heldStreamAmount);
     _hitDir.set(0, 0.2, 1).normalize();
 
     for (const held of this.heldSources.values()) {
@@ -1293,7 +1291,7 @@ export class Drum implements PlayerVisual {
       }
       const rate = (HELD_STREAM_BASE_RATE + held.velocity * HELD_STREAM_VELOCITY_RATE) * amount;
       held.streamCarry += rate * streamDelta;
-      const count = Math.min(streamCap, Math.floor(held.streamCarry));
+      const count = Math.floor(held.streamCarry);
       if (count <= 0) continue;
       held.streamCarry -= count;
 

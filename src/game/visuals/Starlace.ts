@@ -22,7 +22,6 @@ export const STARLACE_DEFS = {
   hitCooldown:     { default: 0.065, min: 0.02,  max: 0.35, step: 0.005, label: 'cooldown s' },
   pulseDecay:      { default: 4.8,   min: 1,     max: 14,   step: 0.1,   label: 'star fade' },
   linkOpacity:     { default: 0.42,  min: 0,     max: 0.9,  step: 0.01,  label: 'link opacity' },
-  sparkSize:       { default: 0.044, min: 0.006, max: 0.08, step: 0.001, label: 'spark size' },
   anchorSmoothing: { default: 5.5,   min: 0.2,   max: 16,   step: 0.1,   label: 'anchor s' },
   handSmoothing:   { default: 3.2,   min: 0.4,   max: 18,   step: 0.1,   label: 'hand smoothing' },
   axisSmoothing:   { default: 2.0,   min: 0.2,   max: 12,   step: 0.1,   label: 'turn smoothing' },
@@ -79,15 +78,6 @@ type StarNode = {
   world: THREE.Vector3;
 };
 
-type TravelingSpark = {
-  from: number;
-  to: number;
-  edgeIndex: number;
-  start: number;
-  duration: number;
-  intensity: number;
-};
-
 type KeyboardPathState = {
   keyIndex: number;
   homeNoteIndex: number;
@@ -105,7 +95,6 @@ type KeyboardPathState = {
   velocity: number;
 };
 
-const MAX_SPARKS = 64;
 const MAX_HITS_PER_FRAME = 10;
 const TAU = Math.PI * 2;
 const STARLACE_LINKS_PER_NODE = 2;
@@ -172,8 +161,6 @@ export class Starlace implements PlayerVisual {
   private edges: [number, number][] = [];
   private edgeDistances: number[] = [];
   private adjacency: number[][] = [];
-  private edgeIndexByPair = new Map<number, number>();
-  private edgeSparkBoost: Float32Array = new Float32Array(0);
   private linePositions: Float32Array;
   private lineColors: Float32Array;
   private pulseLinePositions: Float32Array;
@@ -188,8 +175,6 @@ export class Starlace implements PlayerVisual {
   private nodeMesh?: THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicNodeMaterial>;
   private nodeMaterial?: THREE.MeshBasicNodeMaterial;
   private nodeGemParams?: THREE.InstancedBufferAttribute;
-  private sparkMesh: THREE.InstancedMesh;
-  private sparkMaterial: THREE.MeshBasicMaterial;
 
   private elapsed = 0;
   private active = true;
@@ -236,15 +221,6 @@ export class Starlace implements PlayerVisual {
   private previousContacts = new Map<string, THREE.Vector3>();
   private activeContactKeys = new Set<string>();
   private currentContactKeys = new Set<string>();
-  private sparks: TravelingSpark[] = Array.from({ length: MAX_SPARKS }, () => ({
-    from: 0,
-    to: 0,
-    edgeIndex: -1,
-    start: -100,
-    duration: 0.5,
-    intensity: 0,
-  }));
-  private sparkCursor = 0;
 
   private cool = new THREE.Color();
   private warm = new THREE.Color();
@@ -345,21 +321,7 @@ export class Starlace implements PlayerVisual {
 
     this.buildNodeMeshes();
 
-    this.sparkMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      transparent: true,
-      opacity: 0.95,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      vertexColors: true,
-    });
-    this.sparkMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), this.sparkMaterial, MAX_SPARKS);
-    this.sparkMesh.frustumCulled = false;
-    this.sparkMesh.renderOrder = 22;
-    this.mesh.add(this.sparkMesh);
-
     this.applyColors();
-    this.writeHiddenSparks();
 
     if (this.palette === 'local') {
       this.attachKeyboardEvents();
@@ -624,7 +586,6 @@ export class Starlace implements PlayerVisual {
       this.clearPointerState();
     }
     this.decayPulses(delta);
-    this.writeSparks();
     this.writeLines();
     this.writeNodes();
     this.tickReveal();
@@ -641,8 +602,6 @@ export class Starlace implements PlayerVisual {
     this.pulseLineMaterial.dispose();
     this.nodeGeometry?.dispose();
     this.nodeMaterial?.dispose();
-    this.sparkMesh.geometry.dispose();
-    this.sparkMaterial.dispose();
     this.mesh.removeFromParent();
   }
 
@@ -730,20 +689,10 @@ export class Starlace implements PlayerVisual {
       degree[p.j] += 1;
     }
     this.adjacency = Array.from({ length: this.nodes.length }, () => []);
-    this.edgeIndexByPair.clear();
-    for (let e = 0; e < this.edges.length; e += 1) {
-      const [a, b] = this.edges[e];
+    for (const [a, b] of this.edges) {
       this.adjacency[a].push(b);
       this.adjacency[b].push(a);
-      this.edgeIndexByPair.set(this.edgePairKey(a, b), e);
     }
-    this.edgeSparkBoost = new Float32Array(this.edges.length);
-  }
-
-  private edgePairKey(a: number, b: number): number {
-    const lo = a < b ? a : b;
-    const hi = a < b ? b : a;
-    return lo * 4096 + hi;
   }
 
   private buildKeyboardPitchBuckets(): void {
@@ -872,10 +821,9 @@ export class Starlace implements PlayerVisual {
       const distanceFade = 1 - smoothstep01(
         (distance - STARLACE_LINK_FADE_START) / Math.max(0.001, STARLACE_MAX_LINK_SPAN - STARLACE_LINK_FADE_START),
       );
-      const sparkBoost = this.edgeSparkBoost[e] ?? 0;
-      const edgePulse = Math.max(a.pulse, b.pulse, sparkBoost);
-      const lineGlow = eased * clamp(0.18 + distanceFade * 0.86 + edgePulse * 0.24 + this.smoothedEnergy * 0.14 + sparkBoost * 0.45, 0, 1.45);
-      const pulseGlow = eased * clamp(edgePulse * 0.92 + this.smoothedPulse * 0.18 + sparkBoost * 0.95, 0, 1.55);
+      const edgePulse = Math.max(a.pulse, b.pulse);
+      const lineGlow = eased * clamp(0.18 + distanceFade * 0.86 + edgePulse * 0.24 + this.smoothedEnergy * 0.14, 0, 1.12);
+      const pulseGlow = eased * clamp(edgePulse * 0.92 + this.smoothedPulse * 0.18, 0, 1.08);
       this.linePositions[cursor] = a.world.x;
       this.pulseLinePositions[cursor++] = a.world.x;
       this.linePositions[cursor] = a.world.y;
@@ -936,13 +884,13 @@ export class Starlace implements PlayerVisual {
       const pitchGlow = 1 - Math.abs((node.noteIndex / (this.hzTable.length - 1)) - this.smoothedPitch);
       const pulse = clamp(node.pulse + pitchGlow * this.smoothedEnergy * 0.18 + twinkle * 0.07, 0, 1);
       const reveal = smoothstep01(this.nodeRevealT[i] ?? 1);
-      // Stronger pulse-driven swell + halo so a fired node visibly "lights up"
-      // whether the trigger is direct contact or a ripple arriving from a
-      // neighbor. Was: pulse*1.10 size, max materialGlow 0.88.
-      const flash = Math.pow(node.pulse, 1.05);
-      const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.55 + flash * 0.65) * reveal;
+      // Triggered nodes light up a bit: small size bump + a stronger contribution
+      // from the gem's own material glow (drives refraction + inner glow inside
+      // the TSL material — no halos or external sprites).
+      const flash = Math.pow(node.pulse, 1.10);
+      const size = this.params.nodeRadius * (0.70 + twinkle * 0.28 + pulse * 1.25 + flash * 0.30) * reveal;
       const drawSize = Math.max(size, 0.0001);
-      const materialGlow = reveal * clamp(0.10 + twinkle * 0.05 + pulse * 0.12 + flash * 1.05, 0, 1.30);
+      const materialGlow = reveal * clamp(0.10 + twinkle * 0.05 + pulse * 0.12 + flash * 0.85, 0, 1.05);
 
       _dummy.position.copy(node.world);
       _dummy.rotation.set(
@@ -963,65 +911,6 @@ export class Starlace implements PlayerVisual {
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     if (gemParams) gemParams.needsUpdate = true;
     material.opacity = clamp(0.80 + this.maxPulse * 0.06 + this.smoothedPulse * 0.04, 0.80, 0.90);
-  }
-
-  private writeSparks(): void {
-    // Energy traveling through a node = a colored ripple along the link.
-    // The spark sphere is the comet head (additive, source-note color, sine
-    // bloom mid-flight); edgeSparkBoost lights the link itself in unison so
-    // the whole edge surges as the wave passes through.
-    const boost = this.edgeSparkBoost;
-    for (let e = 0; e < boost.length; e += 1) boost[e] = 0;
-    let visible = 0;
-    for (let i = 0; i < this.sparks.length; i += 1) {
-      const spark = this.sparks[i];
-      const age = (this.elapsed - spark.start) / Math.max(0.001, spark.duration);
-      if (age < 0 || age >= 1 || spark.intensity <= 0) continue;
-      const a = this.nodes[spark.from];
-      const b = this.nodes[spark.to];
-      const t = easeOutCubic(age);
-      _scratch.copy(a.world).lerp(b.world, t);
-      const lift = Math.sin(age * Math.PI) * this.params.sparkSize * 1.6;
-      _scratch.addScaledVector(this.fieldUp, lift);
-      // Sine bloom: small at endpoints, full glow at midpoint -> reads as a
-      // wavefront swelling as it crosses, not a fading dot.
-      const bloom = Math.sin(age * Math.PI);
-      const size = this.params.sparkSize * (0.55 + bloom * 1.05) * (0.55 + spark.intensity * 0.55);
-      _dummy.position.copy(_scratch);
-      _dummy.scale.setScalar(size);
-      _dummy.updateMatrix();
-      this.sparkMesh.setMatrixAt(visible, _dummy.matrix);
-      // Color: blend from source note color toward dest, biased toward source
-      // (ripple "carries" the note that fired). Additive blending + bright
-      // multiplier gives the glow.
-      this.noteColorForNode(a, _colorA).lerp(this.noteColorForNode(b, _colorB), t * 0.55);
-      _colorA.multiplyScalar(0.85 + spark.intensity * 0.7 + bloom * 0.6);
-      this.sparkMesh.setColorAt(visible, _colorA);
-      visible += 1;
-      if (spark.edgeIndex >= 0 && spark.edgeIndex < boost.length) {
-        const edgeContribution = bloom * (0.55 + spark.intensity * 0.85);
-        if (edgeContribution > boost[spark.edgeIndex]) boost[spark.edgeIndex] = edgeContribution;
-      }
-      if (visible >= MAX_SPARKS) break;
-    }
-    for (let i = visible; i < MAX_SPARKS; i += 1) {
-      _dummy.position.set(0, -1000, 0);
-      _dummy.scale.setScalar(0.0001);
-      _dummy.updateMatrix();
-      this.sparkMesh.setMatrixAt(i, _dummy.matrix);
-    }
-    this.sparkMesh.instanceMatrix.needsUpdate = true;
-    if (this.sparkMesh.instanceColor) this.sparkMesh.instanceColor.needsUpdate = true;
-  }
-
-  private writeHiddenSparks(): void {
-    for (let i = 0; i < MAX_SPARKS; i += 1) {
-      _dummy.position.set(0, -1000, 0);
-      _dummy.scale.setScalar(0.0001);
-      _dummy.updateMatrix();
-      this.sparkMesh.setMatrixAt(i, _dummy.matrix);
-    }
-    this.sparkMesh.instanceMatrix.needsUpdate = true;
   }
 
   private attachPointerEvents(canvas: HTMLCanvasElement): void {
@@ -1330,12 +1219,6 @@ export class Starlace implements PlayerVisual {
       if (!node) continue;
       this.pulseNode(nodeIndex, velocity * (i === 0 ? 1 : 0.86));
       this.emitStreak(node, velocity * (i === 0 ? 0.92 : 0.72));
-      if (state.previousNode >= 0 && state.previousNode !== nodeIndex) {
-        this.addSpark(state.previousNode, nodeIndex, velocity * (i === 0 ? 0.88 : 0.64));
-      }
-      if (i > 0 && rootNodeIndex !== nodeIndex) {
-        this.addSpark(rootNodeIndex, nodeIndex, velocity * 0.76);
-      }
     }
 
     if (this.onPluckCallback) {
@@ -1743,8 +1626,13 @@ export class Starlace implements PlayerVisual {
     const breath = stageInPhrase === 0 && phraseCycle > 0 ? 1 + drift * 0.38 : 1;
     const rush = stageInPhrase > phraseLength * 0.56 ? 1 - drift * 0.24 : 1;
     const humanize = (hash(state.phraseSeed * 13.71 + state.step * 19.37) - 0.5) * base * (0.08 + rhythm * 0.14);
-    const factor = Starlace.KEYBOARD_ECHO_DELAY_FACTORS[patternIndex] * swing * phraseWave * breath * rush;
-    return clamp(base * factor + humanize, 0.07, 0.95);
+    // Spanish-guitar attack: hold a longer rest after the bass chord on ring 0
+    // so the arpeggio that follows reads as a clearly separate cascade, not
+    // just another note in the same line.
+    const justFiredRing = this.ringTargetForStep(state, stageIndex);
+    const chordRest = justFiredRing === 0 ? 2.6 : 1;
+    const factor = Starlace.KEYBOARD_ECHO_DELAY_FACTORS[patternIndex] * swing * phraseWave * breath * rush * chordRest;
+    return clamp(base * factor + humanize, 0.07, 1.6);
   }
 
   private keyboardPathVelocity(state: KeyboardPathState): number {
@@ -1754,19 +1642,20 @@ export class Starlace implements PlayerVisual {
     const accent = state.step <= 0
       ? 0.18
       : Starlace.KEYBOARD_ECHO_VELOCITY_OFFSETS[patternIndex] ?? 0;
-    // Ripple decay: notes near the origin (ring 0) hit hardest, outer rings
-    // soften like the wave dispersing. cycleStart bonus restores energy when
-    // a new ripple begins so held keys feel like rolling waves.
+    // Ripple decay: bass chord on ring 0 hits hardest; arpeggio notes on
+    // outer rings sit clearly below it (Spanish-guitar dynamic). cycleStart
+    // bonus restores energy when the next ripple begins.
     const ringTarget = this.ringTargetForStep(state, state.step);
     const ringFraction = state.maxRing > 0 ? ringTarget / state.maxRing : 0;
-    const rippleDecay = ringFraction * 0.34;
+    const rippleDecay = ringFraction * 0.46;
+    const ringZeroBoost = ringTarget === 0 ? 0.10 : 0;
     const cycleStart = state.step > 0 && positiveModulo(state.step, Math.max(2, state.cycleLength)) === 0
-      ? 0.16
+      ? 0.18
       : 0;
     const base = 0.46 + state.velocity * 0.36;
     return clamp(
-      base + accent + cycleStart - rippleDecay + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.10,
-      0.34,
+      base + accent + cycleStart + ringZeroBoost - rippleDecay + hash(state.step * 11.23 + state.phraseSeed * 5.7) * 0.10,
+      0.30,
       0.95,
     );
   }
@@ -1790,18 +1679,6 @@ export class Starlace implements PlayerVisual {
     });
   }
 
-  private addSpark(from: number, to: number, intensity: number): void {
-    const spark = this.sparks[this.sparkCursor % MAX_SPARKS];
-    spark.from = from;
-    spark.to = to;
-    spark.edgeIndex = this.edgeIndexByPair.get(this.edgePairKey(from, to)) ?? -1;
-    spark.start = this.elapsed;
-    // Longer durations = ripple feel (was 0.22-0.44s).
-    spark.duration = 0.36 + hash(from * 3.17 + to * 7.31) * 0.32;
-    spark.intensity = clamp(intensity, 0, 1);
-    this.sparkCursor += 1;
-  }
-
   private decayPulses(delta: number): void {
     const k = Math.exp(-delta * this.params.pulseDecay);
     for (const node of this.nodes) node.pulse *= k;
@@ -1816,7 +1693,6 @@ export class Starlace implements PlayerVisual {
     this.lineMaterial.color.setRGB(0.98, 0.97, 0.94);
     this.pulseLineMaterial.color.setRGB(1.00, 0.96, 0.92);
     this.nodeMaterial?.color.setRGB(0.94, 0.97, 1.00);
-    this.sparkMaterial.color.setRGB(1.00, 0.97, 0.92);
   }
 
   private notePaletteIndexForNode(node: StarNode): number {

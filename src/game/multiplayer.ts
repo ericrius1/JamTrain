@@ -457,18 +457,18 @@ export class MultiplayerClient {
         // Pick/publish the local loadout after we can see whether a partner
         // is already in this cabin. The reducer only stores choices; it does
         // not roll random loadouts.
-        this.ensureInitialLocalLoadout();
+        const corrections = this.ensureInitialLocalLoadout();
         // Now sync the partner plaque with whoever's actually online here.
         this.updatePartner();
-        // Only push when the user explicitly chose. request_seat already
-        // accepted the auto-pick (and possibly corrected it to pair against
-        // the partner) — pushing the pre-correction value here would clobber
-        // the server's pairing and both players could land on the same
-        // instrument until further updates settle.
-        if (this.localInstrumentDirty && this.localInstrumentExplicit) {
+        // Push when the user explicitly chose, OR when ensureInitialLocalLoadout
+        // had to correct a clash with the partner. Without the latter, an
+        // auto-paired client whose server row already conflicts with the
+        // partner would render the corrected creature locally but leave the
+        // mismatched value in the DB, so other clients still see the clash.
+        if ((this.localInstrumentDirty && this.localInstrumentExplicit) || corrections.instrument) {
           void this.pushLocalInstrument();
         }
-        if (this.localCreatureDirty && this.localCreatureExplicit) {
+        if ((this.localCreatureDirty && this.localCreatureExplicit) || corrections.creature) {
           void this.pushLocalCreature();
         }
         this.maybeResolveInitialSync();
@@ -480,14 +480,17 @@ export class MultiplayerClient {
       .subscribe([tables.player, tables.webrtcSignal]);
   }
 
-  private ensureInitialLocalLoadout(): void {
+  private ensureInitialLocalLoadout(): { instrument: boolean; creature: boolean } {
     const partner = this.findOnlinePartnerRow();
+    let instrumentCorrected = false;
+    let creatureCorrected = false;
 
     if (partner && !this.localInstrumentExplicit) {
       const next = this.oppositeInstrument(normalizeInstrumentId(partner.instrument));
       if (next !== this.localInstrument) {
         this.localInstrumentDirty = true;
         this.acceptLocalInstrument(next);
+        instrumentCorrected = true;
       }
     } else if (!this.localInstrumentDirty && this.localInstrument === SERVER_DEFAULT_INSTRUMENT) {
       const next = this.pickRandomInstrument();
@@ -501,12 +504,15 @@ export class MultiplayerClient {
         const next = this.pickRandomCreature(partnerCreature);
         this.localCreatureDirty = true;
         this.acceptLocalCreature(next);
+        creatureCorrected = true;
       }
     } else if (!this.localCreatureDirty && this.localCreature === SERVER_DEFAULT_CREATURE) {
       const next = this.pickRandomCreature();
       this.localCreatureDirty = true;
       this.acceptLocalCreature(next);
     }
+
+    return { instrument: instrumentCorrected, creature: creatureCorrected };
   }
 
   private findOnlinePartnerRow(): Player | null {

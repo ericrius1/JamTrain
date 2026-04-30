@@ -41,12 +41,18 @@ export type MidiButtonState =
 export class MixerPanel {
   readonly el: HTMLDivElement;
   private musicSlider: HTMLInputElement;
+  private starlaceSlider: HTMLInputElement;
+  private orbSlider: HTMLInputElement;
   private backingSlider: HTMLInputElement;
   private voiceSlider: HTMLInputElement;
   private musicValueEl: HTMLSpanElement;
+  private starlaceValueEl: HTMLSpanElement;
+  private orbValueEl: HTMLSpanElement;
   private backingValueEl: HTMLSpanElement;
   private voiceValueEl: HTMLSpanElement;
   private musicListeners = new Set<(value: number) => void>();
+  private starlaceListeners = new Set<(value: number) => void>();
+  private orbListeners = new Set<(value: number) => void>();
   private backingListeners = new Set<(value: number) => void>();
   private voiceListeners = new Set<(value: number) => void>();
   private midiButton: HTMLButtonElement;
@@ -54,7 +60,7 @@ export class MixerPanel {
   private midiClickListeners = new Set<() => void>();
   private midiState: MidiButtonState = { kind: 'idle' };
 
-  constructor(opts: { music: number; backing: number; voice: number }) {
+  constructor(opts: { music: number; starlace: number; orb: number; backing: number; voice: number }) {
     this.el = document.createElement('div');
     this.el.className = 'mixer-panel plaque';
 
@@ -98,6 +104,34 @@ export class MixerPanel {
     });
     this.el.appendChild(musicRow.row);
 
+    const starlaceRow = this.buildRow({
+      label: 'Starlace',
+      icon: MUSIC_SVG,
+      value: opts.starlace,
+    });
+    this.starlaceSlider = starlaceRow.slider;
+    this.starlaceValueEl = starlaceRow.value;
+    this.starlaceSlider.addEventListener('input', () => {
+      const v = this.readSlider(this.starlaceSlider);
+      this.starlaceValueEl.textContent = formatPercent(v);
+      for (const l of this.starlaceListeners) l(v);
+    });
+    this.el.appendChild(starlaceRow.row);
+
+    const orbRow = this.buildRow({
+      label: 'Piano Pads',
+      icon: MUSIC_SVG,
+      value: opts.orb,
+    });
+    this.orbSlider = orbRow.slider;
+    this.orbValueEl = orbRow.value;
+    this.orbSlider.addEventListener('input', () => {
+      const v = this.readSlider(this.orbSlider);
+      this.orbValueEl.textContent = formatPercent(v);
+      for (const l of this.orbListeners) l(v);
+    });
+    this.el.appendChild(orbRow.row);
+
     const backingRow = this.buildRow({
       label: 'Backing Track',
       ariaLabel: 'Backing track volume',
@@ -133,6 +167,16 @@ export class MixerPanel {
     this.musicValueEl.textContent = formatPercent(value);
   }
 
+  setStarlaceVolume(value: number): void {
+    this.writeSlider(this.starlaceSlider, value);
+    this.starlaceValueEl.textContent = formatPercent(value);
+  }
+
+  setOrbVolume(value: number): void {
+    this.writeSlider(this.orbSlider, value);
+    this.orbValueEl.textContent = formatPercent(value);
+  }
+
   setBackingVolume(value: number): void {
     this.writeSlider(this.backingSlider, value);
     this.backingValueEl.textContent = formatPercent(value);
@@ -145,6 +189,14 @@ export class MixerPanel {
 
   onMusicChange(listener: (value: number) => void): void {
     this.musicListeners.add(listener);
+  }
+
+  onStarlaceChange(listener: (value: number) => void): void {
+    this.starlaceListeners.add(listener);
+  }
+
+  onOrbChange(listener: (value: number) => void): void {
+    this.orbListeners.add(listener);
   }
 
   onBackingChange(listener: (value: number) => void): void {

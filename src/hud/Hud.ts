@@ -16,6 +16,8 @@ import { ControlsPanel } from './components/ControlsPanel';
 
 // Default mix balance. Plenty of slider headroom on either side.
 export const DEFAULT_MUSIC_VOLUME = .85;
+export const DEFAULT_STARLACE_VOLUME = 1.0;
+export const DEFAULT_ORB_VOLUME = 1.0;
 export const DEFAULT_BACKING_TRACK_VOLUME = 0.22;
 export const DEFAULT_VOICE_VOLUME = 0.7;
 
@@ -144,6 +146,8 @@ export class Hud {
 
     this.mixerPanel = new MixerPanel({
       music: DEFAULT_MUSIC_VOLUME,
+      starlace: DEFAULT_STARLACE_VOLUME,
+      orb: DEFAULT_ORB_VOLUME,
       backing: DEFAULT_BACKING_TRACK_VOLUME,
       voice: DEFAULT_VOICE_VOLUME,
     });
@@ -236,8 +240,10 @@ export class Hud {
     this.localPanel.onShareVideoClick(listener);
   }
 
-  setMixerValues(music: number, backing: number, voice: number): void {
+  setMixerValues(music: number, starlace: number, orb: number, backing: number, voice: number): void {
     this.mixerPanel.setMusicVolume(music);
+    this.mixerPanel.setStarlaceVolume(starlace);
+    this.mixerPanel.setOrbVolume(orb);
     this.mixerPanel.setBackingVolume(backing);
     this.mixerPanel.setVoiceVolume(voice);
   }
@@ -248,6 +254,14 @@ export class Hud {
 
   onMusicVolumeChange(listener: (value: number) => void): void {
     this.mixerPanel.onMusicChange(listener);
+  }
+
+  onStarlaceVolumeChange(listener: (value: number) => void): void {
+    this.mixerPanel.onStarlaceChange(listener);
+  }
+
+  onOrbVolumeChange(listener: (value: number) => void): void {
+    this.mixerPanel.onOrbChange(listener);
   }
 
   onBackingTrackVolumeChange(listener: (value: number) => void): void {

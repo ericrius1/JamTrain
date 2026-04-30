@@ -82,8 +82,8 @@ export const SCULPTOR_DEFS = {
   fieldSphereRadius:  { default: 1.0,   min: 0.2,   max: 2.2,  step: 0.01,  folder: 'Field Bounds', label: 'sphere radius' },
   fieldSphereCenterY: { default: 0.12,  min: -0.5,  max: 1.1,  step: 0.01,  folder: 'Field Bounds', label: 'center height' },
 
-  fieldRotationRate:  { default: 0.3,   min: 0,     max: 10,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
-  fieldDebugDensity:  { default: 16,    min: 3,     max: 20,   step: 1,     folder: 'Field Shape', label: 'debug density' },
+  fieldRotationRate:  { default: 10,   min: 0,     max: 20,   step: 0.05,  folder: 'Field Shape', label: 'rotation speed' },
+  fieldDebugDensity:  { default: 20,    min: 3,     max: 30,   step: 1,     folder: 'Field Shape', label: 'debug density' },
   attractorOverride:  { type: 'select' as const, default: 'cycle' as const, options: ATTRACTOR_OPTIONS, folder: 'Field Shape', label: 'attractor' },
   attractorHoldSeconds:       { default: DEFAULT_ATTRACTOR_HOLD_SECONDS,       min: 1,   max: 120, step: 0.5, folder: 'Field Shape', label: 'hold s' },
   attractorTransitionSeconds: { default: DEFAULT_ATTRACTOR_TRANSITION_SECONDS, min: 0.1, max: 30,  step: 0.1, folder: 'Field Shape', label: 'xfade s' },
@@ -132,6 +132,11 @@ export class EnergySculptor implements EnergySink {
   private count: number;
   private spawnCursorCpu = 0;
   private pendingEmits: EmitRequest[] = [];
+
+  // CPU-side bookkeeping for the live-particle counter shown in DevOverlay.
+  // Each emit batch records the in-flight count and lifetime captured at spawn
+  // time; `getAliveParticleCount` prunes expired batches and sums the rest.
+  private aliveBatches: { spawnedAt: number; count: number; lifeMax: number }[] = [];
 
   // Per-particle GPU storage.
   private positionsBuffer!: THREE.StorageBufferNode<'vec3'>;
@@ -406,6 +411,24 @@ export class EnergySculptor implements EnergySink {
 
   getSynchronyBoost(): number {
     return this.synchronyBoost;
+  }
+
+  // Approximate live-particle count for the DevOverlay readout. Drops batches
+  // whose lifetime has elapsed and caps the total at the GPU pool size, since
+  // the spawn ring buffer overwrites older live particles when it wraps.
+  getAliveParticleCount(): number {
+    const now = this.elapsed;
+    let writeIdx = 0;
+    let total = 0;
+    for (let i = 0; i < this.aliveBatches.length; i += 1) {
+      const batch = this.aliveBatches[i];
+      if (now - batch.spawnedAt >= batch.lifeMax) continue;
+      this.aliveBatches[writeIdx] = batch;
+      writeIdx += 1;
+      total += batch.count;
+    }
+    this.aliveBatches.length = writeIdx;
+    return Math.min(total, this.count);
   }
 
   // Toggle the field debug visualization. Hooked from main.ts/Game so it
@@ -1427,6 +1450,9 @@ export class EnergySculptor implements EnergySink {
     this.spawnCountUniform.value = cursor;
     this.spawnCursorUniform.value = this.spawnCursorCpu;
     this.spawnCursorCpu = (this.spawnCursorCpu + cursor) % this.count;
+    if (cursor > 0) {
+      this.aliveBatches.push({ spawnedAt: this.elapsed, count: cursor, lifeMax: lifeBase });
+    }
   }
 
   private static readonly ATTRACTOR_INDEX: Record<AttractorKind, number> = {
