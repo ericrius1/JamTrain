@@ -34,6 +34,12 @@ export const STARLACE_DEFS = {
   keyTempoDrift:   { default: 0.20,  min: 0,     max: 1,    step: 0.01,  label: 'tempo drift' },
   keyPathWander:   { default: 0.72,  min: 0,     max: 1,    step: 0.01,  label: 'path wander' },
   keyEdgeFollow:   { default: 0.66,  min: 0,     max: 1,    step: 0.01,  label: 'edge follow' },
+  pluckAmplitude:  { default: 0.012, min: 0,     max: 0.06, step: 0.0005, label: 'pluck amplitude' },
+  pluckFrequency:  { default: 24,    min: 2,     max: 90,   step: 0.5,   label: 'pluck frequency' },
+  pluckDecay:      { default: 5.5,   min: 0.5,   max: 20,   step: 0.1,   label: 'pluck decay' },
+  pluckSegments:   { default: 14,    min: 2,     max: 32,   step: 1,     label: 'pluck segments' },
+  pluckImpulse:    { default: 0.85,  min: 0,     max: 2,    step: 0.01,  label: 'pluck impulse' },
+  pluckTravel:     { default: 0.55,  min: 0,     max: 1,    step: 0.01,  label: 'pluck travel' },
   coolColor:       { type: 'color', default: '#5fb6c4', label: 'cool stars' },
   warmColor:       { type: 'color', default: '#e56f67', label: 'warm stars' },
   goldColor:       { type: 'color', default: '#edae4a', label: 'gold links' },
@@ -172,6 +178,13 @@ export class Starlace implements PlayerVisual {
   private edges: [number, number][] = [];
   private edgeDistances: number[] = [];
   private adjacency: number[][] = [];
+  private nodeEdges: number[][] = [];
+  private edgePluck: Float32Array = new Float32Array(0);
+  private edgePluckPhase: Float32Array = new Float32Array(0);
+  private pluckSegments = 14;
+  private _perp1 = new THREE.Vector3();
+  private _perp2 = new THREE.Vector3();
+  private _edgeDir = new THREE.Vector3();
   private linePositions: Float32Array;
   private lineColors: Float32Array;
   private pulseLinePositions: Float32Array;
@@ -296,10 +309,12 @@ export class Starlace implements PlayerVisual {
     this.pointerSweepSeen = Array.from({ length: this.nodes.length }, () => false);
     this.pointerFrameFired = Array.from({ length: this.nodes.length }, () => false);
 
-    this.linePositions = new Float32Array(this.edges.length * 2 * 3);
-    this.lineColors = new Float32Array(this.edges.length * 2 * 3);
-    this.pulseLinePositions = new Float32Array(this.edges.length * 2 * 3);
-    this.pulseLineColors = new Float32Array(this.edges.length * 2 * 3);
+    this.pluckSegments = Math.max(2, Math.round(this.params.pluckSegments));
+    const vertCount = this.edges.length * this.pluckSegments * 2 * 3;
+    this.linePositions = new Float32Array(vertCount);
+    this.lineColors = new Float32Array(vertCount);
+    this.pulseLinePositions = new Float32Array(vertCount);
+    this.pulseLineColors = new Float32Array(vertCount);
     this.lineGeometry = new THREE.BufferGeometry();
     this.pulseLineGeometry = new THREE.BufferGeometry();
     this.lineGeometry.setAttribute('position', new THREE.BufferAttribute(this.linePositions, 3));
@@ -348,6 +363,7 @@ export class Starlace implements PlayerVisual {
         warmColor: () => this.applyColors(),
         goldColor: () => this.applyColors(),
         hotColor:  () => this.applyColors(),
+        pluckSegments: () => this.reallocateLineBuffers(),
       },
     });
   }
@@ -707,9 +723,18 @@ export class Starlace implements PlayerVisual {
     this.addCrossRowEdges(seen);
     this.ensureConnected(seen);
     this.adjacency = Array.from({ length: this.nodes.length }, () => []);
-    for (const [a, b] of this.edges) {
+    this.nodeEdges = Array.from({ length: this.nodes.length }, () => []);
+    for (let e = 0; e < this.edges.length; e += 1) {
+      const [a, b] = this.edges[e];
       this.adjacency[a].push(b);
       this.adjacency[b].push(a);
+      this.nodeEdges[a].push(e);
+      this.nodeEdges[b].push(e);
+    }
+    this.edgePluck = new Float32Array(this.edges.length);
+    this.edgePluckPhase = new Float32Array(this.edges.length);
+    for (let e = 0; e < this.edges.length; e += 1) {
+      this.edgePluckPhase[e] = hash(e * 17.7 + 3.1) * TAU;
     }
   }
 
@@ -1370,6 +1395,29 @@ export class Starlace implements PlayerVisual {
     if (!node) return;
     node.lastHitAt = this.elapsed;
     node.pulse = Math.min(1, node.pulse + 0.78 + velocity * 0.52);
+    this.pluckEdgesAt(nodeIndex, velocity, 1);
+  }
+
+  private pluckEdgesAt(nodeIndex: number, velocity: number, depth: number): void {
+    const incident = this.nodeEdges[nodeIndex];
+    if (!incident) return;
+    const impulse = this.params.pluckImpulse * (0.45 + velocity * 0.75);
+    const travel = clamp(this.params.pluckTravel, 0, 1);
+    for (const e of incident) {
+      const prev = this.edgePluck[e];
+      const next = Math.min(1.4, Math.max(prev, impulse));
+      this.edgePluck[e] = next;
+      this.edgePluckPhase[e] = (this.elapsed * this.params.pluckFrequency * TAU) % TAU;
+    }
+    if (depth > 0 && travel > 0.01) {
+      for (const nb of this.adjacency[nodeIndex] ?? []) {
+        for (const e of this.nodeEdges[nb] ?? []) {
+          const prev = this.edgePluck[e];
+          const trail = impulse * travel * 0.55;
+          if (trail > prev) this.edgePluck[e] = trail;
+        }
+      }
+    }
   }
 
   private fireKeyboardChord(
@@ -1915,6 +1963,23 @@ export class Starlace implements PlayerVisual {
   private decayPulses(delta: number): void {
     const k = Math.exp(-delta * this.params.pulseDecay);
     for (const node of this.nodes) node.pulse *= k;
+    const pluckK = Math.exp(-delta * this.params.pluckDecay);
+    for (let e = 0; e < this.edgePluck.length; e += 1) this.edgePluck[e] *= pluckK;
+  }
+
+  private reallocateLineBuffers(): void {
+    const segments = Math.max(2, Math.round(this.params.pluckSegments));
+    if (segments === this.pluckSegments) return;
+    this.pluckSegments = segments;
+    const vertFloats = this.edges.length * segments * 2 * 3;
+    this.linePositions = new Float32Array(vertFloats);
+    this.lineColors = new Float32Array(vertFloats);
+    this.pulseLinePositions = new Float32Array(vertFloats);
+    this.pulseLineColors = new Float32Array(vertFloats);
+    this.lineGeometry.setAttribute('position', new THREE.BufferAttribute(this.linePositions, 3));
+    this.lineGeometry.setAttribute('color', new THREE.BufferAttribute(this.lineColors, 3));
+    this.pulseLineGeometry.setAttribute('position', new THREE.BufferAttribute(this.pulseLinePositions, 3));
+    this.pulseLineGeometry.setAttribute('color', new THREE.BufferAttribute(this.pulseLineColors, 3));
   }
 
   private applyColors(): void {
