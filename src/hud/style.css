@@ -1315,6 +1315,14 @@
   color: var(--sun);
   background: rgba(200, 154, 75, 0.08);
 }
+.player-plaque .creature-picker-btn.active {
+  color: #ffd76a;
+}
+.player-plaque .creature-picker-btn.active svg {
+  filter:
+    drop-shadow(0 0 4px #ffd76a)
+    drop-shadow(0 0 10px color-mix(in srgb, var(--sun) 70%, transparent));
+}
 .player-plaque .creature-picker-btn svg { width: 18px; height: 18px; }
 
 /* ── InstrumentPicker ─────────────────────────────────────────────────────── */
@@ -1380,6 +1388,14 @@
 .player-plaque .instrument-picker-btn:hover:not(:disabled) {
   color: var(--sun);
   background: rgba(200, 154, 75, 0.08);
+}
+.player-plaque .instrument-picker-btn.active {
+  color: #ffd76a;
+}
+.player-plaque .instrument-picker-btn.active svg {
+  filter:
+    drop-shadow(0 0 4px #ffd76a)
+    drop-shadow(0 0 10px color-mix(in srgb, var(--sun) 70%, transparent));
 }
 .player-plaque .instrument-picker-btn svg { width: 18px; height: 18px; }
 

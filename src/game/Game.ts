@@ -41,6 +41,12 @@ const INSTRUMENTS_DEFS = {
 } as const;
 
 const INSTRUMENT_ANCHOR_Y = 0.98;
+// Intro idle-motion scale: how slow characters move while the BeginGate is up.
+// Small enough that motion is barely perceptible without being totally frozen.
+const INTRO_MOTION_FACTOR = 0.05;
+// Exponential time constant (seconds) for the lerp from intro speed to 1.0
+// after exitIntroMode. ~3s reaches >95%.
+const MOTION_FACTOR_TAU = 1.0;
 const ROBOT_JAM_MIN_DELAY = 1.85;
 const ROBOT_JAM_MAX_DELAY = 4.6;
 const ROBOT_STARLACE_JAM_MIN_DELAY = 2.35;
@@ -196,6 +202,13 @@ export class Game {
   // about to step into. exitIntroMode() flips this and runs the per-player
   // intro animations.
   private introActive = true;
+  // Idle-motion clock scale. During intro the robot/player visuals tick at
+  // ~5% speed so the scene reads as a near-still tableau; on exitIntroMode
+  // this lerps toward 1.0 over a few seconds, "waking" the characters into
+  // their default float/movement speed.
+  private motionFactor = INTRO_MOTION_FACTOR;
+  private motionFactorTarget = INTRO_MOTION_FACTOR;
+  private motionElapsed = 0;
   private swapsInFlight: Record<PlayerSlot, number> = { local: 0, remote: 0 };
   private cabinTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_DEFS>>;
   private cabinLightingTweaks?: ReturnType<typeof registerTweaks<typeof CABIN_LIGHTING_DEFS>>;
@@ -1302,7 +1315,7 @@ export class Game {
     const seed = gestureIndex * 17.17 + this.roomSeed * 0.029;
     const shape = this.pickRobotJamShape(seed);
     const root = ROBOT_JAM_SCALE_ROOTS[Math.floor(hash(seed + 0.11) * ROBOT_JAM_SCALE_ROOTS.length)] ?? 0;
-    const longHold = instrument === 'drum' && shape.length === 1 && hash(seed + 0.29) > 0.56;
+    const longHold = hash(seed + 0.29) > 0.65;
     const strum = shape.length > 1 ? ROBOT_JAM_STRUM_MAX_OFFSET * (0.35 + hash(seed + 0.41) * 0.65) : 0;
 
     this.robotJamPending = shape.map((degreeOffset, index) => {
@@ -1330,8 +1343,7 @@ export class Game {
     return ROBOT_JAM_CHORD_SHAPES[3 + Math.floor(hash(seed + 1.31) * 2)] ?? ROBOT_JAM_CHORD_SHAPES[2];
   }
 
-  private robotJamHoldDuration(instrument: InstrumentId, seed: number, longHold: boolean): number {
-    if (instrument !== 'drum') return ROBOT_JAM_SHORT_HOLD;
+  private robotJamHoldDuration(_instrument: InstrumentId, seed: number, longHold: boolean): number {
     if (!longHold) return ROBOT_JAM_SHORT_HOLD + hash(seed + 2.17) * 0.18;
     return ROBOT_JAM_LONG_HOLD_MIN + hash(seed + 2.17) * (ROBOT_JAM_LONG_HOLD_MAX - ROBOT_JAM_LONG_HOLD_MIN);
   }

@@ -47,10 +47,6 @@ export class BeginGate {
     this.stage.appendChild(this.div('begin-top-fade'));
     this.stage.appendChild(this.div('begin-bottom-fade'));
 
-    // Drifting embers (decorative). Deterministic positions/timing so the
-    // composition feels designed rather than randomly noisy.
-    this.stage.appendChild(this.buildEmbers());
-
     this.stage.appendChild(this.buildTopRail());
     this.stage.appendChild(this.buildCompatNote());
 
@@ -105,26 +101,6 @@ export class BeginGate {
     const el = document.createElement('div');
     el.className = className;
     return el;
-  }
-
-  private buildEmbers(): HTMLElement {
-    const wrap = this.div('begin-embers');
-    wrap.setAttribute('aria-hidden', 'true');
-    for (let i = 0; i < 18; i++) {
-      const dot = document.createElement('span');
-      dot.className = 'begin-ember';
-      const left = (i * 47 + 13) % 100;
-      const dur = 9 + (i % 5) * 2;
-      const delay = (i * 0.7) % 10;
-      const size = 2 + (i % 3);
-      dot.style.left = `${left}%`;
-      dot.style.width = `${size}px`;
-      dot.style.height = `${size}px`;
-      dot.style.animationDuration = `${dur}s`;
-      dot.style.animationDelay = `${delay}s`;
-      wrap.appendChild(dot);
-    }
-    return wrap;
   }
 
   private buildTopRail(): HTMLElement {

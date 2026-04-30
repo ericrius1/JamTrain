@@ -263,25 +263,6 @@
   text-align: center;
 }
 
-/* Drifting embers — purely decorative golden motes rising from the bottom. */
-.begin-embers {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  overflow: hidden;
-}
-.begin-ember {
-  position: absolute;
-  bottom: -10px;
-  border-radius: 50%;
-  background: var(--sun);
-  box-shadow: 0 0 8px rgba(246, 179, 51, 0.7);
-  opacity: 0;
-  animation-name: beginEmberRise;
-  animation-timing-function: linear;
-  animation-iteration-count: infinite;
-}
-
 /* Tiny compatibility hint — sits in the bottom-right corner, well below
    the conductor field, low-contrast so it never competes with the CTA. */
 .begin-compat-note {
@@ -316,12 +297,6 @@
   from { opacity: 0; transform: translateY(-18px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-@keyframes beginEmberRise {
-  0%   { transform: translateY(0)      translateX(0);  opacity: 0; }
-  8%   {                                                opacity: 0.9; }
-  90%  {                                                opacity: 0.5; }
-  100% { transform: translateY(-1100px) translateX(40px); opacity: 0; }
-}
 .begin-fade-up   { animation: beginFadeUp   0.9s ease-out both; }
 .begin-fade-down { animation: beginFadeDown 0.9s ease-out both; }
 .begin-delay-1   { animation-delay: 0.25s; }
@@ -334,5 +309,4 @@
     opacity: 1;
     transform: none;
   }
-  .begin-ember { animation: none; opacity: 0; }
 }
