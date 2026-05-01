@@ -838,9 +838,24 @@
   padding: 18px;
   text-align: center;
   background: linear-gradient(180deg, rgba(20, 14, 8, 0.94), rgba(8, 6, 4, 0.97));
-  pointer-events: none;
+  pointer-events: auto;
+  cursor: pointer;
   z-index: 2;
   border-radius: inherit;
+  border: none;
+  color: inherit;
+  font: inherit;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background 160ms ease, transform 160ms ease;
+}
+.video-panel-empty:hover {
+  background: linear-gradient(180deg, rgba(32, 22, 12, 0.96), rgba(14, 10, 6, 0.98));
+}
+.video-panel-empty:active { transform: scale(0.995); }
+.video-panel-empty:focus-visible {
+  outline: 2px solid var(--sun);
+  outline-offset: -4px;
 }
 .video-panel-empty.hidden { display: none; }
 .video-panel-empty .icon {

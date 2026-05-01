@@ -58,7 +58,7 @@ export class VideoPanel {
   private shareButton?: HTMLButtonElement;
   private micButton?: HTMLButtonElement;
   private micHint?: HTMLDivElement;
-  private emptyOverlay?: HTMLDivElement;
+  private emptyOverlay?: HTMLButtonElement;
   private toolbar?: HTMLDivElement;
   private shareWarnOverlay?: HTMLDivElement;
   private shareWarnHeading?: HTMLDivElement;
@@ -149,14 +149,19 @@ export class VideoPanel {
   }
 
   private buildEmptyOverlay(): void {
-    const empty = document.createElement('div');
+    const empty = document.createElement('button');
+    empty.type = 'button';
     empty.className = 'video-panel-empty';
+    empty.setAttribute('aria-label', 'Enable camera for hand tracking');
     empty.innerHTML = `
       <div class="icon">${EMPTY_CAMERA_SVG}</div>
       <div class="heading">· Camera Off ·</div>
       <div class="subhead">Mouse/trackpad play is active</div>
-      <div class="hint">Tap <em>Camera</em> for optional hand controls.</div>
+      <div class="hint">Tap anywhere for optional hand controls.</div>
     `;
+    empty.addEventListener('click', () => {
+      for (const l of this.cameraListeners) l();
+    });
     this.wrapper.appendChild(empty);
     this.emptyOverlay = empty;
   }
